@@ -8,3 +8,6 @@ build/
 *.log
 .DS_Store
 .env
+
+# Claude Code local state (per-machine, not shared)
+.claude/settings.local.json
