@@ -1,13 +1,40 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+# Project context — shown to AI when creating artifacts.
+context: |
+  项目定位:一个纯 MCP server,基于 ezbookkeeping 的记账业务逻辑,不做 REST API、不做前端 UI。
+
+  集成方式:把 github.com/mayswind/ezbookkeeping 当 Go module 依赖引入,只用它的"库"部分——
+  pkg/services、pkg/models、pkg/datastore、pkg/settings、pkg/core、pkg/utils、pkg/exchangerates 等
+  业务逻辑与数据层。不 import 它的 pkg/mcp 或 pkg/api。MCP 协议层(JSON-RPC 解析、工具注册、传输)
+  完全自研,官方 pkg/mcp 的实现只作设计参考,不作代码依赖。
+
+  用户模型:单用户,面向个人使用,极度简化。不实现 UserService 里的传统认证机制(注册、邮箱验证、
+  密码重置、2FA、多会话管理)。为未来可能的多用户重新设计留扩展空间,但那将采用"Agent 时代"的
+  认证方式,不是现在这套传统 web 认证。
+
+  传输与认证:HTTP 传输;认证用单个静态 bearer token,不做 JWT/OAuth,不做签发/过期/撤销机制。
+
+  数据:全新账本,全新 SQLite 数据库文件,不对接任何已有 ezbookkeeping 实例。
+
+  明确排除、不在本项目实现的能力(需要时可以拆到调用方 Agent 侧完成):
+  - AI 图片识别记账(拍照自动识别金额/商家——Claude 自己读图即可,不需要服务端再调一次外部 LLM)
+  - 批量导入导出(银行/支付宝/微信账单解析)
+  - 图片附件存储(小票照片)
+  - 定期交易/模板自动调度(需要常驻后台 cron 循环,和"极简"方向冲突)
+
+  结构性配置数据(账户、分类、标签、标签分组、自定义汇率)的增删改,全部通过 MCP 工具暴露,
+  不做独立的 CLI 管理通道——因为没有前端了,MCP 工具是这些数据唯一的管理入口。
+
+  写操作安全机制:只有批量操作和破坏性操作(比如批量改交易、删账户、删分类)要求
+  preview → apply 两步确认;单条记录的增/改直接执行,不强制二次确认(MCP 客户端自身的
+  调用确认已经够用于单条操作)。
+
+  v1 工具范围草案(供后续 propose 时参考,不是最终清单):
+  - 交易:create / get / search / update / delete,以及批量操作(preview + apply 两步)
+  - 账户 / 分类 / 标签 / 标签分组:list(只读)+ manage(增改)+ 删除类操作走 preview + apply
+  - 汇率:只读查询最新汇率 + 自定义汇率的增改
+  - 分析聚合:财务汇总(summary)、趋势(trends);对账单(reconciliation)视底层 service 支撑情况决定
 
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.
