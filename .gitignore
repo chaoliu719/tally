@@ -1,0 +1,10 @@
+# Reference clones — read-only research material, not part of this project
+references/
+
+# Common
+node_modules/
+dist/
+build/
+*.log
+.DS_Store
+.env
