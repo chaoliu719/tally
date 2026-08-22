@@ -1,19 +1,23 @@
-// Package tools implements the MCP tool handlers backed by ezbookkeeping services.
+// Package tools implements the MCP tool handlers backed by tally's own
+// SQLite-based store.
 package tools
 
 import (
+	"database/sql"
 	"fmt"
 	"strconv"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"tally/internal/store"
 )
 
-// ezbookkeeping generates ids (account, category, transaction, ...) as
-// snowflake-style int64s that routinely exceed 2^53. MCP clients decode JSON
-// numbers into float64 by default, silently losing precision for values that
-// large. So every id crossing the tool boundary is a JSON string on the
-// wire, not a JSON number — formatID/parseID are the only place that
-// conversion happens.
+// ezbookkeeping generated ids (account, category, transaction, ...) as
+// snowflake-style int64s that routinely exceed 2^53; tally's own ids are
+// plain SQLite auto-increment integers and stay well under that. The wire
+// convention is kept unchanged regardless -- every id crossing the tool
+// boundary is a JSON string, not a JSON number -- so no MCP client needs to
+// know which storage layer is behind the server at any given time.
 func formatID(id int64) string {
 	return strconv.FormatInt(id, 10)
 }
@@ -26,11 +30,10 @@ func parseID(s string) (int64, error) {
 	return id, nil
 }
 
-// Deps holds everything a tool handler needs to call into ezbookkeeping's
-// service layer for tally's single user.
+// Deps holds everything a tool handler needs to talk to tally's store.
 type Deps struct {
-	UID             int64
-	DefaultCurrency string
+	DB *sql.DB
+	Q  *store.Queries
 }
 
 // registrations holds one entry per tool file's registration function. Each

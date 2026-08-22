@@ -15,9 +15,6 @@ import (
 	"tally/internal/tools"
 )
 
-// futureTime returns a unix time safely after "now": ezbookkeeping rejects
-// transactions dated before an account's implicit balance-modification
-// checkpoint, which is stamped at account-creation wall-clock time.
 func futureTime() int64 {
 	return time.Now().Add(time.Hour).Unix()
 }
@@ -34,22 +31,17 @@ func TestEndToEndMinimalLoop(t *testing.T) {
 
 	dbPath := filepath.Join(t.TempDir(), "tally-e2e.db")
 	cfg := &bootstrap.Config{
-		MCPToken:        token,
-		DefaultCurrency: "CNY",
-		DBPath:          dbPath,
+		MCPToken: token,
+		DBPath:   dbPath,
 	}
 
-	ezCfg := bootstrap.BuildEzbookkeepingConfig(cfg)
-	if err := bootstrap.InitDataStore(ezCfg); err != nil {
+	db, err := bootstrap.InitDataStore(cfg)
+	if err != nil {
 		t.Fatalf("InitDataStore failed: %v", err)
 	}
+	defer db.Close()
 
-	uid, err := bootstrap.EnsureSingleUser(cfg.DefaultCurrency)
-	if err != nil {
-		t.Fatalf("EnsureSingleUser failed: %v", err)
-	}
-
-	mux := buildMux(cfg, uid)
+	mux := buildMux(cfg, db)
 	httpServer := httptest.NewServer(mux)
 	defer httpServer.Close()
 
@@ -129,14 +121,29 @@ func TestEndToEndMinimalLoop(t *testing.T) {
 		Comment:    "weekly groceries",
 	}, &transaction)
 
-	// 4. search_transactions: find it.
+	// 4. search_transactions: find both the expense and the balance_adjustment
+	// that manage_account's nonzero initial balance produced -- neither is
+	// hidden from search (see design.md's "交易可见性" decision).
 	var searchResult tools.SearchTransactionsOutput
 	call("search_transactions", tools.SearchTransactionsInput{}, &searchResult)
-	if len(searchResult.Transactions) != 1 {
-		t.Fatalf("expected 1 transaction from search, got %d", len(searchResult.Transactions))
+	if len(searchResult.Transactions) != 2 {
+		t.Fatalf("expected 2 transactions from search, got %d", len(searchResult.Transactions))
 	}
-	if searchResult.Transactions[0].ID != transaction.Transaction.ID {
-		t.Fatalf("search result id = %q, want %q", searchResult.Transactions[0].ID, transaction.Transaction.ID)
+
+	var sawExpense, sawBalanceAdjustment bool
+	for _, txn := range searchResult.Transactions {
+		switch {
+		case txn.ID == transaction.Transaction.ID:
+			sawExpense = true
+		case txn.Type == "balance_adjustment":
+			sawBalanceAdjustment = true
+		}
+	}
+	if !sawExpense {
+		t.Fatalf("search result missing the recorded expense (id %q): %+v", transaction.Transaction.ID, searchResult.Transactions)
+	}
+	if !sawBalanceAdjustment {
+		t.Fatalf("search result missing the account-creation balance_adjustment: %+v", searchResult.Transactions)
 	}
 
 	// 5. get_transaction: fetch it by id, and confirm the account balance

@@ -2,12 +2,19 @@ schema: spec-driven
 
 # Project context — shown to AI when creating artifacts.
 context: |
-  项目定位:一个纯 MCP server,基于 ezbookkeeping 的记账业务逻辑,不做 REST API、不做前端 UI。
+  项目定位:一个纯 MCP server,提供个人记账业务逻辑,不做 REST API、不做前端 UI。
 
-  集成方式:把 github.com/mayswind/ezbookkeeping 当 Go module 依赖引入,只用它的"库"部分——
-  pkg/services、pkg/models、pkg/datastore、pkg/settings、pkg/core、pkg/utils、pkg/exchangerates 等
-  业务逻辑与数据层。不 import 它的 pkg/mcp 或 pkg/api。MCP 协议层(JSON-RPC 解析、工具注册、传输)
-  完全自研,官方 pkg/mcp 的实现只作设计参考,不作代码依赖。
+  集成方式:存储与业务逻辑层完全自建,不依赖 ezbookkeeping(或任何其他记账库)作为 Go module。
+  `internal/store` 下手写 SQL(`schema.sql`/`queries.sql`),用 sqlc 在构建期生成类型安全的查询代码,
+  不引入 ORM;SQLite 驱动用纯 Go 的 modernc.org/sqlite,不需要 cgo。没有独立的迁移框架——只有一个
+  schema 版本,靠 `CREATE TABLE IF NOT EXISTS` 一次性建好。MCP 协议层(JSON-RPC 解析、工具注册、传输)
+  同样完全自研,不依赖任何记账库的协议实现。
+
+  数据模型:没有"用户"概念——不设 uid 列,不在启动时 bootstrap 任何用户,整个 SQLite 数据库就是隐式的
+  唯一账本。账户余额不作为存储字段,查询时对交易表 `SUM(amount)` 现算,结构上消除"余额与流水对不上"
+  的可能。不做任何时区处理——时间字段一直是纯 Unix 秒数,协议里从未暴露过时区语义。金额校验用一份
+  手工维护、对齐真实 ISO 4217 标准的静态币种表(代码 → 小数位数),按币种真实小数位数处理(例如日元
+  0 位、科威特第纳尔 3 位),不是不管什么币种都固定按两位小数换算。
 
   用户模型:单用户,面向个人使用,极度简化。不实现 UserService 里的传统认证机制(注册、邮箱验证、
   密码重置、2FA、多会话管理)。为未来可能的多用户重新设计留扩展空间,但那将采用"Agent 时代"的
@@ -15,7 +22,7 @@ context: |
 
   传输与认证:HTTP 传输;认证用单个静态 bearer token,不做 JWT/OAuth,不做签发/过期/撤销机制。
 
-  数据:全新账本,全新 SQLite 数据库文件,不对接任何已有 ezbookkeeping 实例。
+  数据:全新账本,全新 SQLite 数据库文件。
 
   明确排除、不在本项目实现的能力(需要时可以拆到调用方 Agent 侧完成):
   - AI 图片识别记账(拍照自动识别金额/商家——Claude 自己读图即可,不需要服务端再调一次外部 LLM)

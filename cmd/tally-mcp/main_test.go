@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
@@ -31,8 +32,14 @@ func (t *bearerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 func TestMCPHandshakeFlow(t *testing.T) {
 	const token = "test-token"
 
-	cfg := &bootstrap.Config{MCPToken: token, DefaultCurrency: "CNY"}
-	mux := buildMux(cfg, 1)
+	cfg := &bootstrap.Config{MCPToken: token, DBPath: filepath.Join(t.TempDir(), "tally.db")}
+	db, err := bootstrap.InitDataStore(cfg)
+	if err != nil {
+		t.Fatalf("InitDataStore failed: %v", err)
+	}
+	defer db.Close()
+
+	mux := buildMux(cfg, db)
 
 	httpServer := httptest.NewServer(mux)
 	defer httpServer.Close()
@@ -87,8 +94,14 @@ const jsonrpcCodeInvalidParams = -32602
 func TestMalformedRequestBody(t *testing.T) {
 	const token = "test-token"
 
-	cfg := &bootstrap.Config{MCPToken: token, DefaultCurrency: "CNY"}
-	mux := buildMux(cfg, 1)
+	cfg := &bootstrap.Config{MCPToken: token, DBPath: filepath.Join(t.TempDir(), "tally.db")}
+	db, err := bootstrap.InitDataStore(cfg)
+	if err != nil {
+		t.Fatalf("InitDataStore failed: %v", err)
+	}
+	defer db.Close()
+
+	mux := buildMux(cfg, db)
 
 	httpServer := httptest.NewServer(mux)
 	defer httpServer.Close()

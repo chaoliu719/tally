@@ -2,14 +2,14 @@ package tools
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
-	"github.com/mayswind/ezbookkeeping/pkg/core"
-	"github.com/mayswind/ezbookkeeping/pkg/errs"
-	"github.com/mayswind/ezbookkeeping/pkg/models"
-	"github.com/mayswind/ezbookkeeping/pkg/services"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"tally/internal/store"
 )
 
 func init() {
@@ -20,31 +20,27 @@ func registerCategoryTools(s *mcp.Server, deps Deps) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_categories",
 		Description: "List every transaction category in the ledger, including its name, type (income, expense, or transfer), and parent category id. A category with parent_id 0 is a top-level (primary) category, used only for grouping; it cannot be used in create_transaction. A category with a non-zero parent_id is a second-level category and can be used in create_transaction.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, _ ListCategoriesInput) (*mcp.CallToolResult, ListCategoriesOutput, error) {
-		return listCategories(deps)
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ ListCategoriesInput) (*mcp.CallToolResult, ListCategoriesOutput, error) {
+		return listCategories(ctx, deps)
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "manage_category",
-		Description: "Create a new transaction category. Categories are two levels deep, matching ezbookkeeping: omit parent_id (or pass 0) to create a top-level category for grouping; pass the id of an existing top-level category to create a second-level category under it. Only second-level categories can be used in create_transaction.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, in ManageCategoryInput) (*mcp.CallToolResult, ManageCategoryOutput, error) {
-		return manageCategory(deps, in)
+		Description: "Create a new transaction category. Categories are two levels deep: omit parent_id (or pass 0) to create a top-level category for grouping; pass the id of an existing top-level category to create a second-level category under it. Only second-level categories can be used in create_transaction.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ManageCategoryInput) (*mcp.CallToolResult, ManageCategoryOutput, error) {
+		return manageCategory(ctx, deps, in)
 	})
 }
 
-var categoryTypeByName = map[string]models.TransactionCategoryType{
-	"income":   models.CATEGORY_TYPE_INCOME,
-	"expense":  models.CATEGORY_TYPE_EXPENSE,
-	"transfer": models.CATEGORY_TYPE_TRANSFER,
+var categoryTypes = map[string]bool{
+	"income":   true,
+	"expense":  true,
+	"transfer": true,
 }
 
-var categoryTypeNames = func() map[models.TransactionCategoryType]string {
-	names := make(map[models.TransactionCategoryType]string, len(categoryTypeByName))
-	for name, t := range categoryTypeByName {
-		names[t] = name
-	}
-	return names
-}()
+// topLevelParentID is the parent_id value that marks a category as
+// top-level, matching the schema.sql default.
+const topLevelParentID int64 = 0
 
 // CategoryInfo is the wire representation of a transaction category returned
 // by list_categories and manage_category.
@@ -61,17 +57,14 @@ type ListCategoriesOutput struct {
 	Categories []CategoryInfo `json:"categories" jsonschema:"every transaction category in the ledger"`
 }
 
-func listCategories(deps Deps) (*mcp.CallToolResult, ListCategoriesOutput, error) {
-	ctx := core.NewNullContext()
-
-	// categoryType=0 means "all types", parentCategoryId=-1 means "all parents".
-	categories, err := services.TransactionCategories.GetAllCategoriesByUid(ctx, deps.UID, 0, -1)
+func listCategories(ctx context.Context, deps Deps) (*mcp.CallToolResult, ListCategoriesOutput, error) {
+	rows, err := deps.Q.ListCategories(ctx)
 	if err != nil {
 		return nil, ListCategoriesOutput{}, err
 	}
 
-	infos := make([]CategoryInfo, 0, len(categories))
-	for _, c := range categories {
+	infos := make([]CategoryInfo, 0, len(rows))
+	for _, c := range rows {
 		infos = append(infos, toCategoryInfo(c))
 	}
 
@@ -88,17 +81,15 @@ type ManageCategoryOutput struct {
 	Category CategoryInfo `json:"category" jsonschema:"the newly created category"`
 }
 
-func manageCategory(deps Deps, in ManageCategoryInput) (*mcp.CallToolResult, ManageCategoryOutput, error) {
+func manageCategory(ctx context.Context, deps Deps, in ManageCategoryInput) (*mcp.CallToolResult, ManageCategoryOutput, error) {
 	if in.Name == "" {
 		return nil, ManageCategoryOutput{}, fmt.Errorf("missing required field: name")
 	}
-
-	categoryType, ok := categoryTypeByName[in.Type]
-	if !ok {
+	if !categoryTypes[in.Type] {
 		return nil, ManageCategoryOutput{}, fmt.Errorf("missing or unsupported category type: %q", in.Type)
 	}
 
-	var parentID int64
+	parentID := topLevelParentID
 	if in.ParentID != "" {
 		var err error
 		parentID, err = parseID(in.ParentID)
@@ -107,58 +98,39 @@ func manageCategory(deps Deps, in ManageCategoryInput) (*mcp.CallToolResult, Man
 		}
 	}
 
-	ctx := core.NewNullContext()
-
-	var displayOrder int32
-
-	if parentID == models.LevelOneTransactionCategoryParentId {
-		maxOrder, err := services.TransactionCategories.GetMaxDisplayOrder(ctx, deps.UID, categoryType)
+	if parentID != topLevelParentID {
+		parent, err := deps.Q.GetCategory(ctx, parentID)
 		if err != nil {
-			return nil, ManageCategoryOutput{}, err
-		}
-		displayOrder = maxOrder + 1
-	} else {
-		parent, err := services.TransactionCategories.GetCategoryByCategoryId(ctx, deps.UID, parentID)
-		if err != nil {
-			if errors.Is(err, errs.ErrTransactionCategoryNotFound) {
-				return nil, ManageCategoryOutput{}, errs.ErrParentTransactionCategoryNotFound
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, ManageCategoryOutput{}, fmt.Errorf("parent category %q not found", in.ParentID)
 			}
 			return nil, ManageCategoryOutput{}, err
 		}
-		if parent.ParentCategoryId != models.LevelOneTransactionCategoryParentId {
-			return nil, ManageCategoryOutput{}, errs.ErrCannotAddToSecondaryTransactionCategory
+		if parent.ParentID != topLevelParentID {
+			return nil, ManageCategoryOutput{}, fmt.Errorf("category tree only supports two levels: cannot create a category under second-level category %q", in.ParentID)
 		}
-
-		maxOrder, err := services.TransactionCategories.GetMaxSubCategoryDisplayOrder(ctx, deps.UID, categoryType, parentID)
-		if err != nil {
-			return nil, ManageCategoryOutput{}, err
-		}
-		displayOrder = maxOrder + 1
 	}
 
-	category := &models.TransactionCategory{
-		Uid:              deps.UID,
-		Type:             categoryType,
-		ParentCategoryId: parentID,
-		Name:             in.Name,
-		DisplayOrder:     displayOrder,
-		Icon:             1,
-		IconType:         core.ICON_TYPE_SYSTEM,
-		Color:            "000000",
-	}
-
-	if err := services.TransactionCategories.CreateCategory(ctx, category); err != nil {
+	now := time.Now().Unix()
+	category, err := deps.Q.CreateCategory(ctx, store.CreateCategoryParams{
+		Name:      in.Name,
+		Type:      in.Type,
+		ParentID:  parentID,
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+	if err != nil {
 		return nil, ManageCategoryOutput{}, err
 	}
 
 	return nil, ManageCategoryOutput{Category: toCategoryInfo(category)}, nil
 }
 
-func toCategoryInfo(c *models.TransactionCategory) CategoryInfo {
+func toCategoryInfo(c store.Category) CategoryInfo {
 	return CategoryInfo{
-		ID:       formatID(c.CategoryId),
+		ID:       formatID(c.ID),
 		Name:     c.Name,
-		Type:     categoryTypeNames[c.Type],
-		ParentID: formatID(c.ParentCategoryId),
+		Type:     c.Type,
+		ParentID: formatID(c.ParentID),
 	}
 }

@@ -11,6 +11,7 @@ import (
 
 	"tally/internal/bootstrap"
 	"tally/internal/mcpserver"
+	"tally/internal/store"
 	"tally/internal/tools"
 )
 
@@ -22,23 +23,18 @@ func newTestSession(t *testing.T) *mcp.ClientSession {
 
 	dbPath := filepath.Join(t.TempDir(), "tally-test.db")
 	cfg := &bootstrap.Config{
-		MCPToken:        "unused",
-		DefaultCurrency: "CNY",
-		DBPath:          dbPath,
+		MCPToken: "unused",
+		DBPath:   dbPath,
 	}
 
-	ezCfg := bootstrap.BuildEzbookkeepingConfig(cfg)
-	if err := bootstrap.InitDataStore(ezCfg); err != nil {
+	db, err := bootstrap.InitDataStore(cfg)
+	if err != nil {
 		t.Fatalf("InitDataStore failed: %v", err)
 	}
-
-	uid, err := bootstrap.EnsureSingleUser(cfg.DefaultCurrency)
-	if err != nil {
-		t.Fatalf("EnsureSingleUser failed: %v", err)
-	}
+	t.Cleanup(func() { db.Close() })
 
 	server := mcpserver.New("tally-mcp-test", "0.0.0")
-	tools.RegisterAll(server, tools.Deps{UID: uid, DefaultCurrency: cfg.DefaultCurrency})
+	tools.RegisterAll(server, tools.Deps{DB: db, Q: store.New(db)})
 
 	httpServer := httptest.NewServer(mcpserver.HTTPHandler(server))
 	t.Cleanup(httpServer.Close)

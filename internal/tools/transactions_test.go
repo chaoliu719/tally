@@ -9,9 +9,6 @@ import (
 	"tally/internal/tools"
 )
 
-// futureTime returns a unix time safely after "now": ezbookkeeping rejects
-// transactions dated before an account's implicit balance-modification
-// checkpoint, which is stamped at account-creation wall-clock time.
 func futureTime() int64 {
 	return time.Now().Add(time.Hour).Unix()
 }
@@ -130,10 +127,16 @@ func TestCreateTransactionRejectsNonexistentAccount(t *testing.T) {
 		Time:       futureTime(),
 	})
 
+	// The only transaction on record is the balance_adjustment that
+	// setupAccountAndCategory's initial balance produced -- the rejected
+	// expense above must not have been written.
 	var list tools.SearchTransactionsOutput
 	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{}, &list)
-	if len(list.Transactions) != 0 {
-		t.Fatalf("expected no transaction recorded, got %d", len(list.Transactions))
+	if len(list.Transactions) != 1 {
+		t.Fatalf("expected only the initial balance_adjustment transaction, got %d", len(list.Transactions))
+	}
+	if list.Transactions[0].Type != "balance_adjustment" {
+		t.Fatalf("expected the recorded transaction to be balance_adjustment, got %q", list.Transactions[0].Type)
 	}
 }
 
@@ -207,6 +210,30 @@ func TestGetTransactionNotFound(t *testing.T) {
 	callToolExpectError(t, session, "get_transaction", tools.GetTransactionInput{ID: "999999"})
 }
 
+func TestGetTransactionBalanceAdjustment(t *testing.T) {
+	session := newTestSession(t)
+	accountID, _ := setupAccountAndCategory(t, session, 10000)
+
+	var list tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{}, &list)
+	if len(list.Transactions) != 1 {
+		t.Fatalf("expected 1 transaction (the initial balance_adjustment), got %d", len(list.Transactions))
+	}
+	adjustmentID := list.Transactions[0].ID
+
+	var got tools.GetTransactionOutput
+	callTool(t, session, "get_transaction", tools.GetTransactionInput{ID: adjustmentID}, &got)
+	if got.Transaction.Type != "balance_adjustment" {
+		t.Fatalf("Type = %q, want balance_adjustment", got.Transaction.Type)
+	}
+	if got.Transaction.AccountID != accountID {
+		t.Fatalf("AccountID = %q, want %q", got.Transaction.AccountID, accountID)
+	}
+	if got.Transaction.Amount != 10000 {
+		t.Fatalf("Amount = %d, want 10000", got.Transaction.Amount)
+	}
+}
+
 func TestSearchTransactionsNoFilter(t *testing.T) {
 	session := newTestSession(t)
 	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
@@ -218,10 +245,22 @@ func TestSearchTransactionsNoFilter(t *testing.T) {
 		Type: "expense", AccountID: accountID, CategoryID: categoryID, Amount: 200, Time: futureTime() + 3600,
 	}, &tools.CreateTransactionOutput{})
 
+	// 2 expenses plus the balance_adjustment that setupAccountAndCategory's
+	// initial balance produced -- no filter means no hiding either.
 	var out tools.SearchTransactionsOutput
 	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{}, &out)
-	if len(out.Transactions) != 2 {
-		t.Fatalf("expected 2 transactions, got %d", len(out.Transactions))
+	if len(out.Transactions) != 3 {
+		t.Fatalf("expected 3 transactions, got %d", len(out.Transactions))
+	}
+
+	var sawBalanceAdjustment bool
+	for _, txn := range out.Transactions {
+		if txn.Type == "balance_adjustment" {
+			sawBalanceAdjustment = true
+		}
+	}
+	if !sawBalanceAdjustment {
+		t.Fatal("expected the account's initial balance_adjustment transaction to be searchable")
 	}
 }
 

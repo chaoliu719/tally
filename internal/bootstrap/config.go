@@ -6,24 +6,20 @@ import (
 )
 
 const (
-	envMCPToken        = "TALLY_MCP_TOKEN"
-	envDefaultCurrency = "TALLY_DEFAULT_CURRENCY"
-	envDBPath          = "TALLY_DB_PATH"
-	envListenAddr      = "TALLY_LISTEN_ADDR"
+	envMCPToken   = "TALLY_MCP_TOKEN"
+	envDBPath     = "TALLY_DB_PATH"
+	envListenAddr = "TALLY_LISTEN_ADDR"
 
-	defaultCurrency   = "CNY"
 	defaultDBPath     = "./tally.db"
 	defaultListenAddr = ":8080"
 )
 
 // Config holds the runtime configuration for the tally-mcp process, loaded
-// entirely from environment variables (no ini file, unlike upstream
-// ezbookkeeping).
+// entirely from environment variables.
 type Config struct {
-	MCPToken        string
-	DefaultCurrency string
-	DBPath          string
-	ListenAddr      string
+	MCPToken   string
+	DBPath     string
+	ListenAddr string
 }
 
 // LoadConfig reads configuration from environment variables. It returns an
@@ -32,11 +28,6 @@ func LoadConfig() (*Config, error) {
 	token := os.Getenv(envMCPToken)
 	if token == "" {
 		return nil, fmt.Errorf("%s environment variable is required but not set", envMCPToken)
-	}
-
-	currency := os.Getenv(envDefaultCurrency)
-	if currency == "" {
-		currency = defaultCurrency
 	}
 
 	dbPath := os.Getenv(envDBPath)
@@ -50,9 +41,8 @@ func LoadConfig() (*Config, error) {
 	}
 
 	return &Config{
-		MCPToken:        token,
-		DefaultCurrency: currency,
-		DBPath:          dbPath,
-		ListenAddr:      listenAddr,
+		MCPToken:   token,
+		DBPath:     dbPath,
+		ListenAddr: listenAddr,
 	}, nil
 }

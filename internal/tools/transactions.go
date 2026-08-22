@@ -2,19 +2,15 @@ package tools
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
+	"time"
 
-	"github.com/mayswind/ezbookkeeping/pkg/core"
-	"github.com/mayswind/ezbookkeeping/pkg/models"
-	"github.com/mayswind/ezbookkeeping/pkg/services"
-	"github.com/mayswind/ezbookkeeping/pkg/utils"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-)
 
-// searchResultLimit bounds how many transactions search_transactions returns
-// in one call. v1 doesn't expose pagination; this is large enough to be
-// effectively "all transactions" for a personal ledger.
-const searchResultLimit = 100000
+	"tally/internal/store"
+)
 
 func init() {
 	register(registerTransactionTools)
@@ -24,46 +20,38 @@ func registerTransactionTools(s *mcp.Server, deps Deps) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "create_transaction",
 		Description: "Record one income or expense transaction. The category must be a second-level category (see list_categories); the account's balance is updated accordingly.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, in CreateTransactionInput) (*mcp.CallToolResult, CreateTransactionOutput, error) {
-		return createTransaction(deps, in)
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in CreateTransactionInput) (*mcp.CallToolResult, CreateTransactionOutput, error) {
+		return createTransaction(ctx, deps, in)
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_transaction",
 		Description: "Fetch one transaction by id, including its full details.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, in GetTransactionInput) (*mcp.CallToolResult, GetTransactionOutput, error) {
-		return getTransaction(deps, in)
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in GetTransactionInput) (*mcp.CallToolResult, GetTransactionOutput, error) {
+		return getTransaction(ctx, deps, in)
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "search_transactions",
 		Description: "List transactions, optionally filtered by time range, account, and/or category. With no filters, returns every transaction in the ledger.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, in SearchTransactionsInput) (*mcp.CallToolResult, SearchTransactionsOutput, error) {
-		return searchTransactions(deps, in)
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in SearchTransactionsInput) (*mcp.CallToolResult, SearchTransactionsOutput, error) {
+		return searchTransactions(ctx, deps, in)
 	})
 }
 
-var transactionTypeByName = map[string]models.TransactionType{
-	"income":  models.TRANSACTION_TYPE_INCOME,
-	"expense": models.TRANSACTION_TYPE_EXPENSE,
-}
-
-var transactionDbTypeNames = map[models.TransactionDbType]string{
-	models.TRANSACTION_DB_TYPE_MODIFY_BALANCE: "modify_balance",
-	models.TRANSACTION_DB_TYPE_INCOME:         "income",
-	models.TRANSACTION_DB_TYPE_EXPENSE:        "expense",
-	models.TRANSACTION_DB_TYPE_TRANSFER_OUT:   "transfer_out",
-	models.TRANSACTION_DB_TYPE_TRANSFER_IN:    "transfer_in",
+var createableTransactionTypes = map[string]bool{
+	"income":  true,
+	"expense": true,
 }
 
 // TransactionInfo is the wire representation of a transaction returned by
 // create_transaction, get_transaction, and search_transactions.
 type TransactionInfo struct {
 	ID         string `json:"id" jsonschema:"the transaction's unique id, as a decimal string"`
-	Type       string `json:"type" jsonschema:"the transaction's type: income or expense"`
+	Type       string `json:"type" jsonschema:"the transaction's type: income, expense, or balance_adjustment (an account's initial balance, recorded automatically by manage_account)"`
 	AccountID  string `json:"account_id" jsonschema:"the id of the account this transaction affects, as a decimal string"`
-	CategoryID string `json:"category_id" jsonschema:"the id of the transaction's category, as a decimal string"`
-	Amount     int64  `json:"amount" jsonschema:"the transaction amount, in the account currency's smallest unit (e.g. cents)"`
+	CategoryID string `json:"category_id" jsonschema:"the id of the transaction's category, as a decimal string; \"0\" for a balance_adjustment transaction, which has no category"`
+	Amount     int64  `json:"amount" jsonschema:"the transaction amount, in the account currency's smallest unit; how many decimal places that represents varies by currency (e.g. 2 for USD/CNY, 0 for JPY, 3 for BHD). Positive for income and expense; balance_adjustment amounts carry their own sign"`
 	Currency   string `json:"currency" jsonschema:"the account's currency, as an ISO 4217 code"`
 	Time       int64  `json:"time" jsonschema:"when the transaction occurred, as unix seconds"`
 	Comment    string `json:"comment,omitempty" jsonschema:"an optional note about the transaction"`
@@ -73,7 +61,7 @@ type CreateTransactionInput struct {
 	Type       string `json:"type" jsonschema:"the transaction's type: income or expense"`
 	AccountID  string `json:"account_id" jsonschema:"the id of the account this transaction affects, as a decimal string"`
 	CategoryID string `json:"category_id" jsonschema:"the id of the transaction's category (must be a second-level category), as a decimal string"`
-	Amount     int64  `json:"amount" jsonschema:"the transaction amount, in the account currency's smallest unit (e.g. cents); must be positive"`
+	Amount     int64  `json:"amount" jsonschema:"the transaction amount, in the account currency's smallest unit; how many decimal places that represents varies by currency (e.g. 2 for USD/CNY, 0 for JPY, 3 for BHD); must be positive"`
 	Time       int64  `json:"time" jsonschema:"when the transaction occurred, as unix seconds"`
 	Comment    string `json:"comment,omitempty" jsonschema:"an optional note about the transaction"`
 }
@@ -82,9 +70,8 @@ type CreateTransactionOutput struct {
 	Transaction TransactionInfo `json:"transaction" jsonschema:"the newly recorded transaction"`
 }
 
-func createTransaction(deps Deps, in CreateTransactionInput) (*mcp.CallToolResult, CreateTransactionOutput, error) {
-	txType, ok := transactionTypeByName[in.Type]
-	if !ok {
+func createTransaction(ctx context.Context, deps Deps, in CreateTransactionInput) (*mcp.CallToolResult, CreateTransactionOutput, error) {
+	if !createableTransactionTypes[in.Type] {
 		return nil, CreateTransactionOutput{}, fmt.Errorf("missing or unsupported transaction type: %q", in.Type)
 	}
 
@@ -111,35 +98,44 @@ func createTransaction(deps Deps, in CreateTransactionInput) (*mcp.CallToolResul
 		return nil, CreateTransactionOutput{}, fmt.Errorf("missing required field: time")
 	}
 
-	dbType, err := txType.ToTransactionDbType()
+	account, err := deps.Q.GetAccount(ctx, accountID)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, CreateTransactionOutput{}, fmt.Errorf("account %q not found", in.AccountID)
+		}
 		return nil, CreateTransactionOutput{}, err
 	}
 
-	ctx := core.NewNullContext()
-
-	// Look up the account first so we can (a) reject a nonexistent account
-	// with a clear error before touching anything else, and (b) report the
-	// account's currency alongside the created transaction.
-	account, err := services.Accounts.GetAccountByAccountId(ctx, deps.UID, accountID)
+	category, err := deps.Q.GetCategory(ctx, categoryID)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, CreateTransactionOutput{}, fmt.Errorf("category %q not found", in.CategoryID)
+		}
 		return nil, CreateTransactionOutput{}, err
 	}
-
-	transaction := &models.Transaction{
-		Uid:             deps.UID,
-		Type:            dbType,
-		CategoryId:      categoryID,
-		TransactionTime: utils.GetMinTransactionTimeFromUnixTime(in.Time),
-		AccountId:       accountID,
-		Amount:          in.Amount,
-		Comment:         in.Comment,
+	if category.ParentID == topLevelParentID {
+		return nil, CreateTransactionOutput{}, fmt.Errorf("category %q is a top-level category; create_transaction requires a second-level category", in.CategoryID)
 	}
 
-	// CreateTransaction validates the category itself (existence, and that
-	// it's a second-level category) via ezbookkeeping's own isCategoryValid;
-	// we don't duplicate that check here.
-	if err := services.Transactions.CreateTransaction(ctx, transaction, nil, nil); err != nil {
+	// income/expense amounts are stored signed (income positive, expense
+	// negative) so SUM(amount) is directly the account balance; the wire
+	// format keeps both sides of CreateTransactionInput.Amount /
+	// TransactionInfo.Amount positive, matching the tested contract.
+	signedAmount := in.Amount
+	if in.Type == "expense" {
+		signedAmount = -in.Amount
+	}
+
+	transaction, err := deps.Q.CreateTransaction(ctx, store.CreateTransactionParams{
+		Type:       in.Type,
+		AccountID:  accountID,
+		CategoryID: sql.NullInt64{Int64: categoryID, Valid: true},
+		Amount:     signedAmount,
+		Time:       in.Time,
+		Comment:    in.Comment,
+		CreatedAt:  time.Now().Unix(),
+	})
+	if err != nil {
 		return nil, CreateTransactionOutput{}, err
 	}
 
@@ -154,7 +150,7 @@ type GetTransactionOutput struct {
 	Transaction TransactionInfo `json:"transaction" jsonschema:"the requested transaction"`
 }
 
-func getTransaction(deps Deps, in GetTransactionInput) (*mcp.CallToolResult, GetTransactionOutput, error) {
+func getTransaction(ctx context.Context, deps Deps, in GetTransactionInput) (*mcp.CallToolResult, GetTransactionOutput, error) {
 	if in.ID == "" {
 		return nil, GetTransactionOutput{}, fmt.Errorf("missing required field: id")
 	}
@@ -163,19 +159,20 @@ func getTransaction(deps Deps, in GetTransactionInput) (*mcp.CallToolResult, Get
 		return nil, GetTransactionOutput{}, err
 	}
 
-	ctx := core.NewNullContext()
+	transaction, err := deps.Q.GetTransaction(ctx, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, GetTransactionOutput{}, fmt.Errorf("transaction %q not found", in.ID)
+		}
+		return nil, GetTransactionOutput{}, err
+	}
 
-	transaction, err := services.Transactions.GetTransactionByTransactionId(ctx, deps.UID, id)
+	account, err := deps.Q.GetAccount(ctx, transaction.AccountID)
 	if err != nil {
 		return nil, GetTransactionOutput{}, err
 	}
 
-	currency, err := lookupCurrency(ctx, deps.UID, transaction.AccountId)
-	if err != nil {
-		return nil, GetTransactionOutput{}, err
-	}
-
-	return nil, GetTransactionOutput{Transaction: toTransactionInfo(transaction, currency)}, nil
+	return nil, GetTransactionOutput{Transaction: toTransactionInfo(transaction, account.Currency)}, nil
 }
 
 type SearchTransactionsInput struct {
@@ -189,49 +186,36 @@ type SearchTransactionsOutput struct {
 	Transactions []TransactionInfo `json:"transactions" jsonschema:"the matching transactions"`
 }
 
-func searchTransactions(deps Deps, in SearchTransactionsInput) (*mcp.CallToolResult, SearchTransactionsOutput, error) {
-	var accountIds []int64
+func searchTransactions(ctx context.Context, deps Deps, in SearchTransactionsInput) (*mcp.CallToolResult, SearchTransactionsOutput, error) {
+	params := store.SearchTransactionsParams{}
+
 	if in.AccountID != "" {
 		id, err := parseID(in.AccountID)
 		if err != nil {
 			return nil, SearchTransactionsOutput{}, err
 		}
-		accountIds = []int64{id}
+		params.AccountID = id
 	}
-
-	var categoryIds []int64
 	if in.CategoryID != "" {
 		id, err := parseID(in.CategoryID)
 		if err != nil {
 			return nil, SearchTransactionsOutput{}, err
 		}
-		categoryIds = []int64{id}
-	}
-
-	var maxTime, minTime int64
-	if in.EndTime > 0 {
-		maxTime = utils.GetMaxTransactionTimeFromUnixTime(in.EndTime)
+		params.CategoryID = id
 	}
 	if in.StartTime > 0 {
-		minTime = utils.GetMinTransactionTimeFromUnixTime(in.StartTime)
+		params.StartTime = in.StartTime
+	}
+	if in.EndTime > 0 {
+		params.EndTime = in.EndTime
 	}
 
-	ctx := core.NewNullContext()
-
-	transactions, err := services.Transactions.GetTransactionsByMaxTime(
-		ctx, deps.UID, maxTime, minTime, 0, categoryIds, accountIds, nil, false,
-		"", "", core.MATCH_MODE_DEFAULT, false, 1, searchResultLimit, false, true,
-	)
+	transactions, err := deps.Q.SearchTransactions(ctx, params)
 	if err != nil {
 		return nil, SearchTransactionsOutput{}, err
 	}
 
-	// Accounts get an implicit "modify balance" transaction when created with
-	// a nonzero initial balance; that's bookkeeping plumbing, not something a
-	// caller created via create_transaction, so it's excluded here.
-	transactions = filterIncomeAndExpense(transactions)
-
-	infos, err := toTransactionInfos(ctx, deps.UID, transactions)
+	infos, err := toTransactionInfos(ctx, deps, transactions)
 	if err != nil {
 		return nil, SearchTransactionsOutput{}, err
 	}
@@ -239,66 +223,54 @@ func searchTransactions(deps Deps, in SearchTransactionsInput) (*mcp.CallToolRes
 	return nil, SearchTransactionsOutput{Transactions: infos}, nil
 }
 
-func filterIncomeAndExpense(transactions []*models.Transaction) []*models.Transaction {
-	filtered := make([]*models.Transaction, 0, len(transactions))
-	for _, t := range transactions {
-		if t.Type == models.TRANSACTION_DB_TYPE_INCOME || t.Type == models.TRANSACTION_DB_TYPE_EXPENSE {
-			filtered = append(filtered, t)
-		}
-	}
-	return filtered
-}
-
-func lookupCurrency(ctx core.Context, uid int64, accountID int64) (string, error) {
-	account, err := services.Accounts.GetAccountByAccountId(ctx, uid, accountID)
-	if err != nil {
-		return "", err
-	}
-	return account.Currency, nil
-}
-
-// toTransactionInfos resolves currencies for a batch of transactions with a
-// single account lookup, instead of one query per transaction.
-func toTransactionInfos(ctx core.Context, uid int64, transactions []*models.Transaction) ([]TransactionInfo, error) {
-	accountIds := make([]int64, 0, len(transactions))
-	seen := make(map[int64]bool, len(transactions))
-	for _, t := range transactions {
-		if !seen[t.AccountId] {
-			seen[t.AccountId] = true
-			accountIds = append(accountIds, t.AccountId)
-		}
-	}
-
-	accountsByID := map[int64]*models.Account{}
-	if len(accountIds) > 0 {
-		var err error
-		accountsByID, err = services.Accounts.GetAccountsByAccountIds(ctx, uid, accountIds)
-		if err != nil {
-			return nil, err
-		}
-	}
-
+// toTransactionInfos resolves currencies for a batch of transactions with one
+// account lookup per distinct account, instead of one query per transaction.
+func toTransactionInfos(ctx context.Context, deps Deps, transactions []store.Transaction) ([]TransactionInfo, error) {
+	currencyByAccount := map[int64]string{}
 	infos := make([]TransactionInfo, 0, len(transactions))
+
 	for _, t := range transactions {
-		currency := ""
-		if account, ok := accountsByID[t.AccountId]; ok {
-			currency = account.Currency
+		curr, ok := currencyByAccount[t.AccountID]
+		if !ok {
+			account, err := deps.Q.GetAccount(ctx, t.AccountID)
+			if err != nil {
+				return nil, err
+			}
+			curr = account.Currency
+			currencyByAccount[t.AccountID] = curr
 		}
-		infos = append(infos, toTransactionInfo(t, currency))
+		infos = append(infos, toTransactionInfo(t, curr))
 	}
 
 	return infos, nil
 }
 
-func toTransactionInfo(t *models.Transaction, currency string) TransactionInfo {
+func toTransactionInfo(t store.Transaction, currencyCode string) TransactionInfo {
+	amount := t.Amount
+	if t.Type != "balance_adjustment" {
+		amount = abs64(amount)
+	}
+
+	categoryID := "0"
+	if t.CategoryID.Valid {
+		categoryID = formatID(t.CategoryID.Int64)
+	}
+
 	return TransactionInfo{
-		ID:         formatID(t.TransactionId),
-		Type:       transactionDbTypeNames[t.Type],
-		AccountID:  formatID(t.AccountId),
-		CategoryID: formatID(t.CategoryId),
-		Amount:     t.Amount,
-		Currency:   currency,
-		Time:       utils.GetUnixTimeFromTransactionTime(t.TransactionTime),
+		ID:         formatID(t.ID),
+		Type:       t.Type,
+		AccountID:  formatID(t.AccountID),
+		CategoryID: categoryID,
+		Amount:     amount,
+		Currency:   currencyCode,
+		Time:       t.Time,
 		Comment:    t.Comment,
 	}
+}
+
+func abs64(n int64) int64 {
+	if n < 0 {
+		return -n
+	}
+	return n
 }

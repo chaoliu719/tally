@@ -1,11 +1,11 @@
 # tally-mcp
 
-A pure [MCP](https://modelcontextprotocol.io) server for personal bookkeeping. It reuses
-[ezbookkeeping](https://github.com/mayswind/ezbookkeeping)'s service layer (accounts, categories,
-transactions, SQLite storage) as a Go library, and exposes it over MCP tools instead of a REST API
-or web UI. There is no browser client, no traditional login flow, and no multi-user support — this
-is a single-user server meant to sit behind a static bearer token, so an agent like Claude can record
-and query a ledger directly.
+A pure [MCP](https://modelcontextprotocol.io) server for personal bookkeeping, backed by its own
+SQLite schema and query layer (via [sqlc](https://sqlc.dev)) — no REST API, no web UI, no
+third-party bookkeeping library underneath. There is no browser client, no traditional login flow,
+and no multi-user support — this is a single-user server meant to sit behind a static bearer
+token, so an agent like Claude can record and query a ledger directly. The database itself is the
+one implicit ledger; there's no user account to create or log into.
 
 ## Tools
 
@@ -19,11 +19,16 @@ and query a ledger directly.
 | `get_transaction` | Fetch one transaction by id. |
 | `search_transactions` | List transactions, optionally filtered by time range, account, and/or category. |
 
-Categories are two levels deep, matching ezbookkeeping: a **top-level** category is only for
-grouping and cannot be used in `create_transaction`; a **second-level** category (created by
-passing `parent_id`) is what transactions actually reference. All ids on the wire (account,
-category, transaction) are decimal **strings**, not JSON numbers — ezbookkeeping's ids can exceed
-what a JSON number safely round-trips through many MCP clients.
+Categories are two levels deep: a **top-level** category is only for grouping and cannot be used
+in `create_transaction`; a **second-level** category (created by passing `parent_id`) is what
+transactions actually reference. All ids on the wire (account, category, transaction) are decimal
+**strings**, not JSON numbers, so no MCP client ever risks losing precision decoding one into a
+JSON number.
+
+Amounts (`balance`, `amount`) are always in the account currency's smallest unit, but how many
+decimal places that represents **varies by currency** — 2 for most currencies (e.g. USD, CNY), 0
+for others (e.g. JPY, KRW), and 3 for a handful (e.g. BHD, KWD, OMR), per the real ISO 4217
+standard. There is no single fixed "divide by 100" rule that works for every currency.
 
 Not implemented in this version (left for a future change): updating/deleting accounts or
 categories, tags and tag groups, custom exchange rates, batch operations, transfer-type
@@ -31,23 +36,23 @@ transactions, and any analytics/aggregation tools.
 
 ## Configuration
 
-All configuration is via environment variables — there's no ezbookkeeping-style ini file.
+All configuration is via environment variables.
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `TALLY_MCP_TOKEN` | Yes | — | Static bearer token clients must send as `Authorization: Bearer <token>`. The process refuses to start without it. |
-| `TALLY_DEFAULT_CURRENCY` | No | `CNY` | ISO 4217 currency code used when bootstrapping the single user. |
-| `TALLY_DB_PATH` | No | `./tally.db` | Path to the SQLite file. Created (with full ezbookkeeping schema) on first run if it doesn't exist. |
+| `TALLY_DB_PATH` | No | `./tally.db` | Path to the SQLite file. Created (with tally's own schema) on first run if it doesn't exist. |
 | `TALLY_LISTEN_ADDR` | No | `:8080` | Address the HTTP server listens on. |
 
-On first startup the server creates the SQLite file, runs ezbookkeeping's schema migrations, and
-provisions a single internal user (with a random password that is never used or validated —
-authentication is entirely via the bearer token, not ezbookkeeping's own login system). Subsequent
-restarts reuse the same user.
+On first startup the server creates the SQLite file (if needed) and applies tally's schema
+(`CREATE TABLE IF NOT EXISTS`, so it's safe to run on every startup). There is no user account to
+create — the database itself is the single, implicit ledger, and authentication is entirely via
+the bearer token above.
 
 ## Build & run
 
-Requires Go 1.26+ (ezbookkeeping's own requirement) — this project targets Go 1.27.
+Requires Go 1.27+. The SQLite driver ([modernc.org/sqlite](https://modernc.org/sqlite)) is pure
+Go, so no cgo or C toolchain is needed to build or cross-compile.
 
 ```bash
 go build -o tally-mcp ./cmd/tally-mcp
@@ -87,4 +92,4 @@ as entered).
 
 Once connected, ask the assistant to list accounts (`list_accounts`) — on a fresh database this
 should return an empty list, confirming the round trip: client → bearer token auth → MCP
-JSON-RPC → ezbookkeeping service layer → SQLite.
+JSON-RPC → tally's query layer → SQLite.
