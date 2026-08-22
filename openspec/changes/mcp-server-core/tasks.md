@@ -29,19 +29,19 @@
 ## 6. 分类管理工具
 
 - [x] 6.1 实现 `list_categories`(调用 `pkg/services.TransactionCategoryService` 的查询方法),验证空账本调用返回空列表
-- [ ] 6.2 实现 `manage_category` 的创建路径,支持可选的 `parent_id` 参数(不传/传0创建一级分类,传入已存在的一级分类 id 创建二级分类),验证 `category-management/spec.md` 中五个场景全部可复现:创建一级分类、在一级分类下创建二级分类、parent_id 指向的分类已是二级分类被拒绝、parent_id 指向不存在的分类被拒绝、缺必填字段被拒绝;`list_categories` 结果中每个分类需带上父分类 id
+- [x] 6.2 实现 `manage_category` 的创建路径,支持可选的 `parent_id` 参数(不传/传0创建一级分类,传入已存在的一级分类 id 创建二级分类),验证 `category-management/spec.md` 中五个场景全部可复现:创建一级分类、在一级分类下创建二级分类、parent_id 指向的分类已是二级分类被拒绝、parent_id 指向不存在的分类被拒绝、缺必填字段被拒绝;`list_categories` 结果中每个分类需带上父分类 id
 
 ## 7. 交易记录工具
 
-- [ ] 7.1 实现 `create_transaction`(收入/支出类型,调用 `pkg/services.TransactionService.CreateTransaction`,分类必须是二级分类),验证 `transaction-recording/spec.md` 的"提供有效信息记录交易"场景:交易创建后所属账户余额按类型正确增减
-- [ ] 7.2 验证同一 spec 中"引用不存在的账户或分类"、"引用一级分类"与"缺少必填字段"三个失败场景:请求被拒绝、不写入交易、账户余额不变
-- [ ] 7.3 实现 `get_transaction`,验证已存在交易能查到完整信息、不存在的 ID 返回明确的"未找到"错误而非空结果或崩溃
-- [ ] 7.4 实现 `search_transactions`,支持按时间范围/账户/分类筛选,验证 spec 中三个场景:无筛选条件返回全部、按时间范围筛选生效、筛选结果为空时返回空列表而非错误
+- [x] 7.1 实现 `create_transaction`(收入/支出类型,调用 `pkg/services.TransactionService.CreateTransaction`,分类必须是二级分类),验证 `transaction-recording/spec.md` 的"提供有效信息记录交易"场景:交易创建后所属账户余额按类型正确增减
+- [x] 7.2 验证同一 spec 中"引用不存在的账户或分类"、"引用一级分类"与"缺少必填字段"三个失败场景:请求被拒绝、不写入交易、账户余额不变
+- [x] 7.3 实现 `get_transaction`,验证已存在交易能查到完整信息、不存在的 ID 返回明确的"未找到"错误而非空结果或崩溃
+- [x] 7.4 实现 `search_transactions`,支持按时间范围/账户/分类筛选,验证 spec 中三个场景:无筛选条件返回全部、按时间范围筛选生效、筛选结果为空时返回空列表而非错误
 
 ## 8. 端到端验证
 
-- [ ] 8.1 从全新的空 SQLite 文件开始,只通过 MCP 工具调用(不直接操作数据库)完整走一遍:启动 server → `manage_account` 建账户 → `manage_category` 建一级分类 → `manage_category` 传入该一级分类 id 建二级分类 → `create_transaction` 用该二级分类记一笔支出 → `search_transactions` 查到这笔交易 → `get_transaction` 按其 ID 查到同一笔交易且账户余额已扣减,验证 proposal.md 中描述的最小闭环成立
+- [x] 8.1 从全新的空 SQLite 文件开始,只通过 MCP 工具调用(不直接操作数据库)完整走一遍:启动 server → `manage_account` 建账户 → `manage_category` 建一级分类 → `manage_category` 传入该一级分类 id 建二级分类 → `create_transaction` 用该二级分类记一笔支出 → `search_transactions` 查到这笔交易 → `get_transaction` 按其 ID 查到同一笔交易且账户余额已扣减,验证 proposal.md 中描述的最小闭环成立
 
 ## 9. 文档
 
-- [ ] 9.1 写 README:环境变量说明、构建与启动命令、如何在 Claude Code/Claude Desktop 中把这个 server 配置为一个 HTTP + bearer token 的远程 MCP server,验证按文档步骤能从零跑起来并连上一个真实 MCP 客户端
+- [x] 9.1 写 README:环境变量说明、构建与启动命令、如何在 Claude Code/Claude Desktop 中把这个 server 配置为一个 HTTP + bearer token 的远程 MCP server,验证按文档步骤能从零跑起来并连上一个真实 MCP 客户端
