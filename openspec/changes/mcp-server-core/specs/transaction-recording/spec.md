@@ -5,15 +5,19 @@
 ## ADDED Requirements
 
 ### Requirement: 记录一笔收入或支出交易
-用户 SHALL 能够通过 `create_transaction` 工具记录一笔收入或支出类型的交易,指定所属账户、分类、金额、币种与发生时间。
+用户 SHALL 能够通过 `create_transaction` 工具记录一笔收入或支出类型的交易,指定所属账户、分类、金额、币种与发生时间。分类必须是一个二级分类(参见 `category-management/spec.md` 的两层分类结构);一级分类不能直接用于记账。
 
 #### Scenario: 提供有效信息记录交易
-- **WHEN** 调用 `create_transaction`,指定的账户与分类均已存在,金额、币种、发生时间均合法
+- **WHEN** 调用 `create_transaction`,指定的账户已存在、指定的分类是一个已存在的二级分类,金额、币种、发生时间均合法
 - **THEN** 交易被记录,随后可以通过 `get_transaction` 按其 ID 查到,且所属账户的余额按交易类型(收入增加、支出减少)相应变化
 
 #### Scenario: 引用不存在的账户或分类
 - **WHEN** 调用 `create_transaction`,指定的账户 ID 或分类 ID 在当前账本中不存在
 - **THEN** 请求被拒绝,返回说明引用无效的错误,不记录交易,账户余额不变
+
+#### Scenario: 引用一级分类
+- **WHEN** 调用 `create_transaction`,指定的分类是一个已存在的一级分类(而非二级分类)
+- **THEN** 请求被拒绝,返回说明"必须使用二级分类"的错误,不记录交易,账户余额不变
 
 #### Scenario: 缺少必填字段
 - **WHEN** 调用 `create_transaction`,缺少账户、分类、金额或发生时间中的任意一项
