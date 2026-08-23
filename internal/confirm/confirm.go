@@ -1,9 +1,9 @@
 // Package confirm implements the stateless, HMAC-signed preview -> apply
 // confirmation tokens used by destructive write operations (see
-// openspec/changes/account-category-lifecycle/design.md). A token is
-// base64url(JSON payload) + "." + base64url(HMAC-SHA256(payload, secret)) --
-// two segments, no JWT header/algorithm negotiation, since the algorithm is
-// fixed and there's no other consumer to negotiate with.
+// openspec/changes/archive/2026-08-23-account-category-lifecycle/design.md). A
+// token is base64url(JSON payload) + "." + base64url(HMAC-SHA256(payload,
+// secret)) -- two segments, no JWT header/algorithm negotiation, since the
+// algorithm is fixed and there's no other consumer to negotiate with.
 package confirm
 
 import (
