@@ -55,7 +55,8 @@ clear the reference block on `manage_account`/`manage_category`'s `operation=del
 or category itself is otherwise never automatically deleted or modified by deleting transactions.
 
 Not implemented in this version (left for a future change): tags and tag groups, custom exchange
-rates, batch operations, transfer-type transactions, and any analytics/aggregation tools.
+rates, batch operations, transfer-type transactions, and trend/reconciliation-style analytics
+beyond `get_financial_summary`.
 
 ## Configuration
 
