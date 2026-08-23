@@ -32,7 +32,7 @@ func registerLedgerTools(s *mcp.Server, deps Deps) {
 		Name: "manage_ledger",
 		Description: "Create, update, or delete a ledger, selected via the operation field. " +
 			"operation=create makes a new ledger with no sources or categories yet. operation=update replaces " +
-			"name and/or comment on an existing ledger (at least one must be provided). " +
+			"name and comment on an existing ledger (both required; this is a full replacement, not a partial update). " +
 			"operation=delete is a two-step preview -> apply: call without confirmation_token to preview " +
 			"(fails if the ledger still has any sources, categories, or transactions), then call again with the " +
 			"returned confirmation_token to actually delete.",
@@ -73,8 +73,8 @@ type ManageLedgerInput struct {
 	Operation string `json:"operation" jsonschema:"the operation to perform: create, update, or delete"`
 	ID        string `json:"id,omitempty" jsonschema:"the ledger's id, as a decimal string; required for operation=update and operation=delete"`
 
-	Name    string `json:"name,omitempty" jsonschema:"the ledger's name; required for create, optional for update"`
-	Comment string `json:"comment,omitempty" jsonschema:"an optional note about the ledger; for update, only changed when non-empty"`
+	Name    string `json:"name,omitempty" jsonschema:"the ledger's name; required for create and update"`
+	Comment string `json:"comment,omitempty" jsonschema:"a note about the ledger; optional for create, required for update (update is a full replacement, not a partial one)"`
 
 	ConfirmationToken string `json:"confirmation_token,omitempty" jsonschema:"for operation=delete only: omit to preview the deletion and receive a token, or supply the token from a prior preview to actually delete"`
 }
@@ -127,30 +127,23 @@ func updateLedger(ctx context.Context, deps Deps, in ManageLedgerInput) (*mcp.Ca
 		return nil, ManageLedgerOutput{}, err
 	}
 
-	if in.Name == "" && in.Comment == "" {
-		return nil, ManageLedgerOutput{}, fmt.Errorf("missing required field: name or comment (at least one must be provided)")
+	if in.Name == "" {
+		return nil, ManageLedgerOutput{}, fmt.Errorf("missing required field: name")
+	}
+	if in.Comment == "" {
+		return nil, ManageLedgerOutput{}, fmt.Errorf("missing required field: comment")
 	}
 
-	existing, err := deps.Q.GetLedger(ctx, id)
-	if err != nil {
+	if _, err := deps.Q.GetLedger(ctx, id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ManageLedgerOutput{}, fmt.Errorf("ledger %q not found", in.ID)
 		}
 		return nil, ManageLedgerOutput{}, err
 	}
 
-	newName := existing.Name
-	if in.Name != "" {
-		newName = in.Name
-	}
-	newComment := existing.Comment
-	if in.Comment != "" {
-		newComment = in.Comment
-	}
-
 	updated, err := deps.Q.UpdateLedger(ctx, store.UpdateLedgerParams{
-		Name:      newName,
-		Comment:   newComment,
+		Name:      in.Name,
+		Comment:   in.Comment,
 		UpdatedAt: time.Now().Unix(),
 		ID:        id,
 	})

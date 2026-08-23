@@ -84,28 +84,35 @@ func TestManageLedgerUpdateNameAndComment(t *testing.T) {
 	}
 }
 
-func TestManageLedgerUpdatePartialOnlyName(t *testing.T) {
+func TestManageLedgerUpdateMissingComment(t *testing.T) {
 	session, ledgerID := newTestSession(t)
 
-	callTool(t, session, "manage_ledger", tools.ManageLedgerInput{
+	callToolExpectError(t, session, "manage_ledger", tools.ManageLedgerInput{
 		Operation: "update",
 		ID:        ledgerID,
-		Name:      "",
-		Comment:   "just a comment",
-	}, &tools.ManageLedgerOutput{})
+		Name:      "Only Name Given",
+	})
 
-	var updated tools.ManageLedgerOutput
-	callTool(t, session, "manage_ledger", tools.ManageLedgerInput{
-		Operation: "update",
-		ID:        ledgerID,
-		Name:      "Only Name Changed",
-	}, &updated)
-
-	if updated.Ledger.Name != "Only Name Changed" {
-		t.Errorf("Name = %q, want %q", updated.Ledger.Name, "Only Name Changed")
+	var list tools.ListLedgersOutput
+	callTool(t, session, "list_ledgers", tools.ListLedgersInput{}, &list)
+	if list.Ledgers[0].Name == "Only Name Given" {
+		t.Error("ledger was updated despite missing comment")
 	}
-	if updated.Ledger.Comment != "just a comment" {
-		t.Errorf("Comment = %q, want %q (unchanged since omitted)", updated.Ledger.Comment, "just a comment")
+}
+
+func TestManageLedgerUpdateMissingName(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+
+	callToolExpectError(t, session, "manage_ledger", tools.ManageLedgerInput{
+		Operation: "update",
+		ID:        ledgerID,
+		Comment:   "Only Comment Given",
+	})
+
+	var list tools.ListLedgersOutput
+	callTool(t, session, "list_ledgers", tools.ListLedgersInput{}, &list)
+	if list.Ledgers[0].Comment == "Only Comment Given" {
+		t.Error("ledger was updated despite missing name")
 	}
 }
 
@@ -125,6 +132,7 @@ func TestManageLedgerUpdateNotFound(t *testing.T) {
 		Operation: "update",
 		ID:        "999999",
 		Name:      "Ghost",
+		Comment:   "no such ledger",
 	})
 }
 
