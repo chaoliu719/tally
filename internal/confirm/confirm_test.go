@@ -1,6 +1,7 @@
 package confirm_test
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 	"time"
@@ -32,7 +33,7 @@ func TestIssueVerifyRoundTrip(t *testing.T) {
 func TestVerifyRejectsTamperedSignature(t *testing.T) {
 	token, _ := confirm.Issue(secret, action, id, revision)
 
-	tampered := token[:len(token)-1] + flipChar(token[len(token)-1])
+	tampered := tamperSignature(t, token)
 
 	err := confirm.Verify(secret, tampered, action, id, revision, time.Now())
 	if err == nil {
@@ -81,7 +82,7 @@ func TestVerifyRejectsMismatchedRevision(t *testing.T) {
 // distinguishable, descriptive error rather than one shared generic message.
 func TestVerifyErrorsAreDistinct(t *testing.T) {
 	token, _ := confirm.Issue(secret, action, id, revision)
-	tampered := token[:len(token)-1] + flipChar(token[len(token)-1])
+	tampered := tamperSignature(t, token)
 	future := time.Now().Add(confirm.TTL + time.Minute)
 
 	cases := map[string]error{
@@ -105,9 +106,25 @@ func TestVerifyErrorsAreDistinct(t *testing.T) {
 	}
 }
 
-func flipChar(c byte) string {
-	if strings.ContainsRune("aA", rune(c)) {
-		return "b"
+// tamperSignature flips a bit in the token's signature bytes and
+// re-encodes it, guaranteeing the decoded signature actually changes.
+// (Flipping the trailing base64url character isn't reliable: the final
+// character of a 32-byte HMAC only encodes 4 significant bits, so some
+// flips there land on unused padding bits and decode to the same bytes.)
+func tamperSignature(t *testing.T, token string) string {
+	t.Helper()
+
+	i := strings.LastIndexByte(token, '.')
+	if i < 0 {
+		t.Fatalf("token %q has no signature segment", token)
 	}
-	return "a"
+	bodyB64, sigB64 := token[:i], token[i+1:]
+
+	sig, err := base64.RawURLEncoding.DecodeString(sigB64)
+	if err != nil {
+		t.Fatalf("decode signature: %v", err)
+	}
+	sig[0] ^= 0xFF
+
+	return bodyB64 + "." + base64.RawURLEncoding.EncodeToString(sig)
 }
