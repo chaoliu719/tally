@@ -19,7 +19,7 @@ func init() {
 func registerTransactionTools(s *mcp.Server, deps Deps) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "create_transaction",
-		Description: "Record one income or expense transaction. The category must be a second-level category (see list_categories); the account's balance is updated accordingly.",
+		Description: "Record one income, expense, or balance_adjustment transaction; the account's balance is updated accordingly. income/expense require an existing category_id (any category in the ledger). balance_adjustment is the formal way to correct an account's balance: it takes a signed, nonzero amount and must not have a category_id.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in CreateTransactionInput) (*mcp.CallToolResult, CreateTransactionOutput, error) {
 		return createTransaction(ctx, deps, in)
 	})
@@ -40,15 +40,16 @@ func registerTransactionTools(s *mcp.Server, deps Deps) {
 }
 
 var createableTransactionTypes = map[string]bool{
-	"income":  true,
-	"expense": true,
+	"income":             true,
+	"expense":            true,
+	"balance_adjustment": true,
 }
 
 // TransactionInfo is the wire representation of a transaction returned by
 // create_transaction, get_transaction, and search_transactions.
 type TransactionInfo struct {
 	ID         string `json:"id" jsonschema:"the transaction's unique id, as a decimal string"`
-	Type       string `json:"type" jsonschema:"the transaction's type: income, expense, or balance_adjustment (an account's initial balance, recorded automatically by manage_account)"`
+	Type       string `json:"type" jsonschema:"the transaction's type: income, expense, or balance_adjustment"`
 	AccountID  string `json:"account_id" jsonschema:"the id of the account this transaction affects, as a decimal string"`
 	CategoryID string `json:"category_id" jsonschema:"the id of the transaction's category, as a decimal string; \"0\" for a balance_adjustment transaction, which has no category"`
 	Amount     int64  `json:"amount" jsonschema:"the transaction amount, in the account currency's smallest unit; how many decimal places that represents varies by currency (e.g. 2 for USD/CNY, 0 for JPY, 3 for BHD). Positive for income and expense; balance_adjustment amounts carry their own sign"`
@@ -58,10 +59,10 @@ type TransactionInfo struct {
 }
 
 type CreateTransactionInput struct {
-	Type       string `json:"type" jsonschema:"the transaction's type: income or expense"`
+	Type       string `json:"type" jsonschema:"the transaction's type: income, expense, or balance_adjustment"`
 	AccountID  string `json:"account_id" jsonschema:"the id of the account this transaction affects, as a decimal string"`
-	CategoryID string `json:"category_id" jsonschema:"the id of the transaction's category (must be a second-level category), as a decimal string"`
-	Amount     int64  `json:"amount" jsonschema:"the transaction amount, in the account currency's smallest unit; how many decimal places that represents varies by currency (e.g. 2 for USD/CNY, 0 for JPY, 3 for BHD); must be positive"`
+	CategoryID string `json:"category_id,omitempty" jsonschema:"the id of the transaction's category, as a decimal string; required for income/expense (any existing category), must be omitted for balance_adjustment"`
+	Amount     int64  `json:"amount" jsonschema:"the transaction amount, in the account currency's smallest unit; how many decimal places that represents varies by currency (e.g. 2 for USD/CNY, 0 for JPY, 3 for BHD); must be positive for income/expense, nonzero (positive or negative) for balance_adjustment"`
 	Time       int64  `json:"time" jsonschema:"when the transaction occurred, as unix seconds"`
 	Comment    string `json:"comment,omitempty" jsonschema:"an optional note about the transaction"`
 }
@@ -83,17 +84,6 @@ func createTransaction(ctx context.Context, deps Deps, in CreateTransactionInput
 		return nil, CreateTransactionOutput{}, err
 	}
 
-	if in.CategoryID == "" {
-		return nil, CreateTransactionOutput{}, fmt.Errorf("missing required field: category_id")
-	}
-	categoryID, err := parseID(in.CategoryID)
-	if err != nil {
-		return nil, CreateTransactionOutput{}, err
-	}
-
-	if in.Amount <= 0 {
-		return nil, CreateTransactionOutput{}, fmt.Errorf("missing required field: amount (must be positive)")
-	}
 	if in.Time <= 0 {
 		return nil, CreateTransactionOutput{}, fmt.Errorf("missing required field: time")
 	}
@@ -106,30 +96,50 @@ func createTransaction(ctx context.Context, deps Deps, in CreateTransactionInput
 		return nil, CreateTransactionOutput{}, err
 	}
 
-	category, err := deps.Q.GetCategory(ctx, categoryID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, CreateTransactionOutput{}, fmt.Errorf("category %q not found", in.CategoryID)
-		}
-		return nil, CreateTransactionOutput{}, err
-	}
-	if category.ParentID == topLevelParentID {
-		return nil, CreateTransactionOutput{}, fmt.Errorf("category %q is a top-level category; create_transaction requires a second-level category", in.CategoryID)
-	}
+	var categoryID sql.NullInt64
+	var signedAmount int64
 
-	// income/expense amounts are stored signed (income positive, expense
-	// negative) so SUM(amount) is directly the account balance; the wire
-	// format keeps both sides of CreateTransactionInput.Amount /
-	// TransactionInfo.Amount positive, matching the tested contract.
-	signedAmount := in.Amount
-	if in.Type == "expense" {
-		signedAmount = -in.Amount
+	if in.Type == "balance_adjustment" {
+		if in.CategoryID != "" {
+			return nil, CreateTransactionOutput{}, fmt.Errorf("balance_adjustment transactions cannot specify a category_id")
+		}
+		if in.Amount == 0 {
+			return nil, CreateTransactionOutput{}, fmt.Errorf("missing required field: amount (must be nonzero for balance_adjustment)")
+		}
+		signedAmount = in.Amount
+	} else {
+		if in.CategoryID == "" {
+			return nil, CreateTransactionOutput{}, fmt.Errorf("missing required field: category_id")
+		}
+		catID, err := parseID(in.CategoryID)
+		if err != nil {
+			return nil, CreateTransactionOutput{}, err
+		}
+		if _, err := deps.Q.GetCategory(ctx, catID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, CreateTransactionOutput{}, fmt.Errorf("category %q not found", in.CategoryID)
+			}
+			return nil, CreateTransactionOutput{}, err
+		}
+		categoryID = sql.NullInt64{Int64: catID, Valid: true}
+
+		if in.Amount <= 0 {
+			return nil, CreateTransactionOutput{}, fmt.Errorf("missing required field: amount (must be positive)")
+		}
+		// income/expense amounts are stored signed (income positive, expense
+		// negative) so SUM(amount) is directly the account balance; the wire
+		// format keeps both sides of CreateTransactionInput.Amount /
+		// TransactionInfo.Amount positive, matching the tested contract.
+		signedAmount = in.Amount
+		if in.Type == "expense" {
+			signedAmount = -in.Amount
+		}
 	}
 
 	transaction, err := deps.Q.CreateTransaction(ctx, store.CreateTransactionParams{
 		Type:       in.Type,
 		AccountID:  accountID,
-		CategoryID: sql.NullInt64{Int64: categoryID, Valid: true},
+		CategoryID: categoryID,
 		Amount:     signedAmount,
 		Time:       in.Time,
 		Comment:    in.Comment,

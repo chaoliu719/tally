@@ -18,8 +18,8 @@ CREATE TABLE IF NOT EXISTS accounts (
 CREATE TABLE IF NOT EXISTS categories (
     id          INTEGER PRIMARY KEY,
     name        TEXT NOT NULL,
-    type        TEXT NOT NULL,              -- income / expense / transfer
-    parent_id   INTEGER NOT NULL DEFAULT 0, -- 0 = top-level; otherwise the id of a top-level category
+    parent_id   INTEGER NOT NULL DEFAULT 0, -- 0 = top-level; otherwise the id of any other category,
+                                             -- nesting depth unrestricted
     created_at  INTEGER NOT NULL,
     updated_at  INTEGER NOT NULL
 );

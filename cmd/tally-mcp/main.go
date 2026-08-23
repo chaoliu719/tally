@@ -45,8 +45,9 @@ func main() {
 func buildMux(cfg *bootstrap.Config, db *sql.DB) *http.ServeMux {
 	server := mcpserver.New(serverName, serverVersion)
 	tools.RegisterAll(server, tools.Deps{
-		DB: db,
-		Q:  store.New(db),
+		DB:            db,
+		Q:             store.New(db),
+		ConfirmSecret: cfg.ConfirmationSecret,
 	})
 
 	mux := http.NewServeMux()

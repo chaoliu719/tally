@@ -10,6 +10,45 @@ import (
 	"database/sql"
 )
 
+const countChildCategories = `-- name: CountChildCategories :one
+SELECT COUNT(*)
+FROM categories
+WHERE parent_id = ?
+`
+
+func (q *Queries) CountChildCategories(ctx context.Context, parentID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countChildCategories, parentID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countTransactionsByAccount = `-- name: CountTransactionsByAccount :one
+SELECT COUNT(*)
+FROM transactions
+WHERE account_id = ?
+`
+
+func (q *Queries) CountTransactionsByAccount(ctx context.Context, accountID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countTransactionsByAccount, accountID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countTransactionsByCategory = `-- name: CountTransactionsByCategory :one
+SELECT COUNT(*)
+FROM transactions
+WHERE category_id = ?
+`
+
+func (q *Queries) CountTransactionsByCategory(ctx context.Context, categoryID sql.NullInt64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countTransactionsByCategory, categoryID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAccount = `-- name: CreateAccount :one
 INSERT INTO accounts (name, type, currency, comment, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?)
@@ -48,14 +87,13 @@ func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (A
 }
 
 const createCategory = `-- name: CreateCategory :one
-INSERT INTO categories (name, type, parent_id, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?)
-RETURNING id, name, type, parent_id, created_at, updated_at
+INSERT INTO categories (name, parent_id, created_at, updated_at)
+VALUES (?, ?, ?, ?)
+RETURNING id, name, parent_id, created_at, updated_at
 `
 
 type CreateCategoryParams struct {
 	Name      string
-	Type      string
 	ParentID  int64
 	CreatedAt int64
 	UpdatedAt int64
@@ -64,7 +102,6 @@ type CreateCategoryParams struct {
 func (q *Queries) CreateCategory(ctx context.Context, arg CreateCategoryParams) (Category, error) {
 	row := q.db.QueryRowContext(ctx, createCategory,
 		arg.Name,
-		arg.Type,
 		arg.ParentID,
 		arg.CreatedAt,
 		arg.UpdatedAt,
@@ -73,7 +110,6 @@ func (q *Queries) CreateCategory(ctx context.Context, arg CreateCategoryParams) 
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
-		&i.Type,
 		&i.ParentID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -121,6 +157,26 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 	return i, err
 }
 
+const deleteAccount = `-- name: DeleteAccount :exec
+DELETE FROM accounts
+WHERE id = ?
+`
+
+func (q *Queries) DeleteAccount(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, deleteAccount, id)
+	return err
+}
+
+const deleteCategory = `-- name: DeleteCategory :exec
+DELETE FROM categories
+WHERE id = ?
+`
+
+func (q *Queries) DeleteCategory(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, deleteCategory, id)
+	return err
+}
+
 const getAccount = `-- name: GetAccount :one
 SELECT id, name, type, currency, comment, created_at, updated_at
 FROM accounts
@@ -156,7 +212,7 @@ func (q *Queries) GetAccountBalance(ctx context.Context, accountID int64) (int64
 }
 
 const getCategory = `-- name: GetCategory :one
-SELECT id, name, type, parent_id, created_at, updated_at
+SELECT id, name, parent_id, created_at, updated_at
 FROM categories
 WHERE id = ?
 `
@@ -167,7 +223,6 @@ func (q *Queries) GetCategory(ctx context.Context, id int64) (Category, error) {
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
-		&i.Type,
 		&i.ParentID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -251,7 +306,7 @@ func (q *Queries) ListAccounts(ctx context.Context) ([]ListAccountsRow, error) {
 }
 
 const listCategories = `-- name: ListCategories :many
-SELECT id, name, type, parent_id, created_at, updated_at
+SELECT id, name, parent_id, created_at, updated_at
 FROM categories
 ORDER BY id
 `
@@ -268,7 +323,6 @@ func (q *Queries) ListCategories(ctx context.Context) ([]Category, error) {
 		if err := rows.Scan(
 			&i.ID,
 			&i.Name,
-			&i.Type,
 			&i.ParentID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -276,6 +330,39 @@ func (q *Queries) ListCategories(ctx context.Context) ([]Category, error) {
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCategoryDescendantIDs = `-- name: ListCategoryDescendantIDs :many
+WITH RECURSIVE descendants(id) AS (
+    SELECT c.id FROM categories c WHERE c.parent_id = ?1
+    UNION ALL
+    SELECT c.id FROM categories c
+    JOIN descendants d ON c.parent_id = d.id
+)
+SELECT id FROM descendants
+`
+
+func (q *Queries) ListCategoryDescendantIDs(ctx context.Context, targetID int64) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, listCategoryDescendantIDs, targetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -338,4 +425,72 @@ func (q *Queries) SearchTransactions(ctx context.Context, arg SearchTransactions
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateAccount = `-- name: UpdateAccount :one
+UPDATE accounts
+SET name = ?, type = ?, comment = ?, updated_at = ?
+WHERE id = ?
+RETURNING id, name, type, currency, comment, created_at, updated_at
+`
+
+type UpdateAccountParams struct {
+	Name      string
+	Type      string
+	Comment   string
+	UpdatedAt int64
+	ID        int64
+}
+
+func (q *Queries) UpdateAccount(ctx context.Context, arg UpdateAccountParams) (Account, error) {
+	row := q.db.QueryRowContext(ctx, updateAccount,
+		arg.Name,
+		arg.Type,
+		arg.Comment,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	var i Account
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Type,
+		&i.Currency,
+		&i.Comment,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateCategory = `-- name: UpdateCategory :one
+UPDATE categories
+SET name = ?, parent_id = ?, updated_at = ?
+WHERE id = ?
+RETURNING id, name, parent_id, created_at, updated_at
+`
+
+type UpdateCategoryParams struct {
+	Name      string
+	ParentID  int64
+	UpdatedAt int64
+	ID        int64
+}
+
+func (q *Queries) UpdateCategory(ctx context.Context, arg UpdateCategoryParams) (Category, error) {
+	row := q.db.QueryRowContext(ctx, updateCategory,
+		arg.Name,
+		arg.ParentID,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	var i Category
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.ParentID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }

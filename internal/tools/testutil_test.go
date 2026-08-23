@@ -2,6 +2,9 @@ package tools_test
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"net/http/httptest"
 	"path/filepath"
@@ -15,6 +18,12 @@ import (
 	"tally/internal/tools"
 )
 
+// testConfirmSecret is the confirmation-token secret every test session is
+// configured with, exposed so tests can craft their own tokens (e.g. an
+// already-expired one) to exercise confirm.Verify's failure paths through
+// the tools rather than the confirm package directly.
+const testConfirmSecret = "test-confirmation-secret"
+
 // newTestSession spins up a fresh SQLite-backed server (in a temp dir) with
 // every tool registered, and returns a connected MCP client session talking
 // to it over real streamable HTTP. Each call gets its own empty ledger.
@@ -23,8 +32,9 @@ func newTestSession(t *testing.T) *mcp.ClientSession {
 
 	dbPath := filepath.Join(t.TempDir(), "tally-test.db")
 	cfg := &bootstrap.Config{
-		MCPToken: "unused",
-		DBPath:   dbPath,
+		MCPToken:           "unused",
+		ConfirmationSecret: testConfirmSecret,
+		DBPath:             dbPath,
 	}
 
 	db, err := bootstrap.InitDataStore(cfg)
@@ -34,7 +44,7 @@ func newTestSession(t *testing.T) *mcp.ClientSession {
 	t.Cleanup(func() { db.Close() })
 
 	server := mcpserver.New("tally-mcp-test", "0.0.0")
-	tools.RegisterAll(server, tools.Deps{DB: db, Q: store.New(db)})
+	tools.RegisterAll(server, tools.Deps{DB: db, Q: store.New(db), ConfirmSecret: cfg.ConfirmationSecret})
 
 	httpServer := httptest.NewServer(mcpserver.HTTPHandler(server))
 	t.Cleanup(httpServer.Close)
@@ -114,4 +124,30 @@ func unmarshalStructured(res *mcp.CallToolResult, out any) error {
 		return err
 	}
 	return json.Unmarshal(raw, out)
+}
+
+// craftConfirmationToken builds a confirmation token in the same wire format
+// as internal/confirm.Issue, but with an arbitrary expiresAt -- letting
+// tests exercise the "already expired" rejection path, which Issue's fixed
+// 15-minute TTL can't produce directly.
+func craftConfirmationToken(t *testing.T, secret, action, id, revision string, expiresAt int64) string {
+	t.Helper()
+
+	type payload struct {
+		Action    string `json:"action"`
+		ID        string `json:"id"`
+		Revision  string `json:"revision"`
+		ExpiresAt int64  `json:"expires_at"`
+	}
+
+	body, err := json.Marshal(payload{Action: action, ID: id, Revision: revision, ExpiresAt: expiresAt})
+	if err != nil {
+		t.Fatalf("marshal token payload: %v", err)
+	}
+
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(body)
+	sig := mac.Sum(nil)
+
+	return base64.RawURLEncoding.EncodeToString(body) + "." + base64.RawURLEncoding.EncodeToString(sig)
 }

@@ -34,13 +34,13 @@ func TestAggregatedBalanceMatchesTransactionSum(t *testing.T) {
 	}
 
 	category, err := q.CreateCategory(ctx, CreateCategoryParams{
-		Name: "Food", Type: "expense", ParentID: 0, CreatedAt: now, UpdatedAt: now,
+		Name: "Food", ParentID: 0, CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil {
 		t.Fatalf("CreateCategory failed: %v", err)
 	}
 	sub, err := q.CreateCategory(ctx, CreateCategoryParams{
-		Name: "Groceries", Type: "expense", ParentID: category.ID, CreatedAt: now, UpdatedAt: now,
+		Name: "Groceries", ParentID: category.ID, CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil {
 		t.Fatalf("CreateCategory (sub) failed: %v", err)
@@ -111,7 +111,7 @@ func TestCheckConstraintRejectsBalanceAdjustmentWithCategory(t *testing.T) {
 		t.Fatalf("CreateAccount failed: %v", err)
 	}
 	category, err := q.CreateCategory(ctx, CreateCategoryParams{
-		Name: "Food", Type: "expense", ParentID: 0, CreatedAt: now, UpdatedAt: now,
+		Name: "Food", ParentID: 0, CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil {
 		t.Fatalf("CreateCategory failed: %v", err)

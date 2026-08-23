@@ -6,19 +6,28 @@ package store
 
 import (
 	"context"
+	"database/sql"
 )
 
 type Querier interface {
+	CountChildCategories(ctx context.Context, parentID int64) (int64, error)
+	CountTransactionsByAccount(ctx context.Context, accountID int64) (int64, error)
+	CountTransactionsByCategory(ctx context.Context, categoryID sql.NullInt64) (int64, error)
 	CreateAccount(ctx context.Context, arg CreateAccountParams) (Account, error)
 	CreateCategory(ctx context.Context, arg CreateCategoryParams) (Category, error)
 	CreateTransaction(ctx context.Context, arg CreateTransactionParams) (Transaction, error)
+	DeleteAccount(ctx context.Context, id int64) error
+	DeleteCategory(ctx context.Context, id int64) error
 	GetAccount(ctx context.Context, id int64) (Account, error)
 	GetAccountBalance(ctx context.Context, accountID int64) (int64, error)
 	GetCategory(ctx context.Context, id int64) (Category, error)
 	GetTransaction(ctx context.Context, id int64) (Transaction, error)
 	ListAccounts(ctx context.Context) ([]ListAccountsRow, error)
 	ListCategories(ctx context.Context) ([]Category, error)
+	ListCategoryDescendantIDs(ctx context.Context, targetID int64) ([]int64, error)
 	SearchTransactions(ctx context.Context, arg SearchTransactionsParams) ([]Transaction, error)
+	UpdateAccount(ctx context.Context, arg UpdateAccountParams) (Account, error)
+	UpdateCategory(ctx context.Context, arg UpdateCategoryParams) (Category, error)
 }
 
 var _ Querier = (*Queries)(nil)

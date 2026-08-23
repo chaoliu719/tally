@@ -31,8 +31,9 @@ func TestEndToEndMinimalLoop(t *testing.T) {
 
 	dbPath := filepath.Join(t.TempDir(), "tally-e2e.db")
 	cfg := &bootstrap.Config{
-		MCPToken: token,
-		DBPath:   dbPath,
+		MCPToken:           token,
+		ConfirmationSecret: "e2e-test-confirmation-secret",
+		DBPath:             dbPath,
 	}
 
 	db, err := bootstrap.InitDataStore(cfg)
@@ -89,25 +90,26 @@ func TestEndToEndMinimalLoop(t *testing.T) {
 	// 1. manage_account: create the account.
 	var account tools.ManageAccountOutput
 	call("manage_account", tools.ManageAccountInput{
-		Name:     "Checking",
-		Type:     "checking_account",
-		Currency: "CNY",
-		Balance:  50000,
+		Operation: "create",
+		Name:      "Checking",
+		Type:      "checking_account",
+		Currency:  "CNY",
+		Balance:   50000,
 	}, &account)
 
 	// 2. manage_category: create a top-level category, then a second-level
 	// one under it (the only kind create_transaction can reference).
 	var topCategory tools.ManageCategoryOutput
 	call("manage_category", tools.ManageCategoryInput{
-		Name: "Food",
-		Type: "expense",
+		Operation: "create",
+		Name:      "Food",
 	}, &topCategory)
 
 	var category tools.ManageCategoryOutput
 	call("manage_category", tools.ManageCategoryInput{
-		Name:     "Groceries",
-		Type:     "expense",
-		ParentID: topCategory.Category.ID,
+		Operation: "create",
+		Name:      "Groceries",
+		ParentID:  topCategory.Category.ID,
 	}, &category)
 
 	// 3. create_transaction: record one expense.

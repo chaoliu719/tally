@@ -12,27 +12,41 @@ one implicit ledger; there's no user account to create or log into.
 | Tool | Description |
 | --- | --- |
 | `list_accounts` | List every account (name, type, currency, balance). |
-| `manage_account` | Create a new account. |
-| `list_categories` | List every transaction category (name, type, parent id). |
-| `manage_category` | Create a new category — top-level (`parent_id` omitted/`"0"`) or second-level (`parent_id` set to an existing top-level category). |
-| `create_transaction` | Record one income or expense transaction against a second-level category. Updates the account balance. |
+| `manage_account` | Create, update, or delete an account, via `operation=create/update/delete`. Delete is a two-step preview → apply confirmation (see below). |
+| `list_categories` | List every transaction category (name, parent id). |
+| `manage_category` | Create, update, or delete a transaction category, via `operation=create/update/delete`. Categories nest to any depth. Delete is a two-step preview → apply confirmation (see below). |
+| `create_transaction` | Record one income, expense, or balance_adjustment transaction. income/expense reference an existing category (any category in the ledger); balance_adjustment corrects an account's balance directly with a signed amount and no category. Updates the account balance. |
 | `get_transaction` | Fetch one transaction by id. |
 | `search_transactions` | List transactions, optionally filtered by time range, account, and/or category. |
 
-Categories are two levels deep: a **top-level** category is only for grouping and cannot be used
-in `create_transaction`; a **second-level** category (created by passing `parent_id`) is what
-transactions actually reference. All ids on the wire (account, category, transaction) are decimal
-**strings**, not JSON numbers, so no MCP client ever risks losing precision decoding one into a
-JSON number.
+Categories can nest to any depth — `parent_id` may point at any existing category, and any
+category (top-level or nested) can be referenced by `create_transaction`. All ids on the wire
+(account, category, transaction) are decimal **strings**, not JSON numbers, so no MCP client ever
+risks losing precision decoding one into a JSON number.
 
 Amounts (`balance`, `amount`) are always in the account currency's smallest unit, but how many
 decimal places that represents **varies by currency** — 2 for most currencies (e.g. USD, CNY), 0
 for others (e.g. JPY, KRW), and 3 for a handful (e.g. BHD, KWD, OMR), per the real ISO 4217
 standard. There is no single fixed "divide by 100" rule that works for every currency.
 
-Not implemented in this version (left for a future change): updating/deleting accounts or
-categories, tags and tag groups, custom exchange rates, batch operations, transfer-type
-transactions, and any analytics/aggregation tools.
+### Deleting an account or category
+
+`manage_account`/`manage_category` with `operation=delete` is a two-step confirmation, not a
+single-call delete:
+
+1. Call with `operation=delete` and the target `id`, **without** `confirmation_token`. If the
+   resource can currently be deleted (no referencing transactions for an account; no child
+   categories or referencing transactions for a category), the response has
+   `status=pending_confirmation` and includes a `confirmation_token` (and its expiry).
+2. Call again with the same `operation=delete` and `id`, this time passing that
+   `confirmation_token`. The resource is deleted and the response has `status=deleted`.
+
+A `confirmation_token` expires after 15 minutes and is invalidated if the resource's state changes
+between the two calls (e.g. a transaction gets recorded against it in the meantime) — in either
+case, preview again to get a fresh token.
+
+Not implemented in this version (left for a future change): tags and tag groups, custom exchange
+rates, batch operations, transfer-type transactions, and any analytics/aggregation tools.
 
 ## Configuration
 
@@ -41,6 +55,7 @@ All configuration is via environment variables.
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `TALLY_MCP_TOKEN` | Yes | — | Static bearer token clients must send as `Authorization: Bearer <token>`. The process refuses to start without it. |
+| `TALLY_CONFIRMATION_SECRET` | Yes | — | Secret used to sign/verify `confirmation_token`s for destructive operations (account/category delete). Independent of `TALLY_MCP_TOKEN`. The process refuses to start without it. |
 | `TALLY_DB_PATH` | No | `./tally.db` | Path to the SQLite file. Created (with tally's own schema) on first run if it doesn't exist. |
 | `TALLY_LISTEN_ADDR` | No | `:8080` | Address the HTTP server listens on. |
 
@@ -58,6 +73,7 @@ Go, so no cgo or C toolchain is needed to build or cross-compile.
 go build -o tally-mcp ./cmd/tally-mcp
 
 TALLY_MCP_TOKEN=change-me \
+TALLY_CONFIRMATION_SECRET=change-me-too \
 TALLY_DB_PATH=./tally.db \
 ./tally-mcp
 ```

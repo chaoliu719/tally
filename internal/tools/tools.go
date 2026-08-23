@@ -34,6 +34,10 @@ func parseID(s string) (int64, error) {
 type Deps struct {
 	DB *sql.DB
 	Q  *store.Queries
+
+	// ConfirmSecret signs and verifies the confirmation tokens used by
+	// destructive operations' preview -> apply flow (see internal/confirm).
+	ConfirmSecret string
 }
 
 // registrations holds one entry per tool file's registration function. Each

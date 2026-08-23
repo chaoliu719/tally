@@ -14,32 +14,27 @@ func futureTime() int64 {
 }
 
 // setupAccountAndCategory creates an account with the given initial balance
-// and a usable (second-level) expense category, returning their ids.
+// and a usable category, returning their ids. Categories no longer have a
+// level restriction, so a plain top-level category works fine here.
 func setupAccountAndCategory(t *testing.T, session *mcp.ClientSession, initialBalance int64) (accountID, categoryID string) {
 	t.Helper()
 
 	var account tools.ManageAccountOutput
 	callTool(t, session, "manage_account", tools.ManageAccountInput{
-		Name:     "Cash Wallet",
-		Type:     "cash",
-		Currency: "CNY",
-		Balance:  initialBalance,
+		Operation: "create",
+		Name:      "Cash Wallet",
+		Type:      "cash",
+		Currency:  "CNY",
+		Balance:   initialBalance,
 	}, &account)
 
-	var parent tools.ManageCategoryOutput
+	var category tools.ManageCategoryOutput
 	callTool(t, session, "manage_category", tools.ManageCategoryInput{
-		Name: "Food",
-		Type: "expense",
-	}, &parent)
+		Operation: "create",
+		Name:      "Groceries",
+	}, &category)
 
-	var child tools.ManageCategoryOutput
-	callTool(t, session, "manage_category", tools.ManageCategoryInput{
-		Name:     "Groceries",
-		Type:     "expense",
-		ParentID: parent.Category.ID,
-	}, &child)
-
-	return account.Account.ID, child.Category.ID
+	return account.Account.ID, category.Category.ID
 }
 
 func TestCreateTransactionExpenseUpdatesBalance(t *testing.T) {
@@ -83,19 +78,10 @@ func TestCreateTransactionIncomeUpdatesBalance(t *testing.T) {
 	session := newTestSession(t)
 	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
 
-	// Reuse the expense category id as-is: the type of the transaction just
-	// needs a valid second-level category id; create an income category too
-	// for a semantically correct test.
-	var parent tools.ManageCategoryOutput
-	callTool(t, session, "manage_category", tools.ManageCategoryInput{
-		Name: "Salary",
-		Type: "income",
-	}, &parent)
 	var incomeCategory tools.ManageCategoryOutput
 	callTool(t, session, "manage_category", tools.ManageCategoryInput{
-		Name:     "Monthly Salary",
-		Type:     "income",
-		ParentID: parent.Category.ID,
+		Operation: "create",
+		Name:      "Salary",
 	}, &incomeCategory)
 
 	_ = categoryID // expense category unused in this test
@@ -159,28 +145,31 @@ func TestCreateTransactionRejectsNonexistentCategory(t *testing.T) {
 	}
 }
 
-func TestCreateTransactionRejectsPrimaryCategory(t *testing.T) {
+// TestCreateTransactionAllowsTopLevelCategory verifies the former "must be a
+// second-level category" restriction is gone: a plain top-level category
+// (no parent) can now be referenced directly by create_transaction.
+func TestCreateTransactionAllowsTopLevelCategory(t *testing.T) {
 	session := newTestSession(t)
 	accountID, _ := setupAccountAndCategory(t, session, 10000)
 
-	var primary tools.ManageCategoryOutput
+	var topLevel tools.ManageCategoryOutput
 	callTool(t, session, "manage_category", tools.ManageCategoryInput{
-		Name: "Housing",
-		Type: "expense",
-	}, &primary)
+		Operation: "create",
+		Name:      "Housing",
+	}, &topLevel)
 
-	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		Type:       "expense",
 		AccountID:  accountID,
-		CategoryID: primary.Category.ID,
+		CategoryID: topLevel.Category.ID,
 		Amount:     100,
 		Time:       futureTime(),
-	})
+	}, &tools.CreateTransactionOutput{})
 
 	var accounts tools.ListAccountsOutput
 	callTool(t, session, "list_accounts", tools.ListAccountsInput{}, &accounts)
-	if accounts.Accounts[0].Balance != 10000 {
-		t.Fatalf("balance changed after rejected transaction: %d, want 10000", accounts.Accounts[0].Balance)
+	if accounts.Accounts[0].Balance != 10000-100 {
+		t.Fatalf("balance after expense against a top-level category = %d, want %d", accounts.Accounts[0].Balance, 10000-100)
 	}
 }
 
@@ -202,6 +191,98 @@ func TestCreateTransactionMissingRequiredField(t *testing.T) {
 	if accounts.Accounts[0].Balance != 10000 {
 		t.Fatalf("balance changed after rejected transaction: %d, want 10000", accounts.Accounts[0].Balance)
 	}
+}
+
+func TestCreateTransactionBalanceAdjustmentPositive(t *testing.T) {
+	session := newTestSession(t)
+	accountID, _ := setupAccountAndCategory(t, session, 10000)
+
+	var created tools.CreateTransactionOutput
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		Type:      "balance_adjustment",
+		AccountID: accountID,
+		Amount:    500,
+		Time:      futureTime(),
+	}, &created)
+
+	if created.Transaction.Amount != 500 {
+		t.Errorf("Amount = %d, want 500", created.Transaction.Amount)
+	}
+	if created.Transaction.CategoryID != "0" {
+		t.Errorf("CategoryID = %q, want %q", created.Transaction.CategoryID, "0")
+	}
+
+	var accounts tools.ListAccountsOutput
+	callTool(t, session, "list_accounts", tools.ListAccountsInput{}, &accounts)
+	if accounts.Accounts[0].Balance != 10000+500 {
+		t.Errorf("balance after positive adjustment = %d, want %d", accounts.Accounts[0].Balance, 10000+500)
+	}
+}
+
+func TestCreateTransactionBalanceAdjustmentNegative(t *testing.T) {
+	session := newTestSession(t)
+	accountID, _ := setupAccountAndCategory(t, session, 10000)
+
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		Type:      "balance_adjustment",
+		AccountID: accountID,
+		Amount:    -500,
+		Time:      futureTime(),
+	}, &tools.CreateTransactionOutput{})
+
+	var accounts tools.ListAccountsOutput
+	callTool(t, session, "list_accounts", tools.ListAccountsInput{}, &accounts)
+	if accounts.Accounts[0].Balance != 10000-500 {
+		t.Errorf("balance after negative adjustment = %d, want %d", accounts.Accounts[0].Balance, 10000-500)
+	}
+}
+
+func TestCreateTransactionBalanceAdjustmentRejectsCategory(t *testing.T) {
+	session := newTestSession(t)
+	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
+
+	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
+		Type:       "balance_adjustment",
+		AccountID:  accountID,
+		CategoryID: categoryID,
+		Amount:     500,
+		Time:       futureTime(),
+	})
+
+	var accounts tools.ListAccountsOutput
+	callTool(t, session, "list_accounts", tools.ListAccountsInput{}, &accounts)
+	if accounts.Accounts[0].Balance != 10000 {
+		t.Fatalf("balance changed after rejected transaction: %d, want 10000", accounts.Accounts[0].Balance)
+	}
+}
+
+func TestCreateTransactionBalanceAdjustmentRejectsZeroAmount(t *testing.T) {
+	session := newTestSession(t)
+	accountID, _ := setupAccountAndCategory(t, session, 10000)
+
+	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
+		Type:      "balance_adjustment",
+		AccountID: accountID,
+		Amount:    0,
+		Time:      futureTime(),
+	})
+
+	var accounts tools.ListAccountsOutput
+	callTool(t, session, "list_accounts", tools.ListAccountsInput{}, &accounts)
+	if accounts.Accounts[0].Balance != 10000 {
+		t.Fatalf("balance changed after rejected transaction: %d, want 10000", accounts.Accounts[0].Balance)
+	}
+}
+
+func TestCreateTransactionBalanceAdjustmentRejectsNonexistentAccount(t *testing.T) {
+	session := newTestSession(t)
+
+	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
+		Type:      "balance_adjustment",
+		AccountID: "999999",
+		Amount:    500,
+		Time:      futureTime(),
+	})
 }
 
 func TestGetTransactionNotFound(t *testing.T) {
