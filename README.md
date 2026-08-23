@@ -88,6 +88,28 @@ On first startup the server creates the SQLite file (if needed) and applies tall
 created automatically. There is no user account to create; authentication is entirely via the
 bearer token above.
 
+## Deploy with Docker
+
+Prebuilt images (`linux/amd64` + `linux/arm64`) are published to
+[ghcr.io/chaoliu719/tally-mcp](https://github.com/chaoliu719/tally-mcp/pkgs/container/tally-mcp)
+on every version tag. No clone or Go toolchain needed on the deploy machine:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/chaoliu719/tally-mcp/main/install.sh | bash
+```
+
+This fetches `docker-compose.yml` and writes a `./tally-mcp/.env` with freshly generated
+`TALLY_MCP_TOKEN`/`TALLY_CONFIRMATION_SECRET` values (re-running it leaves an existing `.env`
+untouched). Then:
+
+```bash
+cd tally-mcp
+docker compose up -d
+```
+
+The SQLite file persists in a named Docker volume across restarts. See `.env.example` in the repo
+for what each variable does.
+
 ## Build & run
 
 Requires Go 1.27+. The SQLite driver ([modernc.org/sqlite](https://modernc.org/sqlite)) is pure
