@@ -23,12 +23,12 @@ COPY --from=builder /out/tally-mcp .
 USER tally
 
 ENV TALLY_DB_PATH=/data/tally.db
-ENV TALLY_LISTEN_ADDR=:8080
+ENV TALLY_LISTEN_ADDR=:16355
 
-EXPOSE 8080
+EXPOSE 16355
 VOLUME ["/data"]
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget -q -O- http://127.0.0.1:8080/healthz || exit 1
+    CMD wget -q -O- http://127.0.0.1:16355/healthz || exit 1
 
 ENTRYPOINT ["/app/tally-mcp"]

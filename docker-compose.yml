@@ -3,12 +3,12 @@ services:
     image: ghcr.io/chaoliu719/tally-mcp:latest
     restart: unless-stopped
     ports:
-      - "${TALLY_HOST_PORT:-16355}:8080"
+      - "${TALLY_HOST_PORT:-16355}:16355"
     environment:
       TALLY_MCP_TOKEN: ${TALLY_MCP_TOKEN:?set TALLY_MCP_TOKEN in .env}
       TALLY_CONFIRMATION_SECRET: ${TALLY_CONFIRMATION_SECRET:?set TALLY_CONFIRMATION_SECRET in .env}
       TALLY_DB_PATH: /data/tally.db
-      TALLY_LISTEN_ADDR: :8080
+      TALLY_LISTEN_ADDR: :16355
     volumes:
       - tally-data:/data
 
