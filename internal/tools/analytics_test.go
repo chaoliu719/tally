@@ -32,31 +32,31 @@ func findCategorySummary(t *testing.T, rows []tools.CategorySummary, categoryID 
 	return tools.CategorySummary{}
 }
 
-// findAccountSummary returns the AccountSummary entry for accountID, failing
+// findSourceSummary returns the SourceSummary entry for sourceID, failing
 // the test if it's not present.
-func findAccountSummary(t *testing.T, rows []tools.AccountSummary, accountID string) tools.AccountSummary {
+func findSourceSummary(t *testing.T, rows []tools.SourceSummary, sourceID string) tools.SourceSummary {
 	t.Helper()
-	for _, as := range rows {
-		if as.AccountID == accountID {
-			return as
+	for _, ss := range rows {
+		if ss.SourceID == sourceID {
+			return ss
 		}
 	}
-	t.Fatalf("no AccountSummary for account %q in %+v", accountID, rows)
-	return tools.AccountSummary{}
+	t.Fatalf("no SourceSummary for source %q in %+v", sourceID, rows)
+	return tools.SourceSummary{}
 }
 
 func TestGetFinancialSummaryTimeRange(t *testing.T) {
 	session := newTestSession(t)
-	accountID, categoryID := setupAccountAndCategory(t, session, 0)
+	sourceID, categoryID := setupSourceAndCategory(t, session)
 
 	earlyTime := futureTime()
 	lateTime := earlyTime + 100000
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", AccountID: accountID, CategoryID: categoryID, Amount: 100, Time: earlyTime,
+		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: earlyTime,
 	}, &tools.CreateTransactionOutput{})
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", AccountID: accountID, CategoryID: categoryID, Amount: 200, Time: lateTime,
+		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 200, Currency: "CNY", Time: lateTime,
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.GetFinancialSummaryOutput
@@ -78,24 +78,21 @@ func TestGetFinancialSummaryTimeRange(t *testing.T) {
 		t.Errorf("ByCategory summary = %+v, want income=0 expense=100", cs)
 	}
 
-	as := findAccountSummary(t, out.ByAccount, accountID)
-	if as.Expense != 100 || as.Income != 0 {
-		t.Errorf("ByAccount summary = %+v, want income=0 expense=100", as)
+	ss := findSourceSummary(t, out.BySource, sourceID)
+	if ss.Expense != 100 || ss.Income != 0 {
+		t.Errorf("BySource summary = %+v, want income=0 expense=100", ss)
 	}
 }
 
 func TestGetFinancialSummaryNoTimeRange(t *testing.T) {
 	session := newTestSession(t)
-	// Nonzero initial balance triggers an implicit adjustment
-	// transaction (see manage_account's operation=create), which this test
-	// deliberately includes since it queries with no time filter.
-	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
+	sourceID, categoryID := setupSourceAndCategory(t, session)
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "income", AccountID: accountID, CategoryID: categoryID, Amount: 500, Time: futureTime(),
+		Type: "income", SourceID: sourceID, CategoryID: categoryID, Amount: 500, Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", AccountID: accountID, CategoryID: categoryID, Amount: 200, Time: futureTime(),
+		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 200, Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.GetFinancialSummaryOutput
@@ -111,23 +108,18 @@ func TestGetFinancialSummaryNoTimeRange(t *testing.T) {
 		t.Errorf("ByCategory summary = %+v, want income=500 expense=200", cs)
 	}
 
-	as := findAccountSummary(t, out.ByAccount, accountID)
-	if as.Income != 500 || as.Expense != 200 {
-		t.Errorf("ByAccount summary = %+v, want income=500 expense=200", as)
-	}
-
-	ba := findAdjustment(t, out.AdjustmentByCurrency, "CNY")
-	if ba.Amount != 10000 {
-		t.Errorf("AdjustmentByCurrency amount = %d, want 10000", ba.Amount)
+	ss := findSourceSummary(t, out.BySource, sourceID)
+	if ss.Income != 500 || ss.Expense != 200 {
+		t.Errorf("BySource summary = %+v, want income=500 expense=200", ss)
 	}
 }
 
 func TestGetFinancialSummaryEmptyRange(t *testing.T) {
 	session := newTestSession(t)
-	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
+	sourceID, categoryID := setupSourceAndCategory(t, session)
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", AccountID: accountID, CategoryID: categoryID, Amount: 100, Time: futureTime(),
+		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.GetFinancialSummaryOutput
@@ -142,26 +134,18 @@ func TestGetFinancialSummaryEmptyRange(t *testing.T) {
 	if len(out.ByCategory) != 0 {
 		t.Errorf("ByCategory = %+v, want empty", out.ByCategory)
 	}
-	if len(out.ByAccount) != 0 {
-		t.Errorf("ByAccount = %+v, want empty", out.ByAccount)
-	}
-	if len(out.AdjustmentByCurrency) != 0 {
-		t.Errorf("AdjustmentByCurrency = %+v, want empty", out.AdjustmentByCurrency)
+	if len(out.BySource) != 0 {
+		t.Errorf("BySource = %+v, want empty", out.BySource)
 	}
 }
 
 func TestGetFinancialSummaryMultiCurrency(t *testing.T) {
 	session := newTestSession(t)
 
-	var accountCNY tools.ManageAccountOutput
-	callTool(t, session, "manage_account", tools.ManageAccountInput{
-		Operation: "create", Name: "CNY Wallet", Type: "cash", Currency: "CNY",
-	}, &accountCNY)
-
-	var accountUSD tools.ManageAccountOutput
-	callTool(t, session, "manage_account", tools.ManageAccountInput{
-		Operation: "create", Name: "USD Wallet", Type: "cash", Currency: "USD",
-	}, &accountUSD)
+	var source tools.ManageSourceOutput
+	callTool(t, session, "manage_source", tools.ManageSourceInput{
+		Operation: "create", Name: "Wallet",
+	}, &source)
 
 	var category tools.ManageCategoryOutput
 	callTool(t, session, "manage_category", tools.ManageCategoryInput{
@@ -169,10 +153,10 @@ func TestGetFinancialSummaryMultiCurrency(t *testing.T) {
 	}, &category)
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "income", AccountID: accountCNY.Account.ID, CategoryID: category.Category.ID, Amount: 1000, Time: futureTime(),
+		Type: "income", SourceID: source.Source.ID, CategoryID: category.Category.ID, Amount: 1000, Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", AccountID: accountUSD.Account.ID, CategoryID: category.Category.ID, Amount: 300, Time: futureTime(),
+		Type: "expense", SourceID: source.Source.ID, CategoryID: category.Category.ID, Amount: 300, Currency: "USD", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.GetFinancialSummaryOutput
@@ -195,7 +179,7 @@ func TestGetFinancialSummaryMultiCurrency(t *testing.T) {
 
 func TestGetFinancialSummaryByCategory(t *testing.T) {
 	session := newTestSession(t)
-	accountID, categoryA := setupAccountAndCategory(t, session, 0)
+	sourceID, categoryA := setupSourceAndCategory(t, session)
 
 	var categoryB tools.ManageCategoryOutput
 	callTool(t, session, "manage_category", tools.ManageCategoryInput{
@@ -209,10 +193,10 @@ func TestGetFinancialSummaryByCategory(t *testing.T) {
 	}, &categoryC)
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", AccountID: accountID, CategoryID: categoryA, Amount: 100, Time: futureTime(),
+		Type: "expense", SourceID: sourceID, CategoryID: categoryA, Amount: 100, Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", AccountID: accountID, CategoryID: categoryB.Category.ID, Amount: 250, Time: futureTime(),
+		Type: "expense", SourceID: sourceID, CategoryID: categoryB.Category.ID, Amount: 250, Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.GetFinancialSummaryOutput
@@ -238,117 +222,47 @@ func TestGetFinancialSummaryByCategory(t *testing.T) {
 	}
 }
 
-func TestGetFinancialSummaryByAccount(t *testing.T) {
+func TestGetFinancialSummaryBySource(t *testing.T) {
 	session := newTestSession(t)
-	accountA, categoryID := setupAccountAndCategory(t, session, 0)
+	sourceA, categoryID := setupSourceAndCategory(t, session)
 
-	var accountB tools.ManageAccountOutput
-	callTool(t, session, "manage_account", tools.ManageAccountInput{
-		Operation: "create", Name: "Second Wallet", Type: "cash", Currency: "CNY",
-	}, &accountB)
+	var sourceB tools.ManageSourceOutput
+	callTool(t, session, "manage_source", tools.ManageSourceInput{
+		Operation: "create", Name: "Second Wallet",
+	}, &sourceB)
 
-	// A third account with no transactions must not appear in the result.
-	var accountC tools.ManageAccountOutput
-	callTool(t, session, "manage_account", tools.ManageAccountInput{
-		Operation: "create", Name: "Unused Wallet", Type: "cash", Currency: "CNY",
-	}, &accountC)
+	// A third source with no transactions must not appear in the result.
+	var sourceC tools.ManageSourceOutput
+	callTool(t, session, "manage_source", tools.ManageSourceInput{
+		Operation: "create", Name: "Unused Wallet",
+	}, &sourceC)
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", AccountID: accountA, CategoryID: categoryID, Amount: 100, Time: futureTime(),
+		Type: "expense", SourceID: sourceA, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", AccountID: accountB.Account.ID, CategoryID: categoryID, Amount: 250, Time: futureTime(),
+		Type: "expense", SourceID: sourceB.Source.ID, CategoryID: categoryID, Amount: 250, Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.GetFinancialSummaryOutput
 	callTool(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{}, &out)
 
-	if len(out.ByAccount) != 2 {
-		t.Fatalf("expected 2 account summaries, got %d: %+v", len(out.ByAccount), out.ByAccount)
+	if len(out.BySource) != 2 {
+		t.Fatalf("expected 2 source summaries, got %d: %+v", len(out.BySource), out.BySource)
 	}
 
-	asA := findAccountSummary(t, out.ByAccount, accountA)
-	if asA.Expense != 100 {
-		t.Errorf("accountA expense = %d, want 100", asA.Expense)
+	ssA := findSourceSummary(t, out.BySource, sourceA)
+	if ssA.Expense != 100 {
+		t.Errorf("sourceA expense = %d, want 100", ssA.Expense)
 	}
-	asB := findAccountSummary(t, out.ByAccount, accountB.Account.ID)
-	if asB.Expense != 250 {
-		t.Errorf("accountB expense = %d, want 250", asB.Expense)
+	ssB := findSourceSummary(t, out.BySource, sourceB.Source.ID)
+	if ssB.Expense != 250 {
+		t.Errorf("sourceB expense = %d, want 250", ssB.Expense)
 	}
 
-	for _, as := range out.ByAccount {
-		if as.AccountID == accountC.Account.ID {
-			t.Fatalf("unused account %q unexpectedly present in ByAccount", accountC.Account.ID)
+	for _, ss := range out.BySource {
+		if ss.SourceID == sourceC.Source.ID {
+			t.Fatalf("unused source %q unexpectedly present in BySource", sourceC.Source.ID)
 		}
-	}
-}
-
-// findAdjustment returns the AdjustmentTotal entry for
-// currency, failing the test if it's not present.
-func findAdjustment(t *testing.T, rows []tools.AdjustmentTotal, currency string) tools.AdjustmentTotal {
-	t.Helper()
-	for _, ba := range rows {
-		if ba.Currency == currency {
-			return ba
-		}
-	}
-	t.Fatalf("no AdjustmentTotal for currency %q in %+v", currency, rows)
-	return tools.AdjustmentTotal{}
-}
-
-func TestGetFinancialSummaryAdjustmentPresent(t *testing.T) {
-	session := newTestSession(t)
-	// Zero initial balance so the only adjustment transaction is the
-	// one this test creates explicitly, inside the queried time range.
-	accountID, categoryID := setupAccountAndCategory(t, session, 0)
-
-	rangeStart := futureTime()
-	rangeEnd := rangeStart + 1000
-
-	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", AccountID: accountID, CategoryID: categoryID, Amount: 100, Time: rangeStart + 10,
-	}, &tools.CreateTransactionOutput{})
-	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "adjustment", AccountID: accountID, Amount: -50, Time: rangeStart + 20,
-	}, &tools.CreateTransactionOutput{})
-
-	var out tools.GetFinancialSummaryOutput
-	callTool(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{
-		StartTime: rangeStart,
-		EndTime:   rangeEnd,
-	}, &out)
-
-	ba := findAdjustment(t, out.AdjustmentByCurrency, "CNY")
-	if ba.Amount != -50 {
-		t.Errorf("AdjustmentByCurrency amount = %d, want -50", ba.Amount)
-	}
-
-	// The adjustment must not leak into totals/by_category/by_account.
-	ct := findCurrencyTotals(t, out.TotalsByCurrency, "CNY")
-	if ct.Income != 0 || ct.Expense != 100 || ct.Net != -100 {
-		t.Errorf("TotalsByCurrency = %+v, want income=0 expense=100 net=-100 (adjustment excluded)", ct)
-	}
-	if len(out.ByCategory) != 1 || out.ByCategory[0].Income != 0 || out.ByCategory[0].Expense != 100 {
-		t.Errorf("ByCategory = %+v, want a single entry with income=0 expense=100", out.ByCategory)
-	}
-	if len(out.ByAccount) != 1 || out.ByAccount[0].Income != 0 || out.ByAccount[0].Expense != 100 {
-		t.Errorf("ByAccount = %+v, want a single entry with income=0 expense=100", out.ByAccount)
-	}
-}
-
-func TestGetFinancialSummaryAdjustmentAbsent(t *testing.T) {
-	session := newTestSession(t)
-	// Zero initial balance means no implicit adjustment transaction.
-	accountID, categoryID := setupAccountAndCategory(t, session, 0)
-
-	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", AccountID: accountID, CategoryID: categoryID, Amount: 100, Time: futureTime(),
-	}, &tools.CreateTransactionOutput{})
-
-	var out tools.GetFinancialSummaryOutput
-	callTool(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{}, &out)
-
-	if len(out.AdjustmentByCurrency) != 0 {
-		t.Errorf("AdjustmentByCurrency = %+v, want empty", out.AdjustmentByCurrency)
 	}
 }

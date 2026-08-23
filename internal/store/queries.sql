@@ -1,41 +1,32 @@
--- name: CreateAccount :one
-INSERT INTO accounts (name, type, currency, comment, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?)
+-- name: CreateSource :one
+INSERT INTO sources (name, created_at, updated_at)
+VALUES (?, ?, ?)
 RETURNING *;
 
--- name: ListAccounts :many
-SELECT
-    a.id, a.name, a.type, a.currency, a.comment, a.created_at, a.updated_at,
-    CAST(COALESCE(SUM(t.amount), 0) AS INTEGER) AS balance
-FROM accounts a
-LEFT JOIN transactions t ON t.account_id = a.id
-GROUP BY a.id
-ORDER BY a.id;
+-- name: ListSources :many
+SELECT id, name, created_at, updated_at
+FROM sources
+ORDER BY id;
 
--- name: GetAccount :one
-SELECT id, name, type, currency, comment, created_at, updated_at
-FROM accounts
+-- name: GetSource :one
+SELECT id, name, created_at, updated_at
+FROM sources
 WHERE id = ?;
 
--- name: GetAccountBalance :one
-SELECT CAST(COALESCE(SUM(amount), 0) AS INTEGER) AS balance
-FROM transactions
-WHERE account_id = ?;
-
--- name: UpdateAccount :one
-UPDATE accounts
-SET name = ?, type = ?, comment = ?, updated_at = ?
+-- name: UpdateSource :one
+UPDATE sources
+SET name = ?, updated_at = ?
 WHERE id = ?
 RETURNING *;
 
--- name: DeleteAccount :exec
-DELETE FROM accounts
+-- name: DeleteSource :exec
+DELETE FROM sources
 WHERE id = ?;
 
--- name: CountTransactionsByAccount :one
+-- name: CountTransactionsBySource :one
 SELECT COUNT(*)
 FROM transactions
-WHERE account_id = ?;
+WHERE source_id = ?;
 
 -- name: CreateCategory :one
 INSERT INTO categories (name, parent_id, created_at, updated_at)
@@ -82,19 +73,19 @@ WITH RECURSIVE descendants(id) AS (
 SELECT id FROM descendants;
 
 -- name: CreateTransaction :one
-INSERT INTO transactions (type, account_id, category_id, amount, time, comment, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO transactions (type, source_id, category_id, currency, amount, time, comment, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: GetTransaction :one
-SELECT id, type, account_id, category_id, amount, time, comment, created_at, updated_at
+SELECT id, type, source_id, category_id, currency, amount, time, comment, created_at, updated_at
 FROM transactions
 WHERE id = ?;
 
 -- name: SearchTransactions :many
-SELECT id, type, account_id, category_id, amount, time, comment, created_at, updated_at
+SELECT id, type, source_id, category_id, currency, amount, time, comment, created_at, updated_at
 FROM transactions
-WHERE (sqlc.narg('account_id')  IS NULL OR account_id = sqlc.narg('account_id'))
+WHERE (sqlc.narg('source_id')   IS NULL OR source_id = sqlc.narg('source_id'))
   AND (sqlc.narg('category_id') IS NULL OR category_id = sqlc.narg('category_id'))
   AND (sqlc.narg('start_time')  IS NULL OR time >= sqlc.narg('start_time'))
   AND (sqlc.narg('end_time')    IS NULL OR time <= sqlc.narg('end_time'))
@@ -108,7 +99,7 @@ LIMIT sqlc.arg('limit');
 
 -- name: UpdateTransaction :one
 UPDATE transactions
-SET type = ?, account_id = ?, category_id = ?, amount = ?, time = ?, comment = ?, updated_at = ?
+SET type = ?, source_id = ?, category_id = ?, currency = ?, amount = ?, time = ?, comment = ?, updated_at = ?
 WHERE id = ?
 RETURNING *;
 
@@ -117,54 +108,44 @@ DELETE FROM transactions
 WHERE id = ?;
 
 -- name: SummarizeTransactionsByCurrency :many
--- Aggregates income/expense/adjustment totals grouped by account
+-- Aggregates income/expense totals grouped by the transaction's own
 -- currency, over an optional [start_time, end_time] window. Used by
 -- get_financial_summary (internal/tools/analytics.go). expense amounts are
--- stored negative, so SUM(-amount) turns them back into a positive total;
--- adjustment is reported here but excluded from income/expense by
--- SummarizeTransactionsByCategory/ByAccount below.
+-- stored negative, so SUM(-amount) turns them back into a positive total.
 SELECT
-    a.currency AS currency,
+    t.currency AS currency,
     CAST(COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) AS INTEGER) AS income,
-    CAST(COALESCE(SUM(CASE WHEN t.type = 'expense' THEN -t.amount ELSE 0 END), 0) AS INTEGER) AS expense,
-    CAST(COALESCE(SUM(CASE WHEN t.type = 'adjustment' THEN t.amount ELSE 0 END), 0) AS INTEGER) AS adjustment
+    CAST(COALESCE(SUM(CASE WHEN t.type = 'expense' THEN -t.amount ELSE 0 END), 0) AS INTEGER) AS expense
 FROM transactions t
-JOIN accounts a ON a.id = t.account_id
 WHERE (sqlc.narg('start_time') IS NULL OR t.time >= sqlc.narg('start_time'))
   AND (sqlc.narg('end_time')   IS NULL OR t.time <= sqlc.narg('end_time'))
-GROUP BY a.currency
-ORDER BY a.currency;
+GROUP BY t.currency
+ORDER BY t.currency;
 
 -- name: SummarizeTransactionsByCategory :many
--- Aggregates income/expense totals grouped by category and account
--- currency, over an optional [start_time, end_time] window.
--- adjustment transactions have no category and are excluded.
+-- Aggregates income/expense totals grouped by category and currency, over
+-- an optional [start_time, end_time] window.
 SELECT
     t.category_id AS category_id,
-    a.currency AS currency,
+    t.currency AS currency,
     CAST(COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) AS INTEGER) AS income,
     CAST(COALESCE(SUM(CASE WHEN t.type = 'expense' THEN -t.amount ELSE 0 END), 0) AS INTEGER) AS expense
 FROM transactions t
-JOIN accounts a ON a.id = t.account_id
-WHERE t.type IN ('income', 'expense')
-  AND (sqlc.narg('start_time') IS NULL OR t.time >= sqlc.narg('start_time'))
+WHERE (sqlc.narg('start_time') IS NULL OR t.time >= sqlc.narg('start_time'))
   AND (sqlc.narg('end_time')   IS NULL OR t.time <= sqlc.narg('end_time'))
-GROUP BY t.category_id, a.currency
-ORDER BY t.category_id, a.currency;
+GROUP BY t.category_id, t.currency
+ORDER BY t.category_id, t.currency;
 
--- name: SummarizeTransactionsByAccount :many
--- Aggregates income/expense totals grouped by account, over an optional
--- [start_time, end_time] window. adjustment transactions are
--- excluded (see SummarizeTransactionsByCurrency for their total).
+-- name: SummarizeTransactionsBySource :many
+-- Aggregates income/expense totals grouped by source and currency, over
+-- an optional [start_time, end_time] window.
 SELECT
-    t.account_id AS account_id,
-    a.currency AS currency,
+    t.source_id AS source_id,
+    t.currency AS currency,
     CAST(COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) AS INTEGER) AS income,
     CAST(COALESCE(SUM(CASE WHEN t.type = 'expense' THEN -t.amount ELSE 0 END), 0) AS INTEGER) AS expense
 FROM transactions t
-JOIN accounts a ON a.id = t.account_id
-WHERE t.type IN ('income', 'expense')
-  AND (sqlc.narg('start_time') IS NULL OR t.time >= sqlc.narg('start_time'))
+WHERE (sqlc.narg('start_time') IS NULL OR t.time >= sqlc.narg('start_time'))
   AND (sqlc.narg('end_time')   IS NULL OR t.time <= sqlc.narg('end_time'))
-GROUP BY t.account_id, a.currency
-ORDER BY t.account_id, a.currency;
+GROUP BY t.source_id, t.currency
+ORDER BY t.source_id, t.currency;

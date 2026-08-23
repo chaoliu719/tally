@@ -23,67 +23,30 @@ func (q *Queries) CountChildCategories(ctx context.Context, parentID int64) (int
 	return count, err
 }
 
-const countTransactionsByAccount = `-- name: CountTransactionsByAccount :one
-SELECT COUNT(*)
-FROM transactions
-WHERE account_id = ?
-`
-
-func (q *Queries) CountTransactionsByAccount(ctx context.Context, accountID int64) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countTransactionsByAccount, accountID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const countTransactionsByCategory = `-- name: CountTransactionsByCategory :one
 SELECT COUNT(*)
 FROM transactions
 WHERE category_id = ?
 `
 
-func (q *Queries) CountTransactionsByCategory(ctx context.Context, categoryID sql.NullInt64) (int64, error) {
+func (q *Queries) CountTransactionsByCategory(ctx context.Context, categoryID int64) (int64, error) {
 	row := q.db.QueryRowContext(ctx, countTransactionsByCategory, categoryID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
 }
 
-const createAccount = `-- name: CreateAccount :one
-INSERT INTO accounts (name, type, currency, comment, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?)
-RETURNING id, name, type, currency, comment, created_at, updated_at
+const countTransactionsBySource = `-- name: CountTransactionsBySource :one
+SELECT COUNT(*)
+FROM transactions
+WHERE source_id = ?
 `
 
-type CreateAccountParams struct {
-	Name      string
-	Type      string
-	Currency  string
-	Comment   string
-	CreatedAt int64
-	UpdatedAt int64
-}
-
-func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (Account, error) {
-	row := q.db.QueryRowContext(ctx, createAccount,
-		arg.Name,
-		arg.Type,
-		arg.Currency,
-		arg.Comment,
-		arg.CreatedAt,
-		arg.UpdatedAt,
-	)
-	var i Account
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Type,
-		&i.Currency,
-		&i.Comment,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
+func (q *Queries) CountTransactionsBySource(ctx context.Context, sourceID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countTransactionsBySource, sourceID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const createCategory = `-- name: CreateCategory :one
@@ -117,16 +80,41 @@ func (q *Queries) CreateCategory(ctx context.Context, arg CreateCategoryParams) 
 	return i, err
 }
 
+const createSource = `-- name: CreateSource :one
+INSERT INTO sources (name, created_at, updated_at)
+VALUES (?, ?, ?)
+RETURNING id, name, created_at, updated_at
+`
+
+type CreateSourceParams struct {
+	Name      string
+	CreatedAt int64
+	UpdatedAt int64
+}
+
+func (q *Queries) CreateSource(ctx context.Context, arg CreateSourceParams) (Source, error) {
+	row := q.db.QueryRowContext(ctx, createSource, arg.Name, arg.CreatedAt, arg.UpdatedAt)
+	var i Source
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createTransaction = `-- name: CreateTransaction :one
-INSERT INTO transactions (type, account_id, category_id, amount, time, comment, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, type, account_id, category_id, amount, time, comment, created_at, updated_at
+INSERT INTO transactions (type, source_id, category_id, currency, amount, time, comment, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, type, source_id, category_id, currency, amount, time, comment, created_at, updated_at
 `
 
 type CreateTransactionParams struct {
 	Type       string
-	AccountID  int64
-	CategoryID sql.NullInt64
+	SourceID   int64
+	CategoryID int64
+	Currency   string
 	Amount     int64
 	Time       int64
 	Comment    string
@@ -137,8 +125,9 @@ type CreateTransactionParams struct {
 func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionParams) (Transaction, error) {
 	row := q.db.QueryRowContext(ctx, createTransaction,
 		arg.Type,
-		arg.AccountID,
+		arg.SourceID,
 		arg.CategoryID,
+		arg.Currency,
 		arg.Amount,
 		arg.Time,
 		arg.Comment,
@@ -149,8 +138,9 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 	err := row.Scan(
 		&i.ID,
 		&i.Type,
-		&i.AccountID,
+		&i.SourceID,
 		&i.CategoryID,
+		&i.Currency,
 		&i.Amount,
 		&i.Time,
 		&i.Comment,
@@ -158,16 +148,6 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 		&i.UpdatedAt,
 	)
 	return i, err
-}
-
-const deleteAccount = `-- name: DeleteAccount :exec
-DELETE FROM accounts
-WHERE id = ?
-`
-
-func (q *Queries) DeleteAccount(ctx context.Context, id int64) error {
-	_, err := q.db.ExecContext(ctx, deleteAccount, id)
-	return err
 }
 
 const deleteCategory = `-- name: DeleteCategory :exec
@@ -180,6 +160,16 @@ func (q *Queries) DeleteCategory(ctx context.Context, id int64) error {
 	return err
 }
 
+const deleteSource = `-- name: DeleteSource :exec
+DELETE FROM sources
+WHERE id = ?
+`
+
+func (q *Queries) DeleteSource(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, deleteSource, id)
+	return err
+}
+
 const deleteTransaction = `-- name: DeleteTransaction :exec
 DELETE FROM transactions
 WHERE id = ?
@@ -188,40 +178,6 @@ WHERE id = ?
 func (q *Queries) DeleteTransaction(ctx context.Context, id int64) error {
 	_, err := q.db.ExecContext(ctx, deleteTransaction, id)
 	return err
-}
-
-const getAccount = `-- name: GetAccount :one
-SELECT id, name, type, currency, comment, created_at, updated_at
-FROM accounts
-WHERE id = ?
-`
-
-func (q *Queries) GetAccount(ctx context.Context, id int64) (Account, error) {
-	row := q.db.QueryRowContext(ctx, getAccount, id)
-	var i Account
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Type,
-		&i.Currency,
-		&i.Comment,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const getAccountBalance = `-- name: GetAccountBalance :one
-SELECT CAST(COALESCE(SUM(amount), 0) AS INTEGER) AS balance
-FROM transactions
-WHERE account_id = ?
-`
-
-func (q *Queries) GetAccountBalance(ctx context.Context, accountID int64) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getAccountBalance, accountID)
-	var balance int64
-	err := row.Scan(&balance)
-	return balance, err
 }
 
 const getCategory = `-- name: GetCategory :one
@@ -243,8 +199,26 @@ func (q *Queries) GetCategory(ctx context.Context, id int64) (Category, error) {
 	return i, err
 }
 
+const getSource = `-- name: GetSource :one
+SELECT id, name, created_at, updated_at
+FROM sources
+WHERE id = ?
+`
+
+func (q *Queries) GetSource(ctx context.Context, id int64) (Source, error) {
+	row := q.db.QueryRowContext(ctx, getSource, id)
+	var i Source
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getTransaction = `-- name: GetTransaction :one
-SELECT id, type, account_id, category_id, amount, time, comment, created_at, updated_at
+SELECT id, type, source_id, category_id, currency, amount, time, comment, created_at, updated_at
 FROM transactions
 WHERE id = ?
 `
@@ -255,8 +229,9 @@ func (q *Queries) GetTransaction(ctx context.Context, id int64) (Transaction, er
 	err := row.Scan(
 		&i.ID,
 		&i.Type,
-		&i.AccountID,
+		&i.SourceID,
 		&i.CategoryID,
+		&i.Currency,
 		&i.Amount,
 		&i.Time,
 		&i.Comment,
@@ -264,59 +239,6 @@ func (q *Queries) GetTransaction(ctx context.Context, id int64) (Transaction, er
 		&i.UpdatedAt,
 	)
 	return i, err
-}
-
-const listAccounts = `-- name: ListAccounts :many
-SELECT
-    a.id, a.name, a.type, a.currency, a.comment, a.created_at, a.updated_at,
-    CAST(COALESCE(SUM(t.amount), 0) AS INTEGER) AS balance
-FROM accounts a
-LEFT JOIN transactions t ON t.account_id = a.id
-GROUP BY a.id
-ORDER BY a.id
-`
-
-type ListAccountsRow struct {
-	ID        int64
-	Name      string
-	Type      string
-	Currency  string
-	Comment   string
-	CreatedAt int64
-	UpdatedAt int64
-	Balance   int64
-}
-
-func (q *Queries) ListAccounts(ctx context.Context) ([]ListAccountsRow, error) {
-	rows, err := q.db.QueryContext(ctx, listAccounts)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListAccountsRow{}
-	for rows.Next() {
-		var i ListAccountsRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.Name,
-			&i.Type,
-			&i.Currency,
-			&i.Comment,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.Balance,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const listCategories = `-- name: ListCategories :many
@@ -387,10 +309,44 @@ func (q *Queries) ListCategoryDescendantIDs(ctx context.Context, targetID int64)
 	return items, nil
 }
 
+const listSources = `-- name: ListSources :many
+SELECT id, name, created_at, updated_at
+FROM sources
+ORDER BY id
+`
+
+func (q *Queries) ListSources(ctx context.Context) ([]Source, error) {
+	rows, err := q.db.QueryContext(ctx, listSources)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Source{}
+	for rows.Next() {
+		var i Source
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const searchTransactions = `-- name: SearchTransactions :many
-SELECT id, type, account_id, category_id, amount, time, comment, created_at, updated_at
+SELECT id, type, source_id, category_id, currency, amount, time, comment, created_at, updated_at
 FROM transactions
-WHERE (?1  IS NULL OR account_id = ?1)
+WHERE (?1   IS NULL OR source_id = ?1)
   AND (?2 IS NULL OR category_id = ?2)
   AND (?3  IS NULL OR time >= ?3)
   AND (?4    IS NULL OR time <= ?4)
@@ -404,7 +360,7 @@ LIMIT ?7
 `
 
 type SearchTransactionsParams struct {
-	AccountID  interface{}
+	SourceID   interface{}
 	CategoryID interface{}
 	StartTime  interface{}
 	EndTime    interface{}
@@ -415,7 +371,7 @@ type SearchTransactionsParams struct {
 
 func (q *Queries) SearchTransactions(ctx context.Context, arg SearchTransactionsParams) ([]Transaction, error) {
 	rows, err := q.db.QueryContext(ctx, searchTransactions,
-		arg.AccountID,
+		arg.SourceID,
 		arg.CategoryID,
 		arg.StartTime,
 		arg.EndTime,
@@ -433,8 +389,9 @@ func (q *Queries) SearchTransactions(ctx context.Context, arg SearchTransactions
 		if err := rows.Scan(
 			&i.ID,
 			&i.Type,
-			&i.AccountID,
+			&i.SourceID,
 			&i.CategoryID,
+			&i.Currency,
 			&i.Amount,
 			&i.Time,
 			&i.Comment,
@@ -454,77 +411,17 @@ func (q *Queries) SearchTransactions(ctx context.Context, arg SearchTransactions
 	return items, nil
 }
 
-const summarizeTransactionsByAccount = `-- name: SummarizeTransactionsByAccount :many
-SELECT
-    t.account_id AS account_id,
-    a.currency AS currency,
-    CAST(COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) AS INTEGER) AS income,
-    CAST(COALESCE(SUM(CASE WHEN t.type = 'expense' THEN -t.amount ELSE 0 END), 0) AS INTEGER) AS expense
-FROM transactions t
-JOIN accounts a ON a.id = t.account_id
-WHERE t.type IN ('income', 'expense')
-  AND (?1 IS NULL OR t.time >= ?1)
-  AND (?2   IS NULL OR t.time <= ?2)
-GROUP BY t.account_id, a.currency
-ORDER BY t.account_id, a.currency
-`
-
-type SummarizeTransactionsByAccountParams struct {
-	StartTime interface{}
-	EndTime   interface{}
-}
-
-type SummarizeTransactionsByAccountRow struct {
-	AccountID int64
-	Currency  string
-	Income    int64
-	Expense   int64
-}
-
-// Aggregates income/expense totals grouped by account, over an optional
-// [start_time, end_time] window. adjustment transactions are
-// excluded (see SummarizeTransactionsByCurrency for their total).
-func (q *Queries) SummarizeTransactionsByAccount(ctx context.Context, arg SummarizeTransactionsByAccountParams) ([]SummarizeTransactionsByAccountRow, error) {
-	rows, err := q.db.QueryContext(ctx, summarizeTransactionsByAccount, arg.StartTime, arg.EndTime)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []SummarizeTransactionsByAccountRow{}
-	for rows.Next() {
-		var i SummarizeTransactionsByAccountRow
-		if err := rows.Scan(
-			&i.AccountID,
-			&i.Currency,
-			&i.Income,
-			&i.Expense,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const summarizeTransactionsByCategory = `-- name: SummarizeTransactionsByCategory :many
 SELECT
     t.category_id AS category_id,
-    a.currency AS currency,
+    t.currency AS currency,
     CAST(COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) AS INTEGER) AS income,
     CAST(COALESCE(SUM(CASE WHEN t.type = 'expense' THEN -t.amount ELSE 0 END), 0) AS INTEGER) AS expense
 FROM transactions t
-JOIN accounts a ON a.id = t.account_id
-WHERE t.type IN ('income', 'expense')
-  AND (?1 IS NULL OR t.time >= ?1)
+WHERE (?1 IS NULL OR t.time >= ?1)
   AND (?2   IS NULL OR t.time <= ?2)
-GROUP BY t.category_id, a.currency
-ORDER BY t.category_id, a.currency
+GROUP BY t.category_id, t.currency
+ORDER BY t.category_id, t.currency
 `
 
 type SummarizeTransactionsByCategoryParams struct {
@@ -533,15 +430,14 @@ type SummarizeTransactionsByCategoryParams struct {
 }
 
 type SummarizeTransactionsByCategoryRow struct {
-	CategoryID sql.NullInt64
+	CategoryID int64
 	Currency   string
 	Income     int64
 	Expense    int64
 }
 
-// Aggregates income/expense totals grouped by category and account
-// currency, over an optional [start_time, end_time] window.
-// adjustment transactions have no category and are excluded.
+// Aggregates income/expense totals grouped by category and currency, over
+// an optional [start_time, end_time] window.
 func (q *Queries) SummarizeTransactionsByCategory(ctx context.Context, arg SummarizeTransactionsByCategoryParams) ([]SummarizeTransactionsByCategoryRow, error) {
 	rows, err := q.db.QueryContext(ctx, summarizeTransactionsByCategory, arg.StartTime, arg.EndTime)
 	if err != nil {
@@ -572,16 +468,14 @@ func (q *Queries) SummarizeTransactionsByCategory(ctx context.Context, arg Summa
 
 const summarizeTransactionsByCurrency = `-- name: SummarizeTransactionsByCurrency :many
 SELECT
-    a.currency AS currency,
+    t.currency AS currency,
     CAST(COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) AS INTEGER) AS income,
-    CAST(COALESCE(SUM(CASE WHEN t.type = 'expense' THEN -t.amount ELSE 0 END), 0) AS INTEGER) AS expense,
-    CAST(COALESCE(SUM(CASE WHEN t.type = 'adjustment' THEN t.amount ELSE 0 END), 0) AS INTEGER) AS adjustment
+    CAST(COALESCE(SUM(CASE WHEN t.type = 'expense' THEN -t.amount ELSE 0 END), 0) AS INTEGER) AS expense
 FROM transactions t
-JOIN accounts a ON a.id = t.account_id
 WHERE (?1 IS NULL OR t.time >= ?1)
   AND (?2   IS NULL OR t.time <= ?2)
-GROUP BY a.currency
-ORDER BY a.currency
+GROUP BY t.currency
+ORDER BY t.currency
 `
 
 type SummarizeTransactionsByCurrencyParams struct {
@@ -590,18 +484,15 @@ type SummarizeTransactionsByCurrencyParams struct {
 }
 
 type SummarizeTransactionsByCurrencyRow struct {
-	Currency   string
-	Income     int64
-	Expense    int64
-	Adjustment int64
+	Currency string
+	Income   int64
+	Expense  int64
 }
 
-// Aggregates income/expense/adjustment totals grouped by account
+// Aggregates income/expense totals grouped by the transaction's own
 // currency, over an optional [start_time, end_time] window. Used by
 // get_financial_summary (internal/tools/analytics.go). expense amounts are
-// stored negative, so SUM(-amount) turns them back into a positive total;
-// adjustment is reported here but excluded from income/expense by
-// SummarizeTransactionsByCategory/ByAccount below.
+// stored negative, so SUM(-amount) turns them back into a positive total.
 func (q *Queries) SummarizeTransactionsByCurrency(ctx context.Context, arg SummarizeTransactionsByCurrencyParams) ([]SummarizeTransactionsByCurrencyRow, error) {
 	rows, err := q.db.QueryContext(ctx, summarizeTransactionsByCurrency, arg.StartTime, arg.EndTime)
 	if err != nil {
@@ -611,12 +502,7 @@ func (q *Queries) SummarizeTransactionsByCurrency(ctx context.Context, arg Summa
 	items := []SummarizeTransactionsByCurrencyRow{}
 	for rows.Next() {
 		var i SummarizeTransactionsByCurrencyRow
-		if err := rows.Scan(
-			&i.Currency,
-			&i.Income,
-			&i.Expense,
-			&i.Adjustment,
-		); err != nil {
+		if err := rows.Scan(&i.Currency, &i.Income, &i.Expense); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -630,40 +516,59 @@ func (q *Queries) SummarizeTransactionsByCurrency(ctx context.Context, arg Summa
 	return items, nil
 }
 
-const updateAccount = `-- name: UpdateAccount :one
-UPDATE accounts
-SET name = ?, type = ?, comment = ?, updated_at = ?
-WHERE id = ?
-RETURNING id, name, type, currency, comment, created_at, updated_at
+const summarizeTransactionsBySource = `-- name: SummarizeTransactionsBySource :many
+SELECT
+    t.source_id AS source_id,
+    t.currency AS currency,
+    CAST(COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) AS INTEGER) AS income,
+    CAST(COALESCE(SUM(CASE WHEN t.type = 'expense' THEN -t.amount ELSE 0 END), 0) AS INTEGER) AS expense
+FROM transactions t
+WHERE (?1 IS NULL OR t.time >= ?1)
+  AND (?2   IS NULL OR t.time <= ?2)
+GROUP BY t.source_id, t.currency
+ORDER BY t.source_id, t.currency
 `
 
-type UpdateAccountParams struct {
-	Name      string
-	Type      string
-	Comment   string
-	UpdatedAt int64
-	ID        int64
+type SummarizeTransactionsBySourceParams struct {
+	StartTime interface{}
+	EndTime   interface{}
 }
 
-func (q *Queries) UpdateAccount(ctx context.Context, arg UpdateAccountParams) (Account, error) {
-	row := q.db.QueryRowContext(ctx, updateAccount,
-		arg.Name,
-		arg.Type,
-		arg.Comment,
-		arg.UpdatedAt,
-		arg.ID,
-	)
-	var i Account
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Type,
-		&i.Currency,
-		&i.Comment,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
+type SummarizeTransactionsBySourceRow struct {
+	SourceID int64
+	Currency string
+	Income   int64
+	Expense  int64
+}
+
+// Aggregates income/expense totals grouped by source and currency, over
+// an optional [start_time, end_time] window.
+func (q *Queries) SummarizeTransactionsBySource(ctx context.Context, arg SummarizeTransactionsBySourceParams) ([]SummarizeTransactionsBySourceRow, error) {
+	rows, err := q.db.QueryContext(ctx, summarizeTransactionsBySource, arg.StartTime, arg.EndTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SummarizeTransactionsBySourceRow{}
+	for rows.Next() {
+		var i SummarizeTransactionsBySourceRow
+		if err := rows.Scan(
+			&i.SourceID,
+			&i.Currency,
+			&i.Income,
+			&i.Expense,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const updateCategory = `-- name: UpdateCategory :one
@@ -698,17 +603,43 @@ func (q *Queries) UpdateCategory(ctx context.Context, arg UpdateCategoryParams) 
 	return i, err
 }
 
+const updateSource = `-- name: UpdateSource :one
+UPDATE sources
+SET name = ?, updated_at = ?
+WHERE id = ?
+RETURNING id, name, created_at, updated_at
+`
+
+type UpdateSourceParams struct {
+	Name      string
+	UpdatedAt int64
+	ID        int64
+}
+
+func (q *Queries) UpdateSource(ctx context.Context, arg UpdateSourceParams) (Source, error) {
+	row := q.db.QueryRowContext(ctx, updateSource, arg.Name, arg.UpdatedAt, arg.ID)
+	var i Source
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const updateTransaction = `-- name: UpdateTransaction :one
 UPDATE transactions
-SET type = ?, account_id = ?, category_id = ?, amount = ?, time = ?, comment = ?, updated_at = ?
+SET type = ?, source_id = ?, category_id = ?, currency = ?, amount = ?, time = ?, comment = ?, updated_at = ?
 WHERE id = ?
-RETURNING id, type, account_id, category_id, amount, time, comment, created_at, updated_at
+RETURNING id, type, source_id, category_id, currency, amount, time, comment, created_at, updated_at
 `
 
 type UpdateTransactionParams struct {
 	Type       string
-	AccountID  int64
-	CategoryID sql.NullInt64
+	SourceID   int64
+	CategoryID int64
+	Currency   string
 	Amount     int64
 	Time       int64
 	Comment    string
@@ -719,8 +650,9 @@ type UpdateTransactionParams struct {
 func (q *Queries) UpdateTransaction(ctx context.Context, arg UpdateTransactionParams) (Transaction, error) {
 	row := q.db.QueryRowContext(ctx, updateTransaction,
 		arg.Type,
-		arg.AccountID,
+		arg.SourceID,
 		arg.CategoryID,
+		arg.Currency,
 		arg.Amount,
 		arg.Time,
 		arg.Comment,
@@ -731,8 +663,9 @@ func (q *Queries) UpdateTransaction(ctx context.Context, arg UpdateTransactionPa
 	err := row.Scan(
 		&i.ID,
 		&i.Type,
-		&i.AccountID,
+		&i.SourceID,
 		&i.CategoryID,
+		&i.Currency,
 		&i.Amount,
 		&i.Time,
 		&i.Comment,

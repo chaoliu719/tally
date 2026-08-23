@@ -13,20 +13,17 @@ func futureTime() int64 {
 	return time.Now().Add(time.Hour).Unix()
 }
 
-// setupAccountAndCategory creates an account with the given initial balance
-// and a usable category, returning their ids. Categories no longer have a
-// level restriction, so a plain top-level category works fine here.
-func setupAccountAndCategory(t *testing.T, session *mcp.ClientSession, initialBalance int64) (accountID, categoryID string) {
+// setupSourceAndCategory creates a source and a usable category, returning
+// their ids. Categories no longer have a level restriction, so a plain
+// top-level category works fine here.
+func setupSourceAndCategory(t *testing.T, session *mcp.ClientSession) (sourceID, categoryID string) {
 	t.Helper()
 
-	var account tools.ManageAccountOutput
-	callTool(t, session, "manage_account", tools.ManageAccountInput{
+	var source tools.ManageSourceOutput
+	callTool(t, session, "manage_source", tools.ManageSourceInput{
 		Operation: "create",
 		Name:      "Cash Wallet",
-		Type:      "cash",
-		Currency:  "CNY",
-		Balance:   initialBalance,
-	}, &account)
+	}, &source)
 
 	var category tools.ManageCategoryOutput
 	callTool(t, session, "manage_category", tools.ManageCategoryInput{
@@ -34,19 +31,20 @@ func setupAccountAndCategory(t *testing.T, session *mcp.ClientSession, initialBa
 		Name:      "Groceries",
 	}, &category)
 
-	return account.Account.ID, category.Category.ID
+	return source.Source.ID, category.Category.ID
 }
 
-func TestCreateTransactionExpenseUpdatesBalance(t *testing.T) {
+func TestCreateTransactionExpense(t *testing.T) {
 	session := newTestSession(t)
-	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
+	sourceID, categoryID := setupSourceAndCategory(t, session)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		Type:       "expense",
-		AccountID:  accountID,
+		SourceID:   sourceID,
 		CategoryID: categoryID,
 		Amount:     2500,
+		Currency:   "CNY",
 		Time:       futureTime(),
 		Comment:    "groceries run",
 	}, &created)
@@ -57,26 +55,20 @@ func TestCreateTransactionExpenseUpdatesBalance(t *testing.T) {
 	if created.Transaction.Currency != "CNY" {
 		t.Errorf("Currency = %q, want CNY", created.Transaction.Currency)
 	}
+	if created.Transaction.SourceID != sourceID {
+		t.Errorf("SourceID = %q, want %q", created.Transaction.SourceID, sourceID)
+	}
 
 	var got tools.GetTransactionOutput
 	callTool(t, session, "get_transaction", tools.GetTransactionInput{ID: created.Transaction.ID}, &got)
 	if got.Transaction.ID != created.Transaction.ID {
 		t.Errorf("get_transaction id = %q, want %q", got.Transaction.ID, created.Transaction.ID)
 	}
-
-	var accounts tools.ListAccountsOutput
-	callTool(t, session, "list_accounts", tools.ListAccountsInput{}, &accounts)
-	if len(accounts.Accounts) != 1 {
-		t.Fatalf("expected 1 account, got %d", len(accounts.Accounts))
-	}
-	if accounts.Accounts[0].Balance != 10000-2500 {
-		t.Errorf("balance after expense = %d, want %d", accounts.Accounts[0].Balance, 10000-2500)
-	}
 }
 
-func TestCreateTransactionIncomeUpdatesBalance(t *testing.T) {
+func TestCreateTransactionIncome(t *testing.T) {
 	session := newTestSession(t)
-	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
+	sourceID, _ := setupSourceAndCategory(t, session)
 
 	var incomeCategory tools.ManageCategoryOutput
 	callTool(t, session, "manage_category", tools.ManageCategoryInput{
@@ -84,64 +76,58 @@ func TestCreateTransactionIncomeUpdatesBalance(t *testing.T) {
 		Name:      "Salary",
 	}, &incomeCategory)
 
-	_ = categoryID // expense category unused in this test
-
+	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		Type:       "income",
-		AccountID:  accountID,
+		SourceID:   sourceID,
 		CategoryID: incomeCategory.Category.ID,
 		Amount:     5000,
+		Currency:   "CNY",
 		Time:       futureTime(),
-	}, &tools.CreateTransactionOutput{})
+	}, &created)
 
-	var accounts tools.ListAccountsOutput
-	callTool(t, session, "list_accounts", tools.ListAccountsInput{}, &accounts)
-	if accounts.Accounts[0].Balance != 10000+5000 {
-		t.Errorf("balance after income = %d, want %d", accounts.Accounts[0].Balance, 10000+5000)
+	if created.Transaction.Amount != 5000 {
+		t.Errorf("Amount = %d, want 5000", created.Transaction.Amount)
 	}
 }
 
-func TestCreateTransactionRejectsNonexistentAccount(t *testing.T) {
+func TestCreateTransactionRejectsNonexistentSource(t *testing.T) {
 	session := newTestSession(t)
-	_, categoryID := setupAccountAndCategory(t, session, 10000)
+	_, categoryID := setupSourceAndCategory(t, session)
 
 	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
 		Type:       "expense",
-		AccountID:  "999999",
+		SourceID:   "999999",
 		CategoryID: categoryID,
 		Amount:     100,
+		Currency:   "CNY",
 		Time:       futureTime(),
 	})
 
-	// The only transaction on record is the adjustment that
-	// setupAccountAndCategory's initial balance produced -- the rejected
-	// expense above must not have been written.
 	var list tools.SearchTransactionsOutput
 	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{}, &list)
-	if len(list.Transactions) != 1 {
-		t.Fatalf("expected only the initial adjustment transaction, got %d", len(list.Transactions))
-	}
-	if list.Transactions[0].Type != "adjustment" {
-		t.Fatalf("expected the recorded transaction to be adjustment, got %q", list.Transactions[0].Type)
+	if len(list.Transactions) != 0 {
+		t.Fatalf("expected no transaction recorded, got %d", len(list.Transactions))
 	}
 }
 
 func TestCreateTransactionRejectsNonexistentCategory(t *testing.T) {
 	session := newTestSession(t)
-	accountID, _ := setupAccountAndCategory(t, session, 10000)
+	sourceID, _ := setupSourceAndCategory(t, session)
 
 	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
 		Type:       "expense",
-		AccountID:  accountID,
+		SourceID:   sourceID,
 		CategoryID: "999999",
 		Amount:     100,
+		Currency:   "CNY",
 		Time:       futureTime(),
 	})
 
-	var accounts tools.ListAccountsOutput
-	callTool(t, session, "list_accounts", tools.ListAccountsInput{}, &accounts)
-	if accounts.Accounts[0].Balance != 10000 {
-		t.Fatalf("balance changed after rejected transaction: %d, want 10000", accounts.Accounts[0].Balance)
+	var list tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{}, &list)
+	if len(list.Transactions) != 0 {
+		t.Fatalf("expected no transaction recorded, got %d", len(list.Transactions))
 	}
 }
 
@@ -150,7 +136,7 @@ func TestCreateTransactionRejectsNonexistentCategory(t *testing.T) {
 // (no parent) can now be referenced directly by create_transaction.
 func TestCreateTransactionAllowsTopLevelCategory(t *testing.T) {
 	session := newTestSession(t)
-	accountID, _ := setupAccountAndCategory(t, session, 10000)
+	sourceID, _ := setupSourceAndCategory(t, session)
 
 	var topLevel tools.ManageCategoryOutput
 	callTool(t, session, "manage_category", tools.ManageCategoryInput{
@@ -160,129 +146,72 @@ func TestCreateTransactionAllowsTopLevelCategory(t *testing.T) {
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		Type:       "expense",
-		AccountID:  accountID,
+		SourceID:   sourceID,
 		CategoryID: topLevel.Category.ID,
 		Amount:     100,
+		Currency:   "CNY",
 		Time:       futureTime(),
 	}, &tools.CreateTransactionOutput{})
-
-	var accounts tools.ListAccountsOutput
-	callTool(t, session, "list_accounts", tools.ListAccountsInput{}, &accounts)
-	if accounts.Accounts[0].Balance != 10000-100 {
-		t.Fatalf("balance after expense against a top-level category = %d, want %d", accounts.Accounts[0].Balance, 10000-100)
-	}
 }
 
 func TestCreateTransactionMissingRequiredField(t *testing.T) {
 	session := newTestSession(t)
-	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
+	sourceID, _ := setupSourceAndCategory(t, session)
 
 	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type:      "expense",
-		AccountID: accountID,
+		Type:     "expense",
+		SourceID: sourceID,
 		// CategoryID omitted
-		Amount: 100,
-		Time:   futureTime(),
+		Amount:   100,
+		Currency: "CNY",
+		Time:     futureTime(),
 	})
-	_ = categoryID
 
-	var accounts tools.ListAccountsOutput
-	callTool(t, session, "list_accounts", tools.ListAccountsInput{}, &accounts)
-	if accounts.Accounts[0].Balance != 10000 {
-		t.Fatalf("balance changed after rejected transaction: %d, want 10000", accounts.Accounts[0].Balance)
+	var list tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{}, &list)
+	if len(list.Transactions) != 0 {
+		t.Fatalf("expected no transaction recorded, got %d", len(list.Transactions))
 	}
 }
 
-func TestCreateTransactionAdjustmentPositive(t *testing.T) {
+func TestCreateTransactionMissingCurrency(t *testing.T) {
 	session := newTestSession(t)
-	accountID, _ := setupAccountAndCategory(t, session, 10000)
-
-	var created tools.CreateTransactionOutput
-	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type:      "adjustment",
-		AccountID: accountID,
-		Amount:    500,
-		Time:      futureTime(),
-	}, &created)
-
-	if created.Transaction.Amount != 500 {
-		t.Errorf("Amount = %d, want 500", created.Transaction.Amount)
-	}
-	if created.Transaction.CategoryID != "0" {
-		t.Errorf("CategoryID = %q, want %q", created.Transaction.CategoryID, "0")
-	}
-
-	var accounts tools.ListAccountsOutput
-	callTool(t, session, "list_accounts", tools.ListAccountsInput{}, &accounts)
-	if accounts.Accounts[0].Balance != 10000+500 {
-		t.Errorf("balance after positive adjustment = %d, want %d", accounts.Accounts[0].Balance, 10000+500)
-	}
-}
-
-func TestCreateTransactionAdjustmentNegative(t *testing.T) {
-	session := newTestSession(t)
-	accountID, _ := setupAccountAndCategory(t, session, 10000)
-
-	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type:      "adjustment",
-		AccountID: accountID,
-		Amount:    -500,
-		Time:      futureTime(),
-	}, &tools.CreateTransactionOutput{})
-
-	var accounts tools.ListAccountsOutput
-	callTool(t, session, "list_accounts", tools.ListAccountsInput{}, &accounts)
-	if accounts.Accounts[0].Balance != 10000-500 {
-		t.Errorf("balance after negative adjustment = %d, want %d", accounts.Accounts[0].Balance, 10000-500)
-	}
-}
-
-func TestCreateTransactionAdjustmentRejectsCategory(t *testing.T) {
-	session := newTestSession(t)
-	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
+	sourceID, categoryID := setupSourceAndCategory(t, session)
 
 	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type:       "adjustment",
-		AccountID:  accountID,
+		Type:       "expense",
+		SourceID:   sourceID,
 		CategoryID: categoryID,
-		Amount:     500,
+		Amount:     100,
+		// Currency omitted
+		Time: futureTime(),
+	})
+
+	var list tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{}, &list)
+	if len(list.Transactions) != 0 {
+		t.Fatalf("expected no transaction recorded, got %d", len(list.Transactions))
+	}
+}
+
+func TestCreateTransactionUnsupportedCurrency(t *testing.T) {
+	session := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session)
+
+	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
+		Type:       "expense",
+		SourceID:   sourceID,
+		CategoryID: categoryID,
+		Amount:     100,
+		Currency:   "NOTACURRENCY",
 		Time:       futureTime(),
 	})
 
-	var accounts tools.ListAccountsOutput
-	callTool(t, session, "list_accounts", tools.ListAccountsInput{}, &accounts)
-	if accounts.Accounts[0].Balance != 10000 {
-		t.Fatalf("balance changed after rejected transaction: %d, want 10000", accounts.Accounts[0].Balance)
+	var list tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{}, &list)
+	if len(list.Transactions) != 0 {
+		t.Fatalf("expected no transaction recorded, got %d", len(list.Transactions))
 	}
-}
-
-func TestCreateTransactionAdjustmentRejectsZeroAmount(t *testing.T) {
-	session := newTestSession(t)
-	accountID, _ := setupAccountAndCategory(t, session, 10000)
-
-	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type:      "adjustment",
-		AccountID: accountID,
-		Amount:    0,
-		Time:      futureTime(),
-	})
-
-	var accounts tools.ListAccountsOutput
-	callTool(t, session, "list_accounts", tools.ListAccountsInput{}, &accounts)
-	if accounts.Accounts[0].Balance != 10000 {
-		t.Fatalf("balance changed after rejected transaction: %d, want 10000", accounts.Accounts[0].Balance)
-	}
-}
-
-func TestCreateTransactionAdjustmentRejectsNonexistentAccount(t *testing.T) {
-	session := newTestSession(t)
-
-	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type:      "adjustment",
-		AccountID: "999999",
-		Amount:    500,
-		Time:      futureTime(),
-	})
 }
 
 func TestGetTransactionNotFound(t *testing.T) {
@@ -291,72 +220,36 @@ func TestGetTransactionNotFound(t *testing.T) {
 	callToolExpectError(t, session, "get_transaction", tools.GetTransactionInput{ID: "999999"})
 }
 
-func TestGetTransactionAdjustment(t *testing.T) {
-	session := newTestSession(t)
-	accountID, _ := setupAccountAndCategory(t, session, 10000)
-
-	var list tools.SearchTransactionsOutput
-	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{}, &list)
-	if len(list.Transactions) != 1 {
-		t.Fatalf("expected 1 transaction (the initial adjustment), got %d", len(list.Transactions))
-	}
-	adjustmentID := list.Transactions[0].ID
-
-	var got tools.GetTransactionOutput
-	callTool(t, session, "get_transaction", tools.GetTransactionInput{ID: adjustmentID}, &got)
-	if got.Transaction.Type != "adjustment" {
-		t.Fatalf("Type = %q, want adjustment", got.Transaction.Type)
-	}
-	if got.Transaction.AccountID != accountID {
-		t.Fatalf("AccountID = %q, want %q", got.Transaction.AccountID, accountID)
-	}
-	if got.Transaction.Amount != 10000 {
-		t.Fatalf("Amount = %d, want 10000", got.Transaction.Amount)
-	}
-}
-
 func TestSearchTransactionsNoFilter(t *testing.T) {
 	session := newTestSession(t)
-	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
+	sourceID, categoryID := setupSourceAndCategory(t, session)
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", AccountID: accountID, CategoryID: categoryID, Amount: 100, Time: futureTime(),
+		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", AccountID: accountID, CategoryID: categoryID, Amount: 200, Time: futureTime() + 3600,
+		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 200, Currency: "CNY", Time: futureTime() + 3600,
 	}, &tools.CreateTransactionOutput{})
 
-	// 2 expenses plus the adjustment that setupAccountAndCategory's
-	// initial balance produced -- no filter means no hiding either.
 	var out tools.SearchTransactionsOutput
 	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{}, &out)
-	if len(out.Transactions) != 3 {
-		t.Fatalf("expected 3 transactions, got %d", len(out.Transactions))
-	}
-
-	var sawAdjustment bool
-	for _, txn := range out.Transactions {
-		if txn.Type == "adjustment" {
-			sawAdjustment = true
-		}
-	}
-	if !sawAdjustment {
-		t.Fatal("expected the account's initial adjustment transaction to be searchable")
+	if len(out.Transactions) != 2 {
+		t.Fatalf("expected 2 transactions, got %d", len(out.Transactions))
 	}
 }
 
 func TestSearchTransactionsTimeRange(t *testing.T) {
 	session := newTestSession(t)
-	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
+	sourceID, categoryID := setupSourceAndCategory(t, session)
 
 	earlyTime := futureTime()
 	lateTime := earlyTime + 100000
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", AccountID: accountID, CategoryID: categoryID, Amount: 100, Time: earlyTime,
+		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: earlyTime,
 	}, &tools.CreateTransactionOutput{})
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", AccountID: accountID, CategoryID: categoryID, Amount: 200, Time: lateTime,
+		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 200, Currency: "CNY", Time: lateTime,
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.SearchTransactionsOutput
@@ -373,29 +266,17 @@ func TestSearchTransactionsTimeRange(t *testing.T) {
 	}
 }
 
-// balanceOf returns the balance of the account with the given id from a
-// list_accounts result, failing the test if it's not present.
-func balanceOf(t *testing.T, accounts tools.ListAccountsOutput, accountID string) int64 {
-	t.Helper()
-	for _, a := range accounts.Accounts {
-		if a.ID == accountID {
-			return a.Balance
-		}
-	}
-	t.Fatalf("account %q not found in %+v", accountID, accounts.Accounts)
-	return 0
-}
-
 func TestUpdateTransactionHappyPath(t *testing.T) {
 	session := newTestSession(t)
-	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
+	sourceID, categoryID := setupSourceAndCategory(t, session)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		Type:       "expense",
-		AccountID:  accountID,
+		SourceID:   sourceID,
 		CategoryID: categoryID,
 		Amount:     2500,
+		Currency:   "CNY",
 		Time:       futureTime(),
 		Comment:    "original",
 	}, &created)
@@ -410,9 +291,10 @@ func TestUpdateTransactionHappyPath(t *testing.T) {
 	callTool(t, session, "update_transaction", tools.UpdateTransactionInput{
 		ID:         created.Transaction.ID,
 		Type:       "expense",
-		AccountID:  accountID,
+		SourceID:   sourceID,
 		CategoryID: otherCategory.Category.ID,
 		Amount:     4000,
+		Currency:   "CNY",
 		Time:       futureTime(),
 		Comment:    "revised",
 	}, &updated)
@@ -432,110 +314,60 @@ func TestUpdateTransactionHappyPath(t *testing.T) {
 	if got.Transaction.Amount != 4000 {
 		t.Errorf("get_transaction Amount = %d, want 4000", got.Transaction.Amount)
 	}
-
-	var accounts tools.ListAccountsOutput
-	callTool(t, session, "list_accounts", tools.ListAccountsInput{}, &accounts)
-	if got := balanceOf(t, accounts, accountID); got != 10000-4000 {
-		t.Errorf("balance after update = %d, want %d", got, 10000-4000)
-	}
 }
 
-func TestUpdateTransactionChangesAccount(t *testing.T) {
+func TestUpdateTransactionChangesSource(t *testing.T) {
 	session := newTestSession(t)
-	accountA, categoryID := setupAccountAndCategory(t, session, 10000)
+	sourceA, categoryID := setupSourceAndCategory(t, session)
 
-	var accountB tools.ManageAccountOutput
-	callTool(t, session, "manage_account", tools.ManageAccountInput{
+	var sourceB tools.ManageSourceOutput
+	callTool(t, session, "manage_source", tools.ManageSourceInput{
 		Operation: "create",
 		Name:      "Second Wallet",
-		Type:      "cash",
-		Currency:  "CNY",
-		Balance:   5000,
-	}, &accountB)
+	}, &sourceB)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		Type:       "expense",
-		AccountID:  accountA,
+		SourceID:   sourceA,
 		CategoryID: categoryID,
 		Amount:     2000,
+		Currency:   "CNY",
 		Time:       futureTime(),
 	}, &created)
 
+	var updated tools.UpdateTransactionOutput
 	callTool(t, session, "update_transaction", tools.UpdateTransactionInput{
 		ID:         created.Transaction.ID,
 		Type:       "expense",
-		AccountID:  accountB.Account.ID,
+		SourceID:   sourceB.Source.ID,
 		CategoryID: categoryID,
 		Amount:     2000,
+		Currency:   "CNY",
 		Time:       futureTime(),
-	}, &tools.UpdateTransactionOutput{})
+	}, &updated)
 
-	var accounts tools.ListAccountsOutput
-	callTool(t, session, "list_accounts", tools.ListAccountsInput{}, &accounts)
-
-	if got := balanceOf(t, accounts, accountA); got != 10000 {
-		t.Errorf("account A balance after moving its expense away = %d, want %d (expense no longer counted)", got, 10000)
-	}
-	if got := balanceOf(t, accounts, accountB.Account.ID); got != 5000-2000 {
-		t.Errorf("account B balance after receiving the moved expense = %d, want %d", got, 5000-2000)
-	}
-}
-
-// TestUpdateTransactionChangesTypeUpdatesBalance verifies that changing a
-// transaction's type (here income -> expense on the same amount) is
-// reflected in the account's balance, which is always SUM(amount) computed
-// at query time rather than a stored field.
-func TestUpdateTransactionChangesTypeUpdatesBalance(t *testing.T) {
-	session := newTestSession(t)
-	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
-
-	var created tools.CreateTransactionOutput
-	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type:       "income",
-		AccountID:  accountID,
-		CategoryID: categoryID,
-		Amount:     1000,
-		Time:       futureTime(),
-	}, &created)
-
-	var accountsAfterCreate tools.ListAccountsOutput
-	callTool(t, session, "list_accounts", tools.ListAccountsInput{}, &accountsAfterCreate)
-	if got := balanceOf(t, accountsAfterCreate, accountID); got != 10000+1000 {
-		t.Fatalf("balance after income = %d, want %d", got, 10000+1000)
-	}
-
-	callTool(t, session, "update_transaction", tools.UpdateTransactionInput{
-		ID:         created.Transaction.ID,
-		Type:       "expense",
-		AccountID:  accountID,
-		CategoryID: categoryID,
-		Amount:     1000,
-		Time:       futureTime(),
-	}, &tools.UpdateTransactionOutput{})
-
-	var accountsAfterUpdate tools.ListAccountsOutput
-	callTool(t, session, "list_accounts", tools.ListAccountsInput{}, &accountsAfterUpdate)
-	if got := balanceOf(t, accountsAfterUpdate, accountID); got != 10000-1000 {
-		t.Fatalf("balance after changing income to expense = %d, want %d", got, 10000-1000)
+	if updated.Transaction.SourceID != sourceB.Source.ID {
+		t.Errorf("SourceID = %q, want %q", updated.Transaction.SourceID, sourceB.Source.ID)
 	}
 }
 
 func TestUpdateTransactionMissingRequiredField(t *testing.T) {
 	session := newTestSession(t)
-	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
+	sourceID, categoryID := setupSourceAndCategory(t, session)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", AccountID: accountID, CategoryID: categoryID, Amount: 100, Time: futureTime(),
+		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
 	}, &created)
 
 	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
 		ID:   created.Transaction.ID,
 		Type: "expense",
-		// AccountID omitted
+		// SourceID omitted
 		CategoryID: categoryID,
 		Amount:     100,
+		Currency:   "CNY",
 		Time:       futureTime(),
 	})
 
@@ -546,122 +378,109 @@ func TestUpdateTransactionMissingRequiredField(t *testing.T) {
 	}
 }
 
-func TestUpdateTransactionRejectsNonexistentAccount(t *testing.T) {
+func TestUpdateTransactionRejectsNonexistentSource(t *testing.T) {
 	session := newTestSession(t)
-	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
+	sourceID, categoryID := setupSourceAndCategory(t, session)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", AccountID: accountID, CategoryID: categoryID, Amount: 100, Time: futureTime(),
+		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
 	}, &created)
 
 	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
 		ID:         created.Transaction.ID,
 		Type:       "expense",
-		AccountID:  "999999",
+		SourceID:   "999999",
 		CategoryID: categoryID,
 		Amount:     100,
+		Currency:   "CNY",
 		Time:       futureTime(),
 	})
 }
 
 func TestUpdateTransactionRejectsNonexistentCategory(t *testing.T) {
 	session := newTestSession(t)
-	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
+	sourceID, categoryID := setupSourceAndCategory(t, session)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", AccountID: accountID, CategoryID: categoryID, Amount: 100, Time: futureTime(),
+		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
 	}, &created)
 
 	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
 		ID:         created.Transaction.ID,
 		Type:       "expense",
-		AccountID:  accountID,
+		SourceID:   sourceID,
 		CategoryID: "999999",
 		Amount:     100,
+		Currency:   "CNY",
 		Time:       futureTime(),
 	})
 }
 
-func TestUpdateTransactionAdjustmentRejectsCategory(t *testing.T) {
+func TestUpdateTransactionRejectsUnsupportedCurrency(t *testing.T) {
 	session := newTestSession(t)
-	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
+	sourceID, categoryID := setupSourceAndCategory(t, session)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "adjustment", AccountID: accountID, Amount: 300, Time: futureTime(),
+		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
 	}, &created)
 
 	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
 		ID:         created.Transaction.ID,
-		Type:       "adjustment",
-		AccountID:  accountID,
+		Type:       "expense",
+		SourceID:   sourceID,
 		CategoryID: categoryID,
-		Amount:     300,
+		Amount:     100,
+		Currency:   "NOTACURRENCY",
 		Time:       futureTime(),
-	})
-}
-
-func TestUpdateTransactionAdjustmentRejectsZeroAmount(t *testing.T) {
-	session := newTestSession(t)
-	accountID, _ := setupAccountAndCategory(t, session, 10000)
-
-	var created tools.CreateTransactionOutput
-	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "adjustment", AccountID: accountID, Amount: 300, Time: futureTime(),
-	}, &created)
-
-	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
-		ID:        created.Transaction.ID,
-		Type:      "adjustment",
-		AccountID: accountID,
-		Amount:    0,
-		Time:      futureTime(),
 	})
 }
 
 func TestUpdateTransactionIncomeExpenseRejectsNonPositiveAmount(t *testing.T) {
 	session := newTestSession(t)
-	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
+	sourceID, categoryID := setupSourceAndCategory(t, session)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", AccountID: accountID, CategoryID: categoryID, Amount: 100, Time: futureTime(),
+		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
 	}, &created)
 
 	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
 		ID:         created.Transaction.ID,
 		Type:       "expense",
-		AccountID:  accountID,
+		SourceID:   sourceID,
 		CategoryID: categoryID,
 		Amount:     0,
+		Currency:   "CNY",
 		Time:       futureTime(),
 	})
 }
 
 func TestUpdateTransactionNotFound(t *testing.T) {
 	session := newTestSession(t)
-	_, categoryID := setupAccountAndCategory(t, session, 10000)
-	accountID, _ := setupAccountAndCategory(t, session, 10000)
+	_, categoryID := setupSourceAndCategory(t, session)
+	sourceID, _ := setupSourceAndCategory(t, session)
 
 	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
 		ID:         "999999",
 		Type:       "expense",
-		AccountID:  accountID,
+		SourceID:   sourceID,
 		CategoryID: categoryID,
 		Amount:     100,
+		Currency:   "CNY",
 		Time:       futureTime(),
 	})
 }
 
 func TestDeleteTransactionHappyPath(t *testing.T) {
 	session := newTestSession(t)
-	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
+	sourceID, categoryID := setupSourceAndCategory(t, session)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", AccountID: accountID, CategoryID: categoryID, Amount: 2500, Time: futureTime(),
+		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 2500, Currency: "CNY", Time: futureTime(),
 	}, &created)
 
 	var preview tools.DeleteTransactionOutput
@@ -695,12 +514,6 @@ func TestDeleteTransactionHappyPath(t *testing.T) {
 			t.Fatalf("deleted transaction %q still present in search_transactions", created.Transaction.ID)
 		}
 	}
-
-	var accounts tools.ListAccountsOutput
-	callTool(t, session, "list_accounts", tools.ListAccountsInput{}, &accounts)
-	if got := balanceOf(t, accounts, accountID); got != 10000 {
-		t.Errorf("balance after deleting the expense = %d, want %d", got, 10000)
-	}
 }
 
 func TestDeleteTransactionNotFound(t *testing.T) {
@@ -712,11 +525,11 @@ func TestDeleteTransactionNotFound(t *testing.T) {
 
 func TestDeleteTransactionExpiredToken(t *testing.T) {
 	session := newTestSession(t)
-	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
+	sourceID, categoryID := setupSourceAndCategory(t, session)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", AccountID: accountID, CategoryID: categoryID, Amount: 100, Time: futureTime(),
+		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
 	}, &created)
 
 	expired := craftConfirmationToken(t, testConfirmSecret, "delete_transaction", created.Transaction.ID, "irrelevant-revision", time.Now().Add(-time.Minute).Unix())
@@ -732,11 +545,11 @@ func TestDeleteTransactionExpiredToken(t *testing.T) {
 
 func TestDeleteTransactionDriftedRevisionAfterUpdate(t *testing.T) {
 	session := newTestSession(t)
-	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
+	sourceID, categoryID := setupSourceAndCategory(t, session)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", AccountID: accountID, CategoryID: categoryID, Amount: 100, Time: futureTime(),
+		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
 	}, &created)
 
 	var preview tools.DeleteTransactionOutput
@@ -748,9 +561,10 @@ func TestDeleteTransactionDriftedRevisionAfterUpdate(t *testing.T) {
 	callTool(t, session, "update_transaction", tools.UpdateTransactionInput{
 		ID:         created.Transaction.ID,
 		Type:       "expense",
-		AccountID:  accountID,
+		SourceID:   sourceID,
 		CategoryID: categoryID,
 		Amount:     200,
+		Currency:   "CNY",
 		Time:       futureTime(),
 	}, &tools.UpdateTransactionOutput{})
 
@@ -764,11 +578,11 @@ func TestDeleteTransactionDriftedRevisionAfterUpdate(t *testing.T) {
 
 func TestDeleteTransactionTokenReplay(t *testing.T) {
 	session := newTestSession(t)
-	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
+	sourceID, categoryID := setupSourceAndCategory(t, session)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", AccountID: accountID, CategoryID: categoryID, Amount: 100, Time: futureTime(),
+		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
 	}, &created)
 
 	var preview tools.DeleteTransactionOutput
@@ -789,10 +603,10 @@ func TestDeleteTransactionTokenReplay(t *testing.T) {
 
 func TestSearchTransactionsEmptyResult(t *testing.T) {
 	session := newTestSession(t)
-	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
+	sourceID, categoryID := setupSourceAndCategory(t, session)
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", AccountID: accountID, CategoryID: categoryID, Amount: 100, Time: futureTime(),
+		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.SearchTransactionsOutput
@@ -816,16 +630,17 @@ func TestSearchTransactionsEmptyResult(t *testing.T) {
 // offsets, at time base+offset, and returns their ids in the same order as
 // offsets. Offsets should be distinct and increasing so time alone
 // determines a deterministic order.
-func createExpensesAtOffsets(t *testing.T, session *mcp.ClientSession, accountID, categoryID string, base int64, offsets []int64) []string {
+func createExpensesAtOffsets(t *testing.T, session *mcp.ClientSession, sourceID, categoryID string, base int64, offsets []int64) []string {
 	t.Helper()
 	ids := make([]string, 0, len(offsets))
 	for i, off := range offsets {
 		var created tools.CreateTransactionOutput
 		callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 			Type:       "expense",
-			AccountID:  accountID,
+			SourceID:   sourceID,
 			CategoryID: categoryID,
 			Amount:     int64(i + 1),
+			Currency:   "CNY",
 			Time:       base + off,
 		}, &created)
 		ids = append(ids, created.Transaction.ID)
@@ -836,13 +651,13 @@ func createExpensesAtOffsets(t *testing.T, session *mcp.ClientSession, accountID
 // createNExpenses creates n expense transactions at times baseTime+1,
 // baseTime+2, ..., baseTime+n (strictly increasing, so ordering by time
 // alone is deterministic) and returns their ids in creation order.
-func createNExpenses(t *testing.T, session *mcp.ClientSession, accountID, categoryID string, n int, baseTime int64) []string {
+func createNExpenses(t *testing.T, session *mcp.ClientSession, sourceID, categoryID string, n int, baseTime int64) []string {
 	t.Helper()
 	offsets := make([]int64, n)
 	for i := range offsets {
 		offsets[i] = int64(i + 1)
 	}
-	return createExpensesAtOffsets(t, session, accountID, categoryID, baseTime, offsets)
+	return createExpensesAtOffsets(t, session, sourceID, categoryID, baseTime, offsets)
 }
 
 // TestSearchTransactionsDefaultPageSize verifies the default page size is 50
@@ -851,11 +666,8 @@ func createNExpenses(t *testing.T, session *mcp.ClientSession, accountID, catego
 // search_transactions with limit omitted.
 func TestSearchTransactionsDefaultPageSize(t *testing.T) {
 	session := newTestSession(t)
-	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
-	// setupAccountAndCategory already wrote 1 adjustment transaction;
-	// add 54 more so the total (55) comfortably exceeds the default page
-	// size of 50.
-	createNExpenses(t, session, accountID, categoryID, 54, futureTime())
+	sourceID, categoryID := setupSourceAndCategory(t, session)
+	createNExpenses(t, session, sourceID, categoryID, 55, futureTime())
 
 	var out tools.SearchTransactionsOutput
 	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{}, &out)
@@ -873,9 +685,8 @@ func TestSearchTransactionsDefaultPageSize(t *testing.T) {
 // another page, and absent when the current page is the last one.
 func TestSearchTransactionsNextCursorOnlyWhenMoreResults(t *testing.T) {
 	session := newTestSession(t)
-	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
-	// 1 adjustment + 4 expenses = 5 transactions total.
-	createNExpenses(t, session, accountID, categoryID, 4, futureTime())
+	sourceID, categoryID := setupSourceAndCategory(t, session)
+	createNExpenses(t, session, sourceID, categoryID, 5, futureTime())
 
 	var exactFit tools.SearchTransactionsOutput
 	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{Limit: 5}, &exactFit)
@@ -902,12 +713,12 @@ func TestSearchTransactionsNextCursorOnlyWhenMoreResults(t *testing.T) {
 // omissions, same order) as fetching everything in one page.
 func TestSearchTransactionsCursorPaginationCoversAllResults(t *testing.T) {
 	session := newTestSession(t)
-	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
-	createNExpenses(t, session, accountID, categoryID, 11, futureTime())
+	sourceID, categoryID := setupSourceAndCategory(t, session)
+	createNExpenses(t, session, sourceID, categoryID, 12, futureTime())
 
 	var full tools.SearchTransactionsOutput
 	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{Limit: 200}, &full)
-	if len(full.Transactions) != 12 { // 1 adjustment + 11 expenses
+	if len(full.Transactions) != 12 {
 		t.Fatalf("expected 12 transactions unpaginated, got %d", len(full.Transactions))
 	}
 
@@ -946,8 +757,8 @@ func TestSearchTransactionsCursorPaginationCoversAllResults(t *testing.T) {
 // 已不匹配当前筛选条件" and "limit 超过上限" scenarios.
 func TestSearchTransactionsInvalidCursorRejected(t *testing.T) {
 	session := newTestSession(t)
-	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
-	createNExpenses(t, session, accountID, categoryID, 3, futureTime())
+	sourceID, categoryID := setupSourceAndCategory(t, session)
+	createNExpenses(t, session, sourceID, categoryID, 3, futureTime())
 
 	callToolExpectError(t, session, "search_transactions", tools.SearchTransactionsInput{
 		Cursor: "this-is-not-a-valid-cursor",
@@ -956,17 +767,14 @@ func TestSearchTransactionsInvalidCursorRejected(t *testing.T) {
 
 func TestSearchTransactionsCursorRejectedWhenFiltersChange(t *testing.T) {
 	session := newTestSession(t)
-	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
-	createNExpenses(t, session, accountID, categoryID, 3, futureTime())
+	sourceID, categoryID := setupSourceAndCategory(t, session)
+	createNExpenses(t, session, sourceID, categoryID, 3, futureTime())
 
-	var otherAccount tools.ManageAccountOutput
-	callTool(t, session, "manage_account", tools.ManageAccountInput{
+	var otherSource tools.ManageSourceOutput
+	callTool(t, session, "manage_source", tools.ManageSourceInput{
 		Operation: "create",
 		Name:      "Other Wallet",
-		Type:      "cash",
-		Currency:  "CNY",
-		Balance:   0,
-	}, &otherAccount)
+	}, &otherSource)
 
 	var page tools.SearchTransactionsOutput
 	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{Limit: 1}, &page)
@@ -974,18 +782,18 @@ func TestSearchTransactionsCursorRejectedWhenFiltersChange(t *testing.T) {
 		t.Fatal("expected next_cursor from the first page to exercise the mismatch")
 	}
 
-	// Same cursor, but now scoped to a different account_id filter than the
+	// Same cursor, but now scoped to a different source_id filter than the
 	// one it was issued under -- must be rejected, not silently reused.
 	callToolExpectError(t, session, "search_transactions", tools.SearchTransactionsInput{
-		Limit:     1,
-		AccountID: otherAccount.Account.ID,
-		Cursor:    page.NextCursor,
+		Limit:    1,
+		SourceID: otherSource.Source.ID,
+		Cursor:   page.NextCursor,
 	})
 }
 
 func TestSearchTransactionsLimitOverMaxRejected(t *testing.T) {
 	session := newTestSession(t)
-	setupAccountAndCategory(t, session, 10000)
+	setupSourceAndCategory(t, session)
 
 	callToolExpectError(t, session, "search_transactions", tools.SearchTransactionsInput{Limit: 201})
 }
@@ -1001,12 +809,11 @@ func TestSearchTransactionsLimitOverMaxRejected(t *testing.T) {
 // a position already paged past.
 func TestSearchTransactionsPaginationSurvivesLedgerChanges(t *testing.T) {
 	session := newTestSession(t)
-	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
+	sourceID, categoryID := setupSourceAndCategory(t, session)
 	base := futureTime()
 
-	// T1..T4 at base+10, +20, +30, +40. setupAccountAndCategory's
-	// adjustment (T0) has an earlier real time than any of these.
-	ids := createExpensesAtOffsets(t, session, accountID, categoryID, base, []int64{10, 20, 30, 40})
+	// T1..T4 at base+10, +20, +30, +40.
+	ids := createExpensesAtOffsets(t, session, sourceID, categoryID, base, []int64{10, 20, 30, 40})
 
 	var page1 tools.SearchTransactionsOutput
 	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{Limit: 2}, &page1)
@@ -1016,25 +823,25 @@ func TestSearchTransactionsPaginationSurvivesLedgerChanges(t *testing.T) {
 	if page1.NextCursor == "" {
 		t.Fatal("page1: expected a next_cursor")
 	}
-	// page1 should be [T0 (adjustment), T1].
-	if page1.Transactions[1].ID != ids[0] {
-		t.Fatalf("page1[1].ID = %q, want T1 %q", page1.Transactions[1].ID, ids[0])
+	// page1 should be [T1, T2].
+	if page1.Transactions[0].ID != ids[0] || page1.Transactions[1].ID != ids[1] {
+		t.Fatalf("page1 = [%q, %q], want [%q, %q]", page1.Transactions[0].ID, page1.Transactions[1].ID, ids[0], ids[1])
 	}
 
 	// Ledger changes between page1 and page2:
 	// - a new transaction inserted before the cursor position (base+5,
-	//   earlier than T1's base+10, which page1's cursor already points
+	//   earlier than T2's base+20, which page1's cursor already points
 	//   past) -- legitimately excluded from all future pages, since keyset
 	//   pagination can't retroactively insert rows before a position
 	//   already paged past.
 	var before tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", AccountID: accountID, CategoryID: categoryID, Amount: 999, Time: base + 5,
+		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 999, Currency: "CNY", Time: base + 5,
 	}, &before)
 	// - a new transaction inserted after everything so far -- must appear.
 	var after tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", AccountID: accountID, CategoryID: categoryID, Amount: 998, Time: base + 50,
+		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 998, Currency: "CNY", Time: base + 50,
 	}, &after)
 	// - T1 (already returned in page1) is updated -- must not reappear or
 	//   otherwise disturb pagination. Time is left unchanged so its keyset
@@ -1042,9 +849,10 @@ func TestSearchTransactionsPaginationSurvivesLedgerChanges(t *testing.T) {
 	callTool(t, session, "update_transaction", tools.UpdateTransactionInput{
 		ID:         ids[0],
 		Type:       "expense",
-		AccountID:  accountID,
+		SourceID:   sourceID,
 		CategoryID: categoryID,
 		Amount:     12345,
+		Currency:   "CNY",
 		Time:       base + 10,
 		Comment:    "edited after page1",
 	}, &tools.UpdateTransactionOutput{})
@@ -1064,7 +872,7 @@ func TestSearchTransactionsPaginationSurvivesLedgerChanges(t *testing.T) {
 		cursor = page.NextCursor
 	}
 
-	wantIDs := []string{ids[1], ids[2], ids[3], after.Transaction.ID} // T2, T3, T4, "after"
+	wantIDs := []string{ids[2], ids[3], after.Transaction.ID} // T3, T4, "after"
 	if len(rest) != len(wantIDs) {
 		t.Fatalf("remaining pages returned %d transactions, want %d (%v got %v)", len(rest), len(wantIDs), idsOf(rest), wantIDs)
 	}

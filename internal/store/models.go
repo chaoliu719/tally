@@ -4,20 +4,6 @@
 
 package store
 
-import (
-	"database/sql"
-)
-
-type Account struct {
-	ID        int64
-	Name      string
-	Type      string
-	Currency  string
-	Comment   string
-	CreatedAt int64
-	UpdatedAt int64
-}
-
 type Category struct {
 	ID        int64
 	Name      string
@@ -26,11 +12,19 @@ type Category struct {
 	UpdatedAt int64
 }
 
+type Source struct {
+	ID        int64
+	Name      string
+	CreatedAt int64
+	UpdatedAt int64
+}
+
 type Transaction struct {
 	ID         int64
 	Type       string
-	AccountID  int64
-	CategoryID sql.NullInt64
+	SourceID   int64
+	CategoryID int64
+	Currency   string
 	Amount     int64
 	Time       int64
 	Comment    string

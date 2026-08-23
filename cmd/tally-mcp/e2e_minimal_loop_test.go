@@ -8,23 +8,20 @@ import (
 
 // TestE2EMinimalLoop drives the exact loop described in proposal.md,
 // starting from a brand-new, empty SQLite file: start the server -> create
-// an account -> create a (two-level) category -> record an expense -> find
-// it via search -> fetch it via get, with the account balance deducted.
+// a source -> create a (two-level) category -> record an expense -> find
+// it via search -> fetch it via get.
 // Every step goes through a real MCP tool call over authenticated HTTP,
 // using the same buildMux wiring main() uses -- nothing touches the
 // database directly.
 func TestE2EMinimalLoop(t *testing.T) {
 	session := newE2ESession(t)
 
-	// 1. manage_account: create the account.
-	var account tools.ManageAccountOutput
-	call(t, session, "manage_account", tools.ManageAccountInput{
+	// 1. manage_source: create the source.
+	var source tools.ManageSourceOutput
+	call(t, session, "manage_source", tools.ManageSourceInput{
 		Operation: "create",
 		Name:      "Checking",
-		Type:      "checking_account",
-		Currency:  "CNY",
-		Balance:   50000,
-	}, &account)
+	}, &source)
 
 	// 2. manage_category: create a top-level category, then a nested one
 	// under it.
@@ -45,53 +42,34 @@ func TestE2EMinimalLoop(t *testing.T) {
 	var transaction tools.CreateTransactionOutput
 	call(t, session, "create_transaction", tools.CreateTransactionInput{
 		Type:       "expense",
-		AccountID:  account.Account.ID,
+		SourceID:   source.Source.ID,
 		CategoryID: category.Category.ID,
 		Amount:     3000,
+		Currency:   "CNY",
 		Time:       futureTime(),
 		Comment:    "weekly groceries",
 	}, &transaction)
 
-	// 4. search_transactions: find both the expense and the adjustment
-	// that manage_account's nonzero initial balance produced -- neither is
-	// hidden from search (see design.md's "交易可见性" decision).
+	// 4. search_transactions: find the expense.
 	var searchResult tools.SearchTransactionsOutput
 	call(t, session, "search_transactions", tools.SearchTransactionsInput{}, &searchResult)
-	if len(searchResult.Transactions) != 2 {
-		t.Fatalf("expected 2 transactions from search, got %d", len(searchResult.Transactions))
+	if len(searchResult.Transactions) != 1 {
+		t.Fatalf("expected 1 transaction from search, got %d", len(searchResult.Transactions))
 	}
-
-	var sawExpense, sawAdjustment bool
-	for _, txn := range searchResult.Transactions {
-		switch {
-		case txn.ID == transaction.Transaction.ID:
-			sawExpense = true
-		case txn.Type == "adjustment":
-			sawAdjustment = true
-		}
-	}
-	if !sawExpense {
+	if searchResult.Transactions[0].ID != transaction.Transaction.ID {
 		t.Fatalf("search result missing the recorded expense (id %q): %+v", transaction.Transaction.ID, searchResult.Transactions)
 	}
-	if !sawAdjustment {
-		t.Fatalf("search result missing the account-creation adjustment: %+v", searchResult.Transactions)
-	}
 
-	// 5. get_transaction: fetch it by id, and confirm the account balance
-	// was deducted.
+	// 5. get_transaction: fetch it by id.
 	var fetched tools.GetTransactionOutput
 	call(t, session, "get_transaction", tools.GetTransactionInput{ID: transaction.Transaction.ID}, &fetched)
 	if fetched.Transaction.Amount != 3000 {
 		t.Fatalf("fetched amount = %d, want 3000", fetched.Transaction.Amount)
 	}
 
-	var accounts tools.ListAccountsOutput
-	call(t, session, "list_accounts", tools.ListAccountsInput{}, &accounts)
-	if len(accounts.Accounts) != 1 {
-		t.Fatalf("expected 1 account, got %d", len(accounts.Accounts))
-	}
-	const wantBalance = 50000 - 3000
-	if accounts.Accounts[0].Balance != wantBalance {
-		t.Fatalf("balance after expense = %d, want %d", accounts.Accounts[0].Balance, wantBalance)
+	var sources tools.ListSourcesOutput
+	call(t, session, "list_sources", tools.ListSourcesInput{}, &sources)
+	if len(sources.Sources) != 1 {
+		t.Fatalf("expected 1 source, got %d", len(sources.Sources))
 	}
 }

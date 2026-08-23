@@ -14,7 +14,7 @@ import (
 
 func TestSearchTransactionsCursorRoundTrip(t *testing.T) {
 	filter := searchTransactionsFilterFields{
-		AccountID:  sql.NullInt64{Int64: 7, Valid: true},
+		SourceID:   sql.NullInt64{Int64: 7, Valid: true},
 		CategoryID: sql.NullInt64{Int64: 3, Valid: true},
 		StartTime:  sql.NullInt64{Int64: 1000, Valid: true},
 	}
@@ -48,10 +48,10 @@ func TestSearchTransactionsCursorRejectsCorruptedInput(t *testing.T) {
 }
 
 func TestSearchTransactionsCursorRejectsMismatchedFilter(t *testing.T) {
-	issuedUnder := searchTransactionsFilterFields{AccountID: sql.NullInt64{Int64: 1, Valid: true}}
+	issuedUnder := searchTransactionsFilterFields{SourceID: sql.NullInt64{Int64: 1, Valid: true}}
 	cursor := encodeSearchTransactionsCursor(100, 1, issuedUnder)
 
-	differentFilter := searchTransactionsFilterFields{AccountID: sql.NullInt64{Int64: 2, Valid: true}}
+	differentFilter := searchTransactionsFilterFields{SourceID: sql.NullInt64{Int64: 2, Valid: true}}
 	if _, _, err := decodeSearchTransactionsCursor(cursor, differentFilter); err == nil {
 		t.Fatal("expected an error when the cursor's filter fingerprint doesn't match the current filters")
 	}

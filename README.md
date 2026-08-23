@@ -11,35 +11,38 @@ one implicit ledger; there's no user account to create or log into.
 
 | Tool | Description |
 | --- | --- |
-| `list_accounts` | List every account (name, type, currency, balance). |
-| `manage_account` | Create, update, or delete an account, via `operation=create/update/delete`. Delete is a two-step preview → apply confirmation (see below). |
+| `list_sources` | List every source (id, name) — where a transaction's money comes from or goes to. |
+| `manage_source` | Create, update, or delete a source, via `operation=create/update/delete`. Delete is a two-step preview → apply confirmation (see below). |
 | `list_categories` | List every transaction category (name, parent id). |
 | `manage_category` | Create, update, or delete a transaction category, via `operation=create/update/delete`. Categories nest to any depth. Delete is a two-step preview → apply confirmation (see below). |
-| `create_transaction` | Record one income, expense, or adjustment transaction. income/expense reference an existing category (any category in the ledger); adjustment corrects an account's balance directly with a signed amount and no category. Updates the account balance. |
+| `create_transaction` | Record one income or expense transaction, referencing an existing source and category (any category in the ledger). |
 | `get_transaction` | Fetch one transaction by id. |
-| `search_transactions` | List transactions, optionally filtered by time range, account, and/or category, sorted oldest first. Paginated via `limit` (default 50, max 200) and `cursor`; the response includes `next_cursor` when more results remain. |
+| `search_transactions` | List transactions, optionally filtered by time range, source, and/or category, sorted oldest first. Paginated via `limit` (default 50, max 200) and `cursor`; the response includes `next_cursor` when more results remain. |
 | `update_transaction` | Replace every field of an existing transaction by id (same validation rules as `create_transaction`). Full replacement, not a partial update; no confirmation required. |
-| `delete_transaction` | Delete a transaction by id. Two-step preview → apply confirmation (see below); unlike account/category deletion, any existing transaction can be deleted. |
-| `get_financial_summary` | Aggregate income/expense/net totals over an optional time range, grouped by currency, and broken down by category and by account. Adjustment totals are reported separately, not counted as income/expense. Read-only. |
+| `delete_transaction` | Delete a transaction by id. Two-step preview → apply confirmation (see below); unlike source/category deletion, any existing transaction can be deleted. |
+| `get_financial_summary` | Aggregate income/expense/net totals over an optional time range, grouped by currency, and broken down by category and by source. Read-only. |
 
 Categories can nest to any depth — `parent_id` may point at any existing category, and any
 category (top-level or nested) can be referenced by `create_transaction`. All ids on the wire
-(account, category, transaction) are decimal **strings**, not JSON numbers, so no MCP client ever
+(source, category, transaction) are decimal **strings**, not JSON numbers, so no MCP client ever
 risks losing precision decoding one into a JSON number.
 
-Amounts (`balance`, `amount`) are always in the account currency's smallest unit, but how many
-decimal places that represents **varies by currency** — 2 for most currencies (e.g. USD, CNY), 0
-for others (e.g. JPY, KRW), and 3 for a handful (e.g. BHD, KWD, OMR), per the real ISO 4217
-standard. There is no single fixed "divide by 100" rule that works for every currency.
+A source has no balance and no currency of its own — it is just a label for where a transaction's
+money comes from or goes to. Currency lives on the transaction: `create_transaction`/
+`update_transaction` take a required `currency` field, and `amount` is always in that currency's
+smallest unit, but how many decimal places that represents **varies by currency** — 2 for most
+currencies (e.g. USD, CNY), 0 for others (e.g. JPY, KRW), and 3 for a handful (e.g. BHD, KWD, OMR),
+per the real ISO 4217 standard. There is no single fixed "divide by 100" rule that works for every
+currency.
 
-### Deleting an account, category, or transaction
+### Deleting a source, category, or transaction
 
-`manage_account`/`manage_category` with `operation=delete`, and `delete_transaction`, are all a
+`manage_source`/`manage_category` with `operation=delete`, and `delete_transaction`, are all a
 two-step confirmation, not a single-call delete:
 
-1. Call without `confirmation_token` (for `manage_account`/`manage_category`, with
+1. Call without `confirmation_token` (for `manage_source`/`manage_category`, with
    `operation=delete` and the target `id`; for `delete_transaction`, with the target `id`). If the
-   resource can currently be deleted (no referencing transactions for an account; no child
+   resource can currently be deleted (no referencing transactions for a source; no child
    categories or referencing transactions for a category; a transaction has no such gate — any
    existing transaction can always be deleted), the response has `status=pending_confirmation` and
    includes a `confirmation_token` (and its expiry).
@@ -47,16 +50,15 @@ two-step confirmation, not a single-call delete:
    and the response has `status=deleted`.
 
 A `confirmation_token` expires after 15 minutes and is invalidated if the resource's state changes
-between the two calls (e.g. a transaction gets recorded against an account, or the transaction
+between the two calls (e.g. a transaction gets recorded against a source, or the transaction
 itself is edited, in the meantime) — in either case, preview again to get a fresh token.
 
-Deleting every transaction referencing an account or category (via `delete_transaction`) is how you
-clear the reference block on `manage_account`/`manage_category`'s `operation=delete` — the account
+Deleting every transaction referencing a source or category (via `delete_transaction`) is how you
+clear the reference block on `manage_source`/`manage_category`'s `operation=delete` — the source
 or category itself is otherwise never automatically deleted or modified by deleting transactions.
 
 Not implemented in this version (left for a future change): tags and tag groups, custom exchange
-rates, batch operations, transfer-type transactions, and trend/reconciliation-style analytics
-beyond `get_financial_summary`.
+rates, batch operations, and trend/reconciliation-style analytics beyond `get_financial_summary`.
 
 ## Configuration
 
@@ -65,7 +67,7 @@ All configuration is via environment variables.
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `TALLY_MCP_TOKEN` | Yes | — | Static bearer token clients must send as `Authorization: Bearer <token>`. The process refuses to start without it. |
-| `TALLY_CONFIRMATION_SECRET` | Yes | — | Secret used to sign/verify `confirmation_token`s for destructive operations (account/category/transaction delete). Independent of `TALLY_MCP_TOKEN`. The process refuses to start without it. |
+| `TALLY_CONFIRMATION_SECRET` | Yes | — | Secret used to sign/verify `confirmation_token`s for destructive operations (source/category/transaction delete). Independent of `TALLY_MCP_TOKEN`. The process refuses to start without it. |
 | `TALLY_DB_PATH` | No | `./tally.db` | Path to the SQLite file. Created (with tally's own schema) on first run if it doesn't exist. |
 | `TALLY_LISTEN_ADDR` | No | `:8080` | Address the HTTP server listens on. |
 
@@ -116,6 +118,6 @@ as entered).
 
 ### Verifying the connection
 
-Once connected, ask the assistant to list accounts (`list_accounts`) — on a fresh database this
+Once connected, ask the assistant to list sources (`list_sources`) — on a fresh database this
 should return an empty list, confirming the round trip: client → bearer token auth → MCP
 JSON-RPC → tally's query layer → SQLite.

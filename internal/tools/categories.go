@@ -255,7 +255,7 @@ func deleteCategory(ctx context.Context, deps Deps, in ManageCategoryInput) (*mc
 	if err != nil {
 		return nil, ManageCategoryOutput{}, err
 	}
-	txCount, err := deps.Q.CountTransactionsByCategory(ctx, sql.NullInt64{Int64: id, Valid: true})
+	txCount, err := deps.Q.CountTransactionsByCategory(ctx, id)
 	if err != nil {
 		return nil, ManageCategoryOutput{}, err
 	}
@@ -296,7 +296,7 @@ func deleteCategory(ctx context.Context, deps Deps, in ManageCategoryInput) (*mc
 	if err != nil {
 		return nil, ManageCategoryOutput{}, err
 	}
-	liveTxCount, err := q.CountTransactionsByCategory(ctx, sql.NullInt64{Int64: id, Valid: true})
+	liveTxCount, err := q.CountTransactionsByCategory(ctx, id)
 	if err != nil {
 		return nil, ManageCategoryOutput{}, err
 	}

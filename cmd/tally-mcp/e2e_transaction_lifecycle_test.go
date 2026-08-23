@@ -6,25 +6,22 @@ import (
 	"tally/internal/tools"
 )
 
-// TestE2ETransactionLifecycleUnblocksAccountAndCategoryDeletion is the
+// TestE2ETransactionLifecycleUnblocksSourceAndCategoryDeletion is the
 // journey the transaction-lifecycle change exists to unblock: before
-// delete_transaction existed, an account or category referenced by any
-// transaction (adjustment included) could never be deleted, because
-// there was no way to clear that reference. This test drives an account and
-// a category into exactly that blocked state, then uses delete_transaction
-// to clear every referencing transaction and confirms manage_account/
-// manage_category's own preview -> apply delete now completes successfully.
-func TestE2ETransactionLifecycleUnblocksAccountAndCategoryDeletion(t *testing.T) {
+// delete_transaction existed, a source or category referenced by any
+// transaction could never be deleted, because there was no way to clear
+// that reference. This test drives a source and a category into exactly
+// that blocked state, then uses delete_transaction to clear the referencing
+// transaction and confirms manage_source/manage_category's own preview ->
+// apply delete now completes successfully.
+func TestE2ETransactionLifecycleUnblocksSourceAndCategoryDeletion(t *testing.T) {
 	session := newE2ESession(t)
 
-	var account tools.ManageAccountOutput
-	call(t, session, "manage_account", tools.ManageAccountInput{
+	var source tools.ManageSourceOutput
+	call(t, session, "manage_source", tools.ManageSourceInput{
 		Operation: "create",
 		Name:      "Checking",
-		Type:      "checking_account",
-		Currency:  "CNY",
-		Balance:   5000, // records an initial adjustment transaction
-	}, &account)
+	}, &source)
 
 	var category tools.ManageCategoryOutput
 	call(t, session, "manage_category", tools.ManageCategoryInput{
@@ -35,25 +32,26 @@ func TestE2ETransactionLifecycleUnblocksAccountAndCategoryDeletion(t *testing.T)
 	var expense tools.CreateTransactionOutput
 	call(t, session, "create_transaction", tools.CreateTransactionInput{
 		Type:       "expense",
-		AccountID:  account.Account.ID,
+		SourceID:   source.Source.ID,
 		CategoryID: category.Category.ID,
 		Amount:     1000,
+		Currency:   "CNY",
 		Time:       futureTime(),
 	}, &expense)
 
-	// Both are referenced by transactions right now, so both deletes must be
+	// Both are referenced by the expense right now, so both deletes must be
 	// rejected -- this is the deadlock this change fixes.
-	callExpectError(t, session, "manage_account", tools.ManageAccountInput{
+	callExpectError(t, session, "manage_source", tools.ManageSourceInput{
 		Operation: "delete",
-		ID:        account.Account.ID,
+		ID:        source.Source.ID,
 	})
 	callExpectError(t, session, "manage_category", tools.ManageCategoryInput{
 		Operation: "delete",
 		ID:        category.Category.ID,
 	})
 
-	// Clear the category's only reference (the expense) via delete_transaction
-	// preview -> apply, then the category becomes deletable.
+	// Clear the only reference (the expense) via delete_transaction
+	// preview -> apply, then both become deletable.
 	var expensePreview tools.DeleteTransactionOutput
 	call(t, session, "delete_transaction", tools.DeleteTransactionInput{ID: expense.Transaction.ID}, &expensePreview)
 	if expensePreview.Status != "pending_confirmation" {
@@ -92,54 +90,29 @@ func TestE2ETransactionLifecycleUnblocksAccountAndCategoryDeletion(t *testing.T)
 		t.Fatalf("expected the category to be gone, got %d: %+v", len(categoriesAfter.Categories), categoriesAfter.Categories)
 	}
 
-	// The account still has its initial adjustment transaction, so it
-	// remains blocked until that is cleared too.
-	callExpectError(t, session, "manage_account", tools.ManageAccountInput{
-		Operation: "delete",
-		ID:        account.Account.ID,
-	})
-
-	var remaining tools.SearchTransactionsOutput
-	call(t, session, "search_transactions", tools.SearchTransactionsInput{AccountID: account.Account.ID}, &remaining)
-	if len(remaining.Transactions) != 1 {
-		t.Fatalf("expected only the initial adjustment left on the account, got %d: %+v", len(remaining.Transactions), remaining.Transactions)
-	}
-	adjustmentID := remaining.Transactions[0].ID
-
-	var adjustmentPreview tools.DeleteTransactionOutput
-	call(t, session, "delete_transaction", tools.DeleteTransactionInput{ID: adjustmentID}, &adjustmentPreview)
-	var adjustmentApplied tools.DeleteTransactionOutput
-	call(t, session, "delete_transaction", tools.DeleteTransactionInput{
-		ID:                adjustmentID,
-		ConfirmationToken: adjustmentPreview.ConfirmationToken,
-	}, &adjustmentApplied)
-	if adjustmentApplied.Status != "deleted" {
-		t.Fatalf("adjustment apply Status = %q, want %q", adjustmentApplied.Status, "deleted")
-	}
-
-	// Every referencing transaction is now gone -- the account's own
+	// Every referencing transaction is now gone -- the source's own
 	// preview -> apply delete must complete successfully.
-	var accountPreview tools.ManageAccountOutput
-	call(t, session, "manage_account", tools.ManageAccountInput{
+	var sourcePreview tools.ManageSourceOutput
+	call(t, session, "manage_source", tools.ManageSourceInput{
 		Operation: "delete",
-		ID:        account.Account.ID,
-	}, &accountPreview)
-	if accountPreview.Status != "pending_confirmation" {
-		t.Fatalf("account delete preview Status = %q, want %q", accountPreview.Status, "pending_confirmation")
+		ID:        source.Source.ID,
+	}, &sourcePreview)
+	if sourcePreview.Status != "pending_confirmation" {
+		t.Fatalf("source delete preview Status = %q, want %q", sourcePreview.Status, "pending_confirmation")
 	}
-	var accountApplied tools.ManageAccountOutput
-	call(t, session, "manage_account", tools.ManageAccountInput{
+	var sourceApplied tools.ManageSourceOutput
+	call(t, session, "manage_source", tools.ManageSourceInput{
 		Operation:         "delete",
-		ID:                account.Account.ID,
-		ConfirmationToken: accountPreview.ConfirmationToken,
-	}, &accountApplied)
-	if accountApplied.Status != "deleted" {
-		t.Fatalf("account delete apply Status = %q, want %q", accountApplied.Status, "deleted")
+		ID:                source.Source.ID,
+		ConfirmationToken: sourcePreview.ConfirmationToken,
+	}, &sourceApplied)
+	if sourceApplied.Status != "deleted" {
+		t.Fatalf("source delete apply Status = %q, want %q", sourceApplied.Status, "deleted")
 	}
 
-	var accountsAfter tools.ListAccountsOutput
-	call(t, session, "list_accounts", tools.ListAccountsInput{}, &accountsAfter)
-	if len(accountsAfter.Accounts) != 0 {
-		t.Fatalf("expected the account to be gone, got %d: %+v", len(accountsAfter.Accounts), accountsAfter.Accounts)
+	var sourcesAfter tools.ListSourcesOutput
+	call(t, session, "list_sources", tools.ListSourcesInput{}, &sourcesAfter)
+	if len(sourcesAfter.Sources) != 0 {
+		t.Fatalf("expected the source to be gone, got %d: %+v", len(sourcesAfter.Sources), sourcesAfter.Sources)
 	}
 }

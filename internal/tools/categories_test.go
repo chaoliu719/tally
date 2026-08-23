@@ -318,13 +318,14 @@ func TestManageCategoryDeleteBlockedByChildren(t *testing.T) {
 func TestManageCategoryDeleteBlockedByReferences(t *testing.T) {
 	session := newTestSession(t)
 	categoryID := createTestCategory(t, session, "Food", "")
-	accountID := createTestAccount(t, session, 10000)
+	sourceID := createTestSource(t, session)
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		Type:       "expense",
-		AccountID:  accountID,
+		SourceID:   sourceID,
 		CategoryID: categoryID,
 		Amount:     100,
+		Currency:   "CNY",
 		Time:       futureTime(),
 	}, &tools.CreateTransactionOutput{})
 

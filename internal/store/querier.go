@@ -6,44 +6,38 @@ package store
 
 import (
 	"context"
-	"database/sql"
 )
 
 type Querier interface {
 	CountChildCategories(ctx context.Context, parentID int64) (int64, error)
-	CountTransactionsByAccount(ctx context.Context, accountID int64) (int64, error)
-	CountTransactionsByCategory(ctx context.Context, categoryID sql.NullInt64) (int64, error)
-	CreateAccount(ctx context.Context, arg CreateAccountParams) (Account, error)
+	CountTransactionsByCategory(ctx context.Context, categoryID int64) (int64, error)
+	CountTransactionsBySource(ctx context.Context, sourceID int64) (int64, error)
 	CreateCategory(ctx context.Context, arg CreateCategoryParams) (Category, error)
+	CreateSource(ctx context.Context, arg CreateSourceParams) (Source, error)
 	CreateTransaction(ctx context.Context, arg CreateTransactionParams) (Transaction, error)
-	DeleteAccount(ctx context.Context, id int64) error
 	DeleteCategory(ctx context.Context, id int64) error
+	DeleteSource(ctx context.Context, id int64) error
 	DeleteTransaction(ctx context.Context, id int64) error
-	GetAccount(ctx context.Context, id int64) (Account, error)
-	GetAccountBalance(ctx context.Context, accountID int64) (int64, error)
 	GetCategory(ctx context.Context, id int64) (Category, error)
+	GetSource(ctx context.Context, id int64) (Source, error)
 	GetTransaction(ctx context.Context, id int64) (Transaction, error)
-	ListAccounts(ctx context.Context) ([]ListAccountsRow, error)
 	ListCategories(ctx context.Context) ([]Category, error)
 	ListCategoryDescendantIDs(ctx context.Context, targetID int64) ([]int64, error)
+	ListSources(ctx context.Context) ([]Source, error)
 	SearchTransactions(ctx context.Context, arg SearchTransactionsParams) ([]Transaction, error)
-	// Aggregates income/expense totals grouped by account, over an optional
-	// [start_time, end_time] window. adjustment transactions are
-	// excluded (see SummarizeTransactionsByCurrency for their total).
-	SummarizeTransactionsByAccount(ctx context.Context, arg SummarizeTransactionsByAccountParams) ([]SummarizeTransactionsByAccountRow, error)
-	// Aggregates income/expense totals grouped by category and account
-	// currency, over an optional [start_time, end_time] window.
-	// adjustment transactions have no category and are excluded.
+	// Aggregates income/expense totals grouped by category and currency, over
+	// an optional [start_time, end_time] window.
 	SummarizeTransactionsByCategory(ctx context.Context, arg SummarizeTransactionsByCategoryParams) ([]SummarizeTransactionsByCategoryRow, error)
-	// Aggregates income/expense/adjustment totals grouped by account
+	// Aggregates income/expense totals grouped by the transaction's own
 	// currency, over an optional [start_time, end_time] window. Used by
 	// get_financial_summary (internal/tools/analytics.go). expense amounts are
-	// stored negative, so SUM(-amount) turns them back into a positive total;
-	// adjustment is reported here but excluded from income/expense by
-	// SummarizeTransactionsByCategory/ByAccount below.
+	// stored negative, so SUM(-amount) turns them back into a positive total.
 	SummarizeTransactionsByCurrency(ctx context.Context, arg SummarizeTransactionsByCurrencyParams) ([]SummarizeTransactionsByCurrencyRow, error)
-	UpdateAccount(ctx context.Context, arg UpdateAccountParams) (Account, error)
+	// Aggregates income/expense totals grouped by source and currency, over
+	// an optional [start_time, end_time] window.
+	SummarizeTransactionsBySource(ctx context.Context, arg SummarizeTransactionsBySourceParams) ([]SummarizeTransactionsBySourceRow, error)
 	UpdateCategory(ctx context.Context, arg UpdateCategoryParams) (Category, error)
+	UpdateSource(ctx context.Context, arg UpdateSourceParams) (Source, error)
 	UpdateTransaction(ctx context.Context, arg UpdateTransactionParams) (Transaction, error)
 }
 

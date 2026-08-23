@@ -13,6 +13,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"tally/internal/confirm"
+	"tally/internal/currency"
 	"tally/internal/store"
 )
 
@@ -23,7 +24,7 @@ func init() {
 func registerTransactionTools(s *mcp.Server, deps Deps) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "create_transaction",
-		Description: "Record one income, expense, or adjustment transaction; the account's balance is updated accordingly. income/expense require an existing category_id (any category in the ledger). adjustment is the formal way to correct an account's balance: it takes a signed, nonzero amount and must not have a category_id.",
+		Description: "Record one income or expense transaction. Requires an existing category_id (any category in the ledger).",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in CreateTransactionInput) (*mcp.CallToolResult, CreateTransactionOutput, error) {
 		return createTransaction(ctx, deps, in)
 	})
@@ -37,7 +38,7 @@ func registerTransactionTools(s *mcp.Server, deps Deps) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "search_transactions",
-		Description: "List transactions, optionally filtered by time range, account, and/or category, sorted oldest first. Results are paginated: " +
+		Description: "List transactions, optionally filtered by time range, source, and/or category, sorted oldest first. Results are paginated: " +
 			"each call returns at most limit transactions (default 50, max 200); if more match, the response includes next_cursor -- pass it back " +
 			"as cursor on the next call to keep paging until next_cursor is no longer returned. With no filters, pages through every transaction in the ledger.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in SearchTransactionsInput) (*mcp.CallToolResult, SearchTransactionsOutput, error) {
@@ -46,7 +47,7 @@ func registerTransactionTools(s *mcp.Server, deps Deps) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "update_transaction",
-		Description: "Replace a transaction's fields (type, account, category, amount, time, comment) by id. This is a full replacement, not a partial update -- all fields must be provided, and the same income/expense/adjustment validation rules as create_transaction apply. Does not require confirmation.",
+		Description: "Replace a transaction's fields (type, source, category, amount, currency, time, comment) by id. This is a full replacement, not a partial update -- all fields must be provided, and the same validation rules as create_transaction apply. Does not require confirmation.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in UpdateTransactionInput) (*mcp.CallToolResult, UpdateTransactionOutput, error) {
 		return updateTransaction(ctx, deps, in)
 	})
@@ -55,36 +56,36 @@ func registerTransactionTools(s *mcp.Server, deps Deps) {
 		Name: "delete_transaction",
 		Description: "Delete a transaction by id. This is a two-step preview -> apply: call without confirmation_token to preview " +
 			"(returns the transaction and a token), then call again with the returned confirmation_token to actually delete. " +
-			"Unlike account/category deletion, any existing transaction can be deleted -- there is no reference-count gate.",
+			"Unlike source/category deletion, any existing transaction can be deleted -- there is no reference-count gate.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in DeleteTransactionInput) (*mcp.CallToolResult, DeleteTransactionOutput, error) {
 		return deleteTransaction(ctx, deps, in)
 	})
 }
 
 var createableTransactionTypes = map[string]bool{
-	"income":             true,
-	"expense":            true,
-	"adjustment": true,
+	"income":  true,
+	"expense": true,
 }
 
 // TransactionInfo is the wire representation of a transaction returned by
 // create_transaction, get_transaction, and search_transactions.
 type TransactionInfo struct {
 	ID         string `json:"id" jsonschema:"the transaction's unique id, as a decimal string"`
-	Type       string `json:"type" jsonschema:"the transaction's type: income, expense, or adjustment"`
-	AccountID  string `json:"account_id" jsonschema:"the id of the account this transaction affects, as a decimal string"`
-	CategoryID string `json:"category_id" jsonschema:"the id of the transaction's category, as a decimal string; \"0\" for an adjustment transaction, which has no category"`
-	Amount     int64  `json:"amount" jsonschema:"the transaction amount, in the account currency's smallest unit; how many decimal places that represents varies by currency (e.g. 2 for USD/CNY, 0 for JPY, 3 for BHD). Positive for income and expense; adjustment amounts carry their own sign"`
-	Currency   string `json:"currency" jsonschema:"the account's currency, as an ISO 4217 code"`
+	Type       string `json:"type" jsonschema:"the transaction's type: income or expense"`
+	SourceID   string `json:"source_id" jsonschema:"the id of the source this transaction is from/to, as a decimal string"`
+	CategoryID string `json:"category_id" jsonschema:"the id of the transaction's category, as a decimal string"`
+	Amount     int64  `json:"amount" jsonschema:"the transaction amount, in the currency's smallest unit; how many decimal places that represents varies by currency (e.g. 2 for USD/CNY, 0 for JPY, 3 for BHD). Positive for both income and expense"`
+	Currency   string `json:"currency" jsonschema:"the transaction's currency, as an ISO 4217 code"`
 	Time       int64  `json:"time" jsonschema:"when the transaction occurred, as unix seconds"`
 	Comment    string `json:"comment,omitempty" jsonschema:"an optional note about the transaction"`
 }
 
 type CreateTransactionInput struct {
-	Type       string `json:"type" jsonschema:"the transaction's type: income, expense, or adjustment"`
-	AccountID  string `json:"account_id" jsonschema:"the id of the account this transaction affects, as a decimal string"`
-	CategoryID string `json:"category_id,omitempty" jsonschema:"the id of the transaction's category, as a decimal string; required for income/expense (any existing category), must be omitted for adjustment"`
-	Amount     int64  `json:"amount" jsonschema:"the transaction amount, in the account currency's smallest unit; how many decimal places that represents varies by currency (e.g. 2 for USD/CNY, 0 for JPY, 3 for BHD); must be positive for income/expense, nonzero (positive or negative) for adjustment"`
+	Type       string `json:"type" jsonschema:"the transaction's type: income or expense"`
+	SourceID   string `json:"source_id" jsonschema:"the id of the source this transaction is from/to, as a decimal string"`
+	CategoryID string `json:"category_id" jsonschema:"the id of the transaction's category, as a decimal string; any existing category"`
+	Amount     int64  `json:"amount" jsonschema:"the transaction amount, in the currency's smallest unit; how many decimal places that represents varies by currency (e.g. 2 for USD/CNY, 0 for JPY, 3 for BHD); must be positive"`
+	Currency   string `json:"currency" jsonschema:"the transaction's currency, as an ISO 4217 code, e.g. CNY, USD"`
 	Time       int64  `json:"time" jsonschema:"when the transaction occurred, as unix seconds"`
 	Comment    string `json:"comment,omitempty" jsonschema:"an optional note about the transaction"`
 }
@@ -94,89 +95,80 @@ type CreateTransactionOutput struct {
 }
 
 // validatedTransactionFields is the normalized, validated form of the fields
-// shared by create_transaction and update_transaction: the account id, the
-// resolved category_id (NULL for adjustment), and the signed amount
-// to store (income/expense amounts are stored signed -- income positive,
-// expense negative -- so SUM(amount) is directly the account balance; the
-// wire format keeps both sides of *Amount positive for income/expense).
+// shared by create_transaction and update_transaction: the source id, the
+// resolved category_id, and the signed amount to store (income amounts are
+// stored positive, expense negative, so SUM(amount) is directly the net
+// total; the wire format keeps *Amount positive for both).
 type validatedTransactionFields struct {
-	AccountID  int64
-	CategoryID sql.NullInt64
+	SourceID   int64
+	CategoryID int64
+	Currency   string
 	Amount     int64
 }
 
-// validateTransactionInput checks and normalizes the type/account_id/
-// category_id/amount/time rules shared by create_transaction and
-// update_transaction: income/expense require an existing category_id and a
-// positive amount; adjustment forbids a category_id and requires a
-// nonzero amount. It returns the resolved account (for its currency)
-// alongside the normalized fields.
-func validateTransactionInput(ctx context.Context, deps Deps, txType, accountIDStr, categoryIDStr string, amount, txTime int64) (store.Account, validatedTransactionFields, error) {
+// validateTransactionInput checks and normalizes the type/source_id/
+// category_id/amount/currency/time rules shared by create_transaction and
+// update_transaction: income/expense require an existing source_id and
+// category_id, a positive amount, and a supported currency code.
+func validateTransactionInput(ctx context.Context, deps Deps, txType, sourceIDStr, categoryIDStr string, amount int64, currencyCode string, txTime int64) (validatedTransactionFields, error) {
 	if !createableTransactionTypes[txType] {
-		return store.Account{}, validatedTransactionFields{}, fmt.Errorf("missing or unsupported transaction type: %q", txType)
+		return validatedTransactionFields{}, fmt.Errorf("missing or unsupported transaction type: %q", txType)
 	}
 
-	if accountIDStr == "" {
-		return store.Account{}, validatedTransactionFields{}, fmt.Errorf("missing required field: account_id")
+	if sourceIDStr == "" {
+		return validatedTransactionFields{}, fmt.Errorf("missing required field: source_id")
 	}
-	accountID, err := parseID(accountIDStr)
+	sourceID, err := parseID(sourceIDStr)
 	if err != nil {
-		return store.Account{}, validatedTransactionFields{}, err
+		return validatedTransactionFields{}, err
 	}
 
 	if txTime <= 0 {
-		return store.Account{}, validatedTransactionFields{}, fmt.Errorf("missing required field: time")
+		return validatedTransactionFields{}, fmt.Errorf("missing required field: time")
 	}
 
-	account, err := deps.Q.GetAccount(ctx, accountID)
-	if err != nil {
+	if _, err := deps.Q.GetSource(ctx, sourceID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return store.Account{}, validatedTransactionFields{}, fmt.Errorf("account %q not found", accountIDStr)
+			return validatedTransactionFields{}, fmt.Errorf("source %q not found", sourceIDStr)
 		}
-		return store.Account{}, validatedTransactionFields{}, err
+		return validatedTransactionFields{}, err
 	}
 
-	var categoryID sql.NullInt64
-	var signedAmount int64
-
-	if txType == "adjustment" {
-		if categoryIDStr != "" {
-			return store.Account{}, validatedTransactionFields{}, fmt.Errorf("adjustment transactions cannot specify a category_id")
+	if categoryIDStr == "" {
+		return validatedTransactionFields{}, fmt.Errorf("missing required field: category_id")
+	}
+	categoryID, err := parseID(categoryIDStr)
+	if err != nil {
+		return validatedTransactionFields{}, err
+	}
+	if _, err := deps.Q.GetCategory(ctx, categoryID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return validatedTransactionFields{}, fmt.Errorf("category %q not found", categoryIDStr)
 		}
-		if amount == 0 {
-			return store.Account{}, validatedTransactionFields{}, fmt.Errorf("missing required field: amount (must be nonzero for adjustment)")
-		}
-		signedAmount = amount
-	} else {
-		if categoryIDStr == "" {
-			return store.Account{}, validatedTransactionFields{}, fmt.Errorf("missing required field: category_id")
-		}
-		catID, err := parseID(categoryIDStr)
-		if err != nil {
-			return store.Account{}, validatedTransactionFields{}, err
-		}
-		if _, err := deps.Q.GetCategory(ctx, catID); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return store.Account{}, validatedTransactionFields{}, fmt.Errorf("category %q not found", categoryIDStr)
-			}
-			return store.Account{}, validatedTransactionFields{}, err
-		}
-		categoryID = sql.NullInt64{Int64: catID, Valid: true}
-
-		if amount <= 0 {
-			return store.Account{}, validatedTransactionFields{}, fmt.Errorf("missing required field: amount (must be positive)")
-		}
-		signedAmount = amount
-		if txType == "expense" {
-			signedAmount = -amount
-		}
+		return validatedTransactionFields{}, err
 	}
 
-	return account, validatedTransactionFields{AccountID: accountID, CategoryID: categoryID, Amount: signedAmount}, nil
+	if amount <= 0 {
+		return validatedTransactionFields{}, fmt.Errorf("missing required field: amount (must be positive)")
+	}
+
+	if currencyCode == "" {
+		return validatedTransactionFields{}, fmt.Errorf("missing required field: currency")
+	}
+	if !currency.Supported(currencyCode) {
+		return validatedTransactionFields{}, fmt.Errorf("unsupported currency: %q", currencyCode)
+	}
+
+	signedAmount := amount
+	if txType == "expense" {
+		signedAmount = -amount
+	}
+
+	return validatedTransactionFields{SourceID: sourceID, CategoryID: categoryID, Currency: currencyCode, Amount: signedAmount}, nil
 }
 
 func createTransaction(ctx context.Context, deps Deps, in CreateTransactionInput) (*mcp.CallToolResult, CreateTransactionOutput, error) {
-	account, fields, err := validateTransactionInput(ctx, deps, in.Type, in.AccountID, in.CategoryID, in.Amount, in.Time)
+	fields, err := validateTransactionInput(ctx, deps, in.Type, in.SourceID, in.CategoryID, in.Amount, in.Currency, in.Time)
 	if err != nil {
 		return nil, CreateTransactionOutput{}, err
 	}
@@ -184,8 +176,9 @@ func createTransaction(ctx context.Context, deps Deps, in CreateTransactionInput
 	now := time.Now().Unix()
 	transaction, err := deps.Q.CreateTransaction(ctx, store.CreateTransactionParams{
 		Type:       in.Type,
-		AccountID:  fields.AccountID,
+		SourceID:   fields.SourceID,
 		CategoryID: fields.CategoryID,
+		Currency:   fields.Currency,
 		Amount:     fields.Amount,
 		Time:       in.Time,
 		Comment:    in.Comment,
@@ -196,7 +189,7 @@ func createTransaction(ctx context.Context, deps Deps, in CreateTransactionInput
 		return nil, CreateTransactionOutput{}, err
 	}
 
-	return nil, CreateTransactionOutput{Transaction: toTransactionInfo(transaction, account.Currency)}, nil
+	return nil, CreateTransactionOutput{Transaction: toTransactionInfo(transaction)}, nil
 }
 
 type GetTransactionInput struct {
@@ -224,20 +217,16 @@ func getTransaction(ctx context.Context, deps Deps, in GetTransactionInput) (*mc
 		return nil, GetTransactionOutput{}, err
 	}
 
-	account, err := deps.Q.GetAccount(ctx, transaction.AccountID)
-	if err != nil {
-		return nil, GetTransactionOutput{}, err
-	}
-
-	return nil, GetTransactionOutput{Transaction: toTransactionInfo(transaction, account.Currency)}, nil
+	return nil, GetTransactionOutput{Transaction: toTransactionInfo(transaction)}, nil
 }
 
 type UpdateTransactionInput struct {
 	ID         string `json:"id" jsonschema:"the transaction's unique id, as a decimal string"`
-	Type       string `json:"type" jsonschema:"the transaction's type: income, expense, or adjustment"`
-	AccountID  string `json:"account_id" jsonschema:"the id of the account this transaction affects, as a decimal string; may differ from the transaction's current account_id to move it to another account"`
-	CategoryID string `json:"category_id,omitempty" jsonschema:"the id of the transaction's category, as a decimal string; required for income/expense (any existing category), must be omitted for adjustment"`
-	Amount     int64  `json:"amount" jsonschema:"the transaction amount, in the account currency's smallest unit; how many decimal places that represents varies by currency (e.g. 2 for USD/CNY, 0 for JPY, 3 for BHD); must be positive for income/expense, nonzero (positive or negative) for adjustment"`
+	Type       string `json:"type" jsonschema:"the transaction's type: income or expense"`
+	SourceID   string `json:"source_id" jsonschema:"the id of the source this transaction is from/to, as a decimal string; may differ from the transaction's current source_id to move it to another source"`
+	CategoryID string `json:"category_id" jsonschema:"the id of the transaction's category, as a decimal string; any existing category"`
+	Amount     int64  `json:"amount" jsonschema:"the transaction amount, in the currency's smallest unit; how many decimal places that represents varies by currency (e.g. 2 for USD/CNY, 0 for JPY, 3 for BHD); must be positive"`
+	Currency   string `json:"currency" jsonschema:"the transaction's currency, as an ISO 4217 code, e.g. CNY, USD"`
 	Time       int64  `json:"time" jsonschema:"when the transaction occurred, as unix seconds"`
 	Comment    string `json:"comment,omitempty" jsonschema:"an optional note about the transaction"`
 }
@@ -247,7 +236,7 @@ type UpdateTransactionOutput struct {
 }
 
 // updateTransaction replaces every mutable field of an existing transaction.
-// This is full-field-replacement semantics (like manage_account/
+// This is full-field-replacement semantics (like manage_source/
 // manage_category's operation=update), reusing the exact validation rules
 // create_transaction applies -- see validateTransactionInput.
 func updateTransaction(ctx context.Context, deps Deps, in UpdateTransactionInput) (*mcp.CallToolResult, UpdateTransactionOutput, error) {
@@ -266,15 +255,16 @@ func updateTransaction(ctx context.Context, deps Deps, in UpdateTransactionInput
 		return nil, UpdateTransactionOutput{}, err
 	}
 
-	account, fields, err := validateTransactionInput(ctx, deps, in.Type, in.AccountID, in.CategoryID, in.Amount, in.Time)
+	fields, err := validateTransactionInput(ctx, deps, in.Type, in.SourceID, in.CategoryID, in.Amount, in.Currency, in.Time)
 	if err != nil {
 		return nil, UpdateTransactionOutput{}, err
 	}
 
 	updated, err := deps.Q.UpdateTransaction(ctx, store.UpdateTransactionParams{
 		Type:       in.Type,
-		AccountID:  fields.AccountID,
+		SourceID:   fields.SourceID,
 		CategoryID: fields.CategoryID,
+		Currency:   fields.Currency,
 		Amount:     fields.Amount,
 		Time:       in.Time,
 		Comment:    in.Comment,
@@ -285,19 +275,20 @@ func updateTransaction(ctx context.Context, deps Deps, in UpdateTransactionInput
 		return nil, UpdateTransactionOutput{}, err
 	}
 
-	return nil, UpdateTransactionOutput{Transaction: toTransactionInfo(updated, account.Currency)}, nil
+	return nil, UpdateTransactionOutput{Transaction: toTransactionInfo(updated)}, nil
 }
 
 // transactionDeletionRevisionFields is hashed to produce the revision
 // embedded in a delete_transaction confirmation token (see design.md's
-// "delete_transaction:走 preview → apply"). Unlike account/category
+// "delete_transaction:走 preview → apply"). Unlike source/category
 // deletion, there is no reference-count gate -- every field here exists
 // purely to detect that the transaction was modified or replaced since the
 // preview, not to decide whether deletion is allowed.
 type transactionDeletionRevisionFields struct {
 	Type       string
-	AccountID  int64
-	CategoryID sql.NullInt64
+	SourceID   int64
+	CategoryID int64
+	Currency   string
 	Amount     int64
 	Time       int64
 	Comment    string
@@ -306,8 +297,9 @@ type transactionDeletionRevisionFields struct {
 func transactionDeletionRevision(t store.Transaction) string {
 	fields := transactionDeletionRevisionFields{
 		Type:       t.Type,
-		AccountID:  t.AccountID,
+		SourceID:   t.SourceID,
 		CategoryID: t.CategoryID,
+		Currency:   t.Currency,
 		Amount:     t.Amount,
 		Time:       t.Time,
 		Comment:    t.Comment,
@@ -349,12 +341,7 @@ func deleteTransaction(ctx context.Context, deps Deps, in DeleteTransactionInput
 		return nil, DeleteTransactionOutput{}, err
 	}
 
-	account, err := deps.Q.GetAccount(ctx, transaction.AccountID)
-	if err != nil {
-		return nil, DeleteTransactionOutput{}, err
-	}
-
-	info := toTransactionInfo(transaction, account.Currency)
+	info := toTransactionInfo(transaction)
 	revision := transactionDeletionRevision(transaction)
 
 	if in.ConfirmationToken == "" {
@@ -403,12 +390,12 @@ const (
 )
 
 type SearchTransactionsInput struct {
-	AccountID  string `json:"account_id,omitempty" jsonschema:"only include transactions on this account, as a decimal string"`
+	SourceID   string `json:"source_id,omitempty" jsonschema:"only include transactions from/to this source, as a decimal string"`
 	CategoryID string `json:"category_id,omitempty" jsonschema:"only include transactions in this category, as a decimal string"`
 	StartTime  int64  `json:"start_time,omitempty" jsonschema:"only include transactions at or after this unix time (seconds)"`
 	EndTime    int64  `json:"end_time,omitempty" jsonschema:"only include transactions at or before this unix time (seconds)"`
 	Limit      int64  `json:"limit,omitempty" jsonschema:"maximum number of transactions to return in this page; defaults to 50 when omitted, must be between 1 and 200 (requests over 200 are rejected, not truncated)"`
-	Cursor     string `json:"cursor,omitempty" jsonschema:"opaque pagination cursor from a previous response's next_cursor; omit to fetch the first page. Must be paired with the exact same account_id/category_id/start_time/end_time filters used to obtain it"`
+	Cursor     string `json:"cursor,omitempty" jsonschema:"opaque pagination cursor from a previous response's next_cursor; omit to fetch the first page. Must be paired with the exact same source_id/category_id/start_time/end_time filters used to obtain it"`
 }
 
 type SearchTransactionsOutput struct {
@@ -420,13 +407,13 @@ func searchTransactions(ctx context.Context, deps Deps, in SearchTransactionsInp
 	params := store.SearchTransactionsParams{}
 	filter := searchTransactionsFilterFields{}
 
-	if in.AccountID != "" {
-		id, err := parseID(in.AccountID)
+	if in.SourceID != "" {
+		id, err := parseID(in.SourceID)
 		if err != nil {
 			return nil, SearchTransactionsOutput{}, err
 		}
-		params.AccountID = id
-		filter.AccountID = sql.NullInt64{Int64: id, Valid: true}
+		params.SourceID = id
+		filter.SourceID = sql.NullInt64{Int64: id, Valid: true}
 	}
 	if in.CategoryID != "" {
 		id, err := parseID(in.CategoryID)
@@ -480,54 +467,22 @@ func searchTransactions(ctx context.Context, deps Deps, in SearchTransactionsInp
 		transactions = transactions[:limit]
 	}
 
-	infos, err := toTransactionInfos(ctx, deps, transactions)
-	if err != nil {
-		return nil, SearchTransactionsOutput{}, err
+	infos := make([]TransactionInfo, 0, len(transactions))
+	for _, t := range transactions {
+		infos = append(infos, toTransactionInfo(t))
 	}
 
 	return nil, SearchTransactionsOutput{Transactions: infos, NextCursor: nextCursor}, nil
 }
 
-// toTransactionInfos resolves currencies for a batch of transactions with one
-// account lookup per distinct account, instead of one query per transaction.
-func toTransactionInfos(ctx context.Context, deps Deps, transactions []store.Transaction) ([]TransactionInfo, error) {
-	currencyByAccount := map[int64]string{}
-	infos := make([]TransactionInfo, 0, len(transactions))
-
-	for _, t := range transactions {
-		curr, ok := currencyByAccount[t.AccountID]
-		if !ok {
-			account, err := deps.Q.GetAccount(ctx, t.AccountID)
-			if err != nil {
-				return nil, err
-			}
-			curr = account.Currency
-			currencyByAccount[t.AccountID] = curr
-		}
-		infos = append(infos, toTransactionInfo(t, curr))
-	}
-
-	return infos, nil
-}
-
-func toTransactionInfo(t store.Transaction, currencyCode string) TransactionInfo {
-	amount := t.Amount
-	if t.Type != "adjustment" {
-		amount = abs64(amount)
-	}
-
-	categoryID := "0"
-	if t.CategoryID.Valid {
-		categoryID = formatID(t.CategoryID.Int64)
-	}
-
+func toTransactionInfo(t store.Transaction) TransactionInfo {
 	return TransactionInfo{
 		ID:         formatID(t.ID),
 		Type:       t.Type,
-		AccountID:  formatID(t.AccountID),
-		CategoryID: categoryID,
-		Amount:     amount,
-		Currency:   currencyCode,
+		SourceID:   formatID(t.SourceID),
+		CategoryID: formatID(t.CategoryID),
+		Amount:     abs64(t.Amount),
+		Currency:   t.Currency,
 		Time:       t.Time,
 		Comment:    t.Comment,
 	}

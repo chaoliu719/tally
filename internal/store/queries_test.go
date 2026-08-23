@@ -19,18 +19,18 @@ func newTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
-func TestAggregatedBalanceMatchesTransactionSum(t *testing.T) {
+func TestTransactionsReferenceSourceAndCategory(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	q := New(db)
 
 	now := time.Now().Unix()
 
-	account, err := q.CreateAccount(ctx, CreateAccountParams{
-		Name: "Cash", Type: "cash", Currency: "CNY", CreatedAt: now, UpdatedAt: now,
+	source, err := q.CreateSource(ctx, CreateSourceParams{
+		Name: "Cash", CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil {
-		t.Fatalf("CreateAccount failed: %v", err)
+		t.Fatalf("CreateSource failed: %v", err)
 	}
 
 	category, err := q.CreateCategory(ctx, CreateCategoryParams{
@@ -46,81 +46,48 @@ func TestAggregatedBalanceMatchesTransactionSum(t *testing.T) {
 		t.Fatalf("CreateCategory (sub) failed: %v", err)
 	}
 
-	if _, err := q.CreateTransaction(ctx, CreateTransactionParams{
-		Type: "adjustment", AccountID: account.ID, CategoryID: sql.NullInt64{}, Amount: 10000, Time: now, CreatedAt: now, UpdatedAt: now,
-	}); err != nil {
-		t.Fatalf("CreateTransaction (adjustment) failed: %v", err)
+	income, err := q.CreateTransaction(ctx, CreateTransactionParams{
+		Type: "income", SourceID: source.ID, CategoryID: category.ID, Currency: "CNY", Amount: 10000, Time: now, CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("CreateTransaction (income) failed: %v", err)
 	}
-	if _, err := q.CreateTransaction(ctx, CreateTransactionParams{
-		Type: "expense", AccountID: account.ID, CategoryID: sql.NullInt64{Int64: sub.ID, Valid: true}, Amount: -2500, Time: now, CreatedAt: now, UpdatedAt: now,
-	}); err != nil {
+	expense, err := q.CreateTransaction(ctx, CreateTransactionParams{
+		Type: "expense", SourceID: source.ID, CategoryID: sub.ID, Currency: "CNY", Amount: -2500, Time: now, CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
 		t.Fatalf("CreateTransaction (expense) failed: %v", err)
 	}
 
-	balance, err := q.GetAccountBalance(ctx, account.ID)
+	sources, err := q.ListSources(ctx)
 	if err != nil {
-		t.Fatalf("GetAccountBalance failed: %v", err)
+		t.Fatalf("ListSources failed: %v", err)
 	}
-	if balance != 10000-2500 {
-		t.Fatalf("balance = %d, want %d", balance, 10000-2500)
+	if len(sources) != 1 {
+		t.Fatalf("expected 1 source, got %d", len(sources))
 	}
 
-	rows, err := q.ListAccounts(ctx)
+	count, err := q.CountTransactionsBySource(ctx, source.ID)
 	if err != nil {
-		t.Fatalf("ListAccounts failed: %v", err)
+		t.Fatalf("CountTransactionsBySource failed: %v", err)
 	}
-	if len(rows) != 1 {
-		t.Fatalf("expected 1 account, got %d", len(rows))
+	if count != 2 {
+		t.Fatalf("CountTransactionsBySource = %d, want 2", count)
 	}
-	if rows[0].Balance != 10000-2500 {
-		t.Fatalf("ListAccounts balance = %d, want %d", rows[0].Balance, 10000-2500)
-	}
-}
 
-func TestCheckConstraintRejectsIncomeExpenseWithoutCategory(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	q := New(db)
-
-	now := time.Now().Unix()
-	account, err := q.CreateAccount(ctx, CreateAccountParams{
-		Name: "Cash", Type: "cash", Currency: "CNY", CreatedAt: now, UpdatedAt: now,
-	})
+	got, err := q.GetTransaction(ctx, income.ID)
 	if err != nil {
-		t.Fatalf("CreateAccount failed: %v", err)
+		t.Fatalf("GetTransaction (income) failed: %v", err)
+	}
+	if got.SourceID != source.ID || got.CategoryID != category.ID || got.Currency != "CNY" || got.Amount != 10000 {
+		t.Fatalf("GetTransaction (income) = %+v, unexpected", got)
 	}
 
-	_, err = q.CreateTransaction(ctx, CreateTransactionParams{
-		Type: "expense", AccountID: account.ID, CategoryID: sql.NullInt64{}, Amount: -100, Time: now, CreatedAt: now, UpdatedAt: now,
-	})
-	if err == nil {
-		t.Fatal("expected CHECK constraint violation for expense without category_id, got nil error")
-	}
-}
-
-func TestCheckConstraintRejectsAdjustmentWithCategory(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	q := New(db)
-
-	now := time.Now().Unix()
-	account, err := q.CreateAccount(ctx, CreateAccountParams{
-		Name: "Cash", Type: "cash", Currency: "CNY", CreatedAt: now, UpdatedAt: now,
-	})
+	got, err = q.GetTransaction(ctx, expense.ID)
 	if err != nil {
-		t.Fatalf("CreateAccount failed: %v", err)
+		t.Fatalf("GetTransaction (expense) failed: %v", err)
 	}
-	category, err := q.CreateCategory(ctx, CreateCategoryParams{
-		Name: "Food", ParentID: 0, CreatedAt: now, UpdatedAt: now,
-	})
-	if err != nil {
-		t.Fatalf("CreateCategory failed: %v", err)
-	}
-
-	_, err = q.CreateTransaction(ctx, CreateTransactionParams{
-		Type: "adjustment", AccountID: account.ID, CategoryID: sql.NullInt64{Int64: category.ID, Valid: true}, Amount: 100, Time: now, CreatedAt: now, UpdatedAt: now,
-	})
-	if err == nil {
-		t.Fatal("expected CHECK constraint violation for adjustment with category_id, got nil error")
+	if got.SourceID != source.ID || got.CategoryID != sub.ID || got.Amount != -2500 {
+		t.Fatalf("GetTransaction (expense) = %+v, unexpected", got)
 	}
 }
