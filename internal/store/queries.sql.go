@@ -394,7 +394,13 @@ WHERE (?1  IS NULL OR account_id = ?1)
   AND (?2 IS NULL OR category_id = ?2)
   AND (?3  IS NULL OR time >= ?3)
   AND (?4    IS NULL OR time <= ?4)
+  AND (
+    ?5 IS NULL
+    OR time > ?5
+    OR (time = ?5 AND id > ?6)
+  )
 ORDER BY time, id
+LIMIT ?7
 `
 
 type SearchTransactionsParams struct {
@@ -402,6 +408,9 @@ type SearchTransactionsParams struct {
 	CategoryID interface{}
 	StartTime  interface{}
 	EndTime    interface{}
+	AfterTime  interface{}
+	AfterID    sql.NullInt64
+	Limit      int64
 }
 
 func (q *Queries) SearchTransactions(ctx context.Context, arg SearchTransactionsParams) ([]Transaction, error) {
@@ -410,6 +419,9 @@ func (q *Queries) SearchTransactions(ctx context.Context, arg SearchTransactions
 		arg.CategoryID,
 		arg.StartTime,
 		arg.EndTime,
+		arg.AfterTime,
+		arg.AfterID,
+		arg.Limit,
 	)
 	if err != nil {
 		return nil, err

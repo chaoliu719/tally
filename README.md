@@ -17,7 +17,7 @@ one implicit ledger; there's no user account to create or log into.
 | `manage_category` | Create, update, or delete a transaction category, via `operation=create/update/delete`. Categories nest to any depth. Delete is a two-step preview → apply confirmation (see below). |
 | `create_transaction` | Record one income, expense, or balance_adjustment transaction. income/expense reference an existing category (any category in the ledger); balance_adjustment corrects an account's balance directly with a signed amount and no category. Updates the account balance. |
 | `get_transaction` | Fetch one transaction by id. |
-| `search_transactions` | List transactions, optionally filtered by time range, account, and/or category. |
+| `search_transactions` | List transactions, optionally filtered by time range, account, and/or category, sorted oldest first. Paginated via `limit` (default 50, max 200) and `cursor`; the response includes `next_cursor` when more results remain. |
 | `update_transaction` | Replace every field of an existing transaction by id (same validation rules as `create_transaction`). Full replacement, not a partial update; no confirmation required. |
 | `delete_transaction` | Delete a transaction by id. Two-step preview → apply confirmation (see below); unlike account/category deletion, any existing transaction can be deleted. |
 | `get_financial_summary` | Aggregate income/expense/net totals over an optional time range, grouped by currency, and broken down by category and by account. balance_adjustment totals are reported separately, not counted as income/expense. Read-only. |
