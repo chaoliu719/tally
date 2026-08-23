@@ -174,6 +174,7 @@ func createAccount(ctx context.Context, deps Deps, in ManageAccountInput) (*mcp.
 			Amount:     in.Balance,
 			Time:       now,
 			CreatedAt:  now,
+			UpdatedAt:  now,
 		}); err != nil {
 			return nil, ManageAccountOutput{}, err
 		}

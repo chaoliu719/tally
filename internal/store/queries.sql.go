@@ -118,9 +118,9 @@ func (q *Queries) CreateCategory(ctx context.Context, arg CreateCategoryParams) 
 }
 
 const createTransaction = `-- name: CreateTransaction :one
-INSERT INTO transactions (type, account_id, category_id, amount, time, comment, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-RETURNING id, type, account_id, category_id, amount, time, comment, created_at
+INSERT INTO transactions (type, account_id, category_id, amount, time, comment, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, type, account_id, category_id, amount, time, comment, created_at, updated_at
 `
 
 type CreateTransactionParams struct {
@@ -131,6 +131,7 @@ type CreateTransactionParams struct {
 	Time       int64
 	Comment    string
 	CreatedAt  int64
+	UpdatedAt  int64
 }
 
 func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionParams) (Transaction, error) {
@@ -142,6 +143,7 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 		arg.Time,
 		arg.Comment,
 		arg.CreatedAt,
+		arg.UpdatedAt,
 	)
 	var i Transaction
 	err := row.Scan(
@@ -153,6 +155,7 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 		&i.Time,
 		&i.Comment,
 		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -174,6 +177,16 @@ WHERE id = ?
 
 func (q *Queries) DeleteCategory(ctx context.Context, id int64) error {
 	_, err := q.db.ExecContext(ctx, deleteCategory, id)
+	return err
+}
+
+const deleteTransaction = `-- name: DeleteTransaction :exec
+DELETE FROM transactions
+WHERE id = ?
+`
+
+func (q *Queries) DeleteTransaction(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, deleteTransaction, id)
 	return err
 }
 
@@ -231,7 +244,7 @@ func (q *Queries) GetCategory(ctx context.Context, id int64) (Category, error) {
 }
 
 const getTransaction = `-- name: GetTransaction :one
-SELECT id, type, account_id, category_id, amount, time, comment, created_at
+SELECT id, type, account_id, category_id, amount, time, comment, created_at, updated_at
 FROM transactions
 WHERE id = ?
 `
@@ -248,6 +261,7 @@ func (q *Queries) GetTransaction(ctx context.Context, id int64) (Transaction, er
 		&i.Time,
 		&i.Comment,
 		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -374,7 +388,7 @@ func (q *Queries) ListCategoryDescendantIDs(ctx context.Context, targetID int64)
 }
 
 const searchTransactions = `-- name: SearchTransactions :many
-SELECT id, type, account_id, category_id, amount, time, comment, created_at
+SELECT id, type, account_id, category_id, amount, time, comment, created_at, updated_at
 FROM transactions
 WHERE (?1  IS NULL OR account_id = ?1)
   AND (?2 IS NULL OR category_id = ?2)
@@ -413,6 +427,7 @@ func (q *Queries) SearchTransactions(ctx context.Context, arg SearchTransactions
 			&i.Time,
 			&i.Comment,
 			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -489,6 +504,50 @@ func (q *Queries) UpdateCategory(ctx context.Context, arg UpdateCategoryParams) 
 		&i.ID,
 		&i.Name,
 		&i.ParentID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateTransaction = `-- name: UpdateTransaction :one
+UPDATE transactions
+SET type = ?, account_id = ?, category_id = ?, amount = ?, time = ?, comment = ?, updated_at = ?
+WHERE id = ?
+RETURNING id, type, account_id, category_id, amount, time, comment, created_at, updated_at
+`
+
+type UpdateTransactionParams struct {
+	Type       string
+	AccountID  int64
+	CategoryID sql.NullInt64
+	Amount     int64
+	Time       int64
+	Comment    string
+	UpdatedAt  int64
+	ID         int64
+}
+
+func (q *Queries) UpdateTransaction(ctx context.Context, arg UpdateTransactionParams) (Transaction, error) {
+	row := q.db.QueryRowContext(ctx, updateTransaction,
+		arg.Type,
+		arg.AccountID,
+		arg.CategoryID,
+		arg.Amount,
+		arg.Time,
+		arg.Comment,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	var i Transaction
+	err := row.Scan(
+		&i.ID,
+		&i.Type,
+		&i.AccountID,
+		&i.CategoryID,
+		&i.Amount,
+		&i.Time,
+		&i.Comment,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

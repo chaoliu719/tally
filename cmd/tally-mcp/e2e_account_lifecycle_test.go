@@ -11,12 +11,15 @@ import (
 // main()'s real buildMux wiring.
 //
 // The two capabilities under test -- update/delete and balance_adjustment --
-// can't share one account: per specs/account-management/spec.md, an account
-// referenced by any transaction (balance_adjustment included) can never be
-// deleted, and the system has no delete_transaction to clear that reference.
-// So account A demonstrates the update -> preview-delete -> apply-delete
-// chain on an account that never records a transaction, and account B
-// demonstrates balance_adjustment and is intentionally never deleted.
+// use separate accounts here for clarity: per specs/account-management/
+// spec.md, an account referenced by any transaction (balance_adjustment
+// included) can never be deleted directly. delete_transaction (added by the
+// transaction-lifecycle change) can clear that reference first -- see
+// TestE2ETransactionLifecycleUnblocksAccountAndCategoryDeletion for that
+// path -- but this test keeps the two concerns apart: account A demonstrates
+// the update -> preview-delete -> apply-delete chain on an account that
+// never records a transaction, and account B demonstrates balance_adjustment
+// and is intentionally never deleted.
 func TestE2EAccountLifecycle(t *testing.T) {
 	session := newE2ESession(t)
 

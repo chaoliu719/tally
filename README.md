@@ -18,6 +18,8 @@ one implicit ledger; there's no user account to create or log into.
 | `create_transaction` | Record one income, expense, or balance_adjustment transaction. income/expense reference an existing category (any category in the ledger); balance_adjustment corrects an account's balance directly with a signed amount and no category. Updates the account balance. |
 | `get_transaction` | Fetch one transaction by id. |
 | `search_transactions` | List transactions, optionally filtered by time range, account, and/or category. |
+| `update_transaction` | Replace every field of an existing transaction by id (same validation rules as `create_transaction`). Full replacement, not a partial update; no confirmation required. |
+| `delete_transaction` | Delete a transaction by id. Two-step preview → apply confirmation (see below); unlike account/category deletion, any existing transaction can be deleted. |
 
 Categories can nest to any depth — `parent_id` may point at any existing category, and any
 category (top-level or nested) can be referenced by `create_transaction`. All ids on the wire
@@ -29,21 +31,27 @@ decimal places that represents **varies by currency** — 2 for most currencies 
 for others (e.g. JPY, KRW), and 3 for a handful (e.g. BHD, KWD, OMR), per the real ISO 4217
 standard. There is no single fixed "divide by 100" rule that works for every currency.
 
-### Deleting an account or category
+### Deleting an account, category, or transaction
 
-`manage_account`/`manage_category` with `operation=delete` is a two-step confirmation, not a
-single-call delete:
+`manage_account`/`manage_category` with `operation=delete`, and `delete_transaction`, are all a
+two-step confirmation, not a single-call delete:
 
-1. Call with `operation=delete` and the target `id`, **without** `confirmation_token`. If the
+1. Call without `confirmation_token` (for `manage_account`/`manage_category`, with
+   `operation=delete` and the target `id`; for `delete_transaction`, with the target `id`). If the
    resource can currently be deleted (no referencing transactions for an account; no child
-   categories or referencing transactions for a category), the response has
-   `status=pending_confirmation` and includes a `confirmation_token` (and its expiry).
-2. Call again with the same `operation=delete` and `id`, this time passing that
-   `confirmation_token`. The resource is deleted and the response has `status=deleted`.
+   categories or referencing transactions for a category; a transaction has no such gate — any
+   existing transaction can always be deleted), the response has `status=pending_confirmation` and
+   includes a `confirmation_token` (and its expiry).
+2. Call again the same way, this time passing that `confirmation_token`. The resource is deleted
+   and the response has `status=deleted`.
 
 A `confirmation_token` expires after 15 minutes and is invalidated if the resource's state changes
-between the two calls (e.g. a transaction gets recorded against it in the meantime) — in either
-case, preview again to get a fresh token.
+between the two calls (e.g. a transaction gets recorded against an account, or the transaction
+itself is edited, in the meantime) — in either case, preview again to get a fresh token.
+
+Deleting every transaction referencing an account or category (via `delete_transaction`) is how you
+clear the reference block on `manage_account`/`manage_category`'s `operation=delete` — the account
+or category itself is otherwise never automatically deleted or modified by deleting transactions.
 
 Not implemented in this version (left for a future change): tags and tag groups, custom exchange
 rates, batch operations, transfer-type transactions, and any analytics/aggregation tools.
@@ -55,7 +63,7 @@ All configuration is via environment variables.
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `TALLY_MCP_TOKEN` | Yes | — | Static bearer token clients must send as `Authorization: Bearer <token>`. The process refuses to start without it. |
-| `TALLY_CONFIRMATION_SECRET` | Yes | — | Secret used to sign/verify `confirmation_token`s for destructive operations (account/category delete). Independent of `TALLY_MCP_TOKEN`. The process refuses to start without it. |
+| `TALLY_CONFIRMATION_SECRET` | Yes | — | Secret used to sign/verify `confirmation_token`s for destructive operations (account/category/transaction delete). Independent of `TALLY_MCP_TOKEN`. The process refuses to start without it. |
 | `TALLY_DB_PATH` | No | `./tally.db` | Path to the SQLite file. Created (with tally's own schema) on first run if it doesn't exist. |
 | `TALLY_LISTEN_ADDR` | No | `:8080` | Address the HTTP server listens on. |
 

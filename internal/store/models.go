@@ -35,4 +35,5 @@ type Transaction struct {
 	Time       int64
 	Comment    string
 	CreatedAt  int64
+	UpdatedAt  int64
 }

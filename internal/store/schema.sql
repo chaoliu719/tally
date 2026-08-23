@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     time         INTEGER NOT NULL,          -- unix seconds
     comment      TEXT NOT NULL DEFAULT '',
     created_at   INTEGER NOT NULL,
+    updated_at   INTEGER NOT NULL,
     CHECK (
         (type IN ('income', 'expense') AND category_id IS NOT NULL) OR
         (type = 'balance_adjustment' AND category_id IS NULL)

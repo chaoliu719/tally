@@ -82,20 +82,30 @@ WITH RECURSIVE descendants(id) AS (
 SELECT id FROM descendants;
 
 -- name: CreateTransaction :one
-INSERT INTO transactions (type, account_id, category_id, amount, time, comment, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO transactions (type, account_id, category_id, amount, time, comment, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: GetTransaction :one
-SELECT id, type, account_id, category_id, amount, time, comment, created_at
+SELECT id, type, account_id, category_id, amount, time, comment, created_at, updated_at
 FROM transactions
 WHERE id = ?;
 
 -- name: SearchTransactions :many
-SELECT id, type, account_id, category_id, amount, time, comment, created_at
+SELECT id, type, account_id, category_id, amount, time, comment, created_at, updated_at
 FROM transactions
 WHERE (sqlc.narg('account_id')  IS NULL OR account_id = sqlc.narg('account_id'))
   AND (sqlc.narg('category_id') IS NULL OR category_id = sqlc.narg('category_id'))
   AND (sqlc.narg('start_time')  IS NULL OR time >= sqlc.narg('start_time'))
   AND (sqlc.narg('end_time')    IS NULL OR time <= sqlc.narg('end_time'))
 ORDER BY time, id;
+
+-- name: UpdateTransaction :one
+UPDATE transactions
+SET type = ?, account_id = ?, category_id = ?, amount = ?, time = ?, comment = ?, updated_at = ?
+WHERE id = ?
+RETURNING *;
+
+-- name: DeleteTransaction :exec
+DELETE FROM transactions
+WHERE id = ?;

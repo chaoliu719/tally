@@ -47,12 +47,12 @@ func TestAggregatedBalanceMatchesTransactionSum(t *testing.T) {
 	}
 
 	if _, err := q.CreateTransaction(ctx, CreateTransactionParams{
-		Type: "balance_adjustment", AccountID: account.ID, CategoryID: sql.NullInt64{}, Amount: 10000, Time: now, CreatedAt: now,
+		Type: "balance_adjustment", AccountID: account.ID, CategoryID: sql.NullInt64{}, Amount: 10000, Time: now, CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("CreateTransaction (balance_adjustment) failed: %v", err)
 	}
 	if _, err := q.CreateTransaction(ctx, CreateTransactionParams{
-		Type: "expense", AccountID: account.ID, CategoryID: sql.NullInt64{Int64: sub.ID, Valid: true}, Amount: -2500, Time: now, CreatedAt: now,
+		Type: "expense", AccountID: account.ID, CategoryID: sql.NullInt64{Int64: sub.ID, Valid: true}, Amount: -2500, Time: now, CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("CreateTransaction (expense) failed: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestCheckConstraintRejectsIncomeExpenseWithoutCategory(t *testing.T) {
 	}
 
 	_, err = q.CreateTransaction(ctx, CreateTransactionParams{
-		Type: "expense", AccountID: account.ID, CategoryID: sql.NullInt64{}, Amount: -100, Time: now, CreatedAt: now,
+		Type: "expense", AccountID: account.ID, CategoryID: sql.NullInt64{}, Amount: -100, Time: now, CreatedAt: now, UpdatedAt: now,
 	})
 	if err == nil {
 		t.Fatal("expected CHECK constraint violation for expense without category_id, got nil error")
@@ -118,7 +118,7 @@ func TestCheckConstraintRejectsBalanceAdjustmentWithCategory(t *testing.T) {
 	}
 
 	_, err = q.CreateTransaction(ctx, CreateTransactionParams{
-		Type: "balance_adjustment", AccountID: account.ID, CategoryID: sql.NullInt64{Int64: category.ID, Valid: true}, Amount: 100, Time: now, CreatedAt: now,
+		Type: "balance_adjustment", AccountID: account.ID, CategoryID: sql.NullInt64{Int64: category.ID, Valid: true}, Amount: 100, Time: now, CreatedAt: now, UpdatedAt: now,
 	})
 	if err == nil {
 		t.Fatal("expected CHECK constraint violation for balance_adjustment with category_id, got nil error")
