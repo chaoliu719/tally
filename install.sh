@@ -26,7 +26,7 @@ else
   cat > .env <<EOF
 TALLY_MCP_TOKEN=$(openssl rand -hex 32)
 TALLY_CONFIRMATION_SECRET=$(openssl rand -hex 32)
-TALLY_HOST_PORT=8080
+TALLY_HOST_PORT=16355
 EOF
   chmod 600 .env
 fi
