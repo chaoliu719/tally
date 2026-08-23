@@ -113,16 +113,16 @@ func TestCreateTransactionRejectsNonexistentAccount(t *testing.T) {
 		Time:       futureTime(),
 	})
 
-	// The only transaction on record is the balance_adjustment that
+	// The only transaction on record is the adjustment that
 	// setupAccountAndCategory's initial balance produced -- the rejected
 	// expense above must not have been written.
 	var list tools.SearchTransactionsOutput
 	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{}, &list)
 	if len(list.Transactions) != 1 {
-		t.Fatalf("expected only the initial balance_adjustment transaction, got %d", len(list.Transactions))
+		t.Fatalf("expected only the initial adjustment transaction, got %d", len(list.Transactions))
 	}
-	if list.Transactions[0].Type != "balance_adjustment" {
-		t.Fatalf("expected the recorded transaction to be balance_adjustment, got %q", list.Transactions[0].Type)
+	if list.Transactions[0].Type != "adjustment" {
+		t.Fatalf("expected the recorded transaction to be adjustment, got %q", list.Transactions[0].Type)
 	}
 }
 
@@ -193,13 +193,13 @@ func TestCreateTransactionMissingRequiredField(t *testing.T) {
 	}
 }
 
-func TestCreateTransactionBalanceAdjustmentPositive(t *testing.T) {
+func TestCreateTransactionAdjustmentPositive(t *testing.T) {
 	session := newTestSession(t)
 	accountID, _ := setupAccountAndCategory(t, session, 10000)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type:      "balance_adjustment",
+		Type:      "adjustment",
 		AccountID: accountID,
 		Amount:    500,
 		Time:      futureTime(),
@@ -219,12 +219,12 @@ func TestCreateTransactionBalanceAdjustmentPositive(t *testing.T) {
 	}
 }
 
-func TestCreateTransactionBalanceAdjustmentNegative(t *testing.T) {
+func TestCreateTransactionAdjustmentNegative(t *testing.T) {
 	session := newTestSession(t)
 	accountID, _ := setupAccountAndCategory(t, session, 10000)
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type:      "balance_adjustment",
+		Type:      "adjustment",
 		AccountID: accountID,
 		Amount:    -500,
 		Time:      futureTime(),
@@ -237,12 +237,12 @@ func TestCreateTransactionBalanceAdjustmentNegative(t *testing.T) {
 	}
 }
 
-func TestCreateTransactionBalanceAdjustmentRejectsCategory(t *testing.T) {
+func TestCreateTransactionAdjustmentRejectsCategory(t *testing.T) {
 	session := newTestSession(t)
 	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
 
 	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type:       "balance_adjustment",
+		Type:       "adjustment",
 		AccountID:  accountID,
 		CategoryID: categoryID,
 		Amount:     500,
@@ -256,12 +256,12 @@ func TestCreateTransactionBalanceAdjustmentRejectsCategory(t *testing.T) {
 	}
 }
 
-func TestCreateTransactionBalanceAdjustmentRejectsZeroAmount(t *testing.T) {
+func TestCreateTransactionAdjustmentRejectsZeroAmount(t *testing.T) {
 	session := newTestSession(t)
 	accountID, _ := setupAccountAndCategory(t, session, 10000)
 
 	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type:      "balance_adjustment",
+		Type:      "adjustment",
 		AccountID: accountID,
 		Amount:    0,
 		Time:      futureTime(),
@@ -274,11 +274,11 @@ func TestCreateTransactionBalanceAdjustmentRejectsZeroAmount(t *testing.T) {
 	}
 }
 
-func TestCreateTransactionBalanceAdjustmentRejectsNonexistentAccount(t *testing.T) {
+func TestCreateTransactionAdjustmentRejectsNonexistentAccount(t *testing.T) {
 	session := newTestSession(t)
 
 	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type:      "balance_adjustment",
+		Type:      "adjustment",
 		AccountID: "999999",
 		Amount:    500,
 		Time:      futureTime(),
@@ -291,21 +291,21 @@ func TestGetTransactionNotFound(t *testing.T) {
 	callToolExpectError(t, session, "get_transaction", tools.GetTransactionInput{ID: "999999"})
 }
 
-func TestGetTransactionBalanceAdjustment(t *testing.T) {
+func TestGetTransactionAdjustment(t *testing.T) {
 	session := newTestSession(t)
 	accountID, _ := setupAccountAndCategory(t, session, 10000)
 
 	var list tools.SearchTransactionsOutput
 	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{}, &list)
 	if len(list.Transactions) != 1 {
-		t.Fatalf("expected 1 transaction (the initial balance_adjustment), got %d", len(list.Transactions))
+		t.Fatalf("expected 1 transaction (the initial adjustment), got %d", len(list.Transactions))
 	}
 	adjustmentID := list.Transactions[0].ID
 
 	var got tools.GetTransactionOutput
 	callTool(t, session, "get_transaction", tools.GetTransactionInput{ID: adjustmentID}, &got)
-	if got.Transaction.Type != "balance_adjustment" {
-		t.Fatalf("Type = %q, want balance_adjustment", got.Transaction.Type)
+	if got.Transaction.Type != "adjustment" {
+		t.Fatalf("Type = %q, want adjustment", got.Transaction.Type)
 	}
 	if got.Transaction.AccountID != accountID {
 		t.Fatalf("AccountID = %q, want %q", got.Transaction.AccountID, accountID)
@@ -326,7 +326,7 @@ func TestSearchTransactionsNoFilter(t *testing.T) {
 		Type: "expense", AccountID: accountID, CategoryID: categoryID, Amount: 200, Time: futureTime() + 3600,
 	}, &tools.CreateTransactionOutput{})
 
-	// 2 expenses plus the balance_adjustment that setupAccountAndCategory's
+	// 2 expenses plus the adjustment that setupAccountAndCategory's
 	// initial balance produced -- no filter means no hiding either.
 	var out tools.SearchTransactionsOutput
 	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{}, &out)
@@ -334,14 +334,14 @@ func TestSearchTransactionsNoFilter(t *testing.T) {
 		t.Fatalf("expected 3 transactions, got %d", len(out.Transactions))
 	}
 
-	var sawBalanceAdjustment bool
+	var sawAdjustment bool
 	for _, txn := range out.Transactions {
-		if txn.Type == "balance_adjustment" {
-			sawBalanceAdjustment = true
+		if txn.Type == "adjustment" {
+			sawAdjustment = true
 		}
 	}
-	if !sawBalanceAdjustment {
-		t.Fatal("expected the account's initial balance_adjustment transaction to be searchable")
+	if !sawAdjustment {
+		t.Fatal("expected the account's initial adjustment transaction to be searchable")
 	}
 }
 
@@ -584,18 +584,18 @@ func TestUpdateTransactionRejectsNonexistentCategory(t *testing.T) {
 	})
 }
 
-func TestUpdateTransactionBalanceAdjustmentRejectsCategory(t *testing.T) {
+func TestUpdateTransactionAdjustmentRejectsCategory(t *testing.T) {
 	session := newTestSession(t)
 	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "balance_adjustment", AccountID: accountID, Amount: 300, Time: futureTime(),
+		Type: "adjustment", AccountID: accountID, Amount: 300, Time: futureTime(),
 	}, &created)
 
 	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
 		ID:         created.Transaction.ID,
-		Type:       "balance_adjustment",
+		Type:       "adjustment",
 		AccountID:  accountID,
 		CategoryID: categoryID,
 		Amount:     300,
@@ -603,18 +603,18 @@ func TestUpdateTransactionBalanceAdjustmentRejectsCategory(t *testing.T) {
 	})
 }
 
-func TestUpdateTransactionBalanceAdjustmentRejectsZeroAmount(t *testing.T) {
+func TestUpdateTransactionAdjustmentRejectsZeroAmount(t *testing.T) {
 	session := newTestSession(t)
 	accountID, _ := setupAccountAndCategory(t, session, 10000)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "balance_adjustment", AccountID: accountID, Amount: 300, Time: futureTime(),
+		Type: "adjustment", AccountID: accountID, Amount: 300, Time: futureTime(),
 	}, &created)
 
 	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
 		ID:        created.Transaction.ID,
-		Type:      "balance_adjustment",
+		Type:      "adjustment",
 		AccountID: accountID,
 		Amount:    0,
 		Time:      futureTime(),
@@ -852,7 +852,7 @@ func createNExpenses(t *testing.T, session *mcp.ClientSession, accountID, catego
 func TestSearchTransactionsDefaultPageSize(t *testing.T) {
 	session := newTestSession(t)
 	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
-	// setupAccountAndCategory already wrote 1 balance_adjustment transaction;
+	// setupAccountAndCategory already wrote 1 adjustment transaction;
 	// add 54 more so the total (55) comfortably exceeds the default page
 	// size of 50.
 	createNExpenses(t, session, accountID, categoryID, 54, futureTime())
@@ -874,7 +874,7 @@ func TestSearchTransactionsDefaultPageSize(t *testing.T) {
 func TestSearchTransactionsNextCursorOnlyWhenMoreResults(t *testing.T) {
 	session := newTestSession(t)
 	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
-	// 1 balance_adjustment + 4 expenses = 5 transactions total.
+	// 1 adjustment + 4 expenses = 5 transactions total.
 	createNExpenses(t, session, accountID, categoryID, 4, futureTime())
 
 	var exactFit tools.SearchTransactionsOutput
@@ -907,7 +907,7 @@ func TestSearchTransactionsCursorPaginationCoversAllResults(t *testing.T) {
 
 	var full tools.SearchTransactionsOutput
 	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{Limit: 200}, &full)
-	if len(full.Transactions) != 12 { // 1 balance_adjustment + 11 expenses
+	if len(full.Transactions) != 12 { // 1 adjustment + 11 expenses
 		t.Fatalf("expected 12 transactions unpaginated, got %d", len(full.Transactions))
 	}
 
@@ -1005,7 +1005,7 @@ func TestSearchTransactionsPaginationSurvivesLedgerChanges(t *testing.T) {
 	base := futureTime()
 
 	// T1..T4 at base+10, +20, +30, +40. setupAccountAndCategory's
-	// balance_adjustment (T0) has an earlier real time than any of these.
+	// adjustment (T0) has an earlier real time than any of these.
 	ids := createExpensesAtOffsets(t, session, accountID, categoryID, base, []int64{10, 20, 30, 40})
 
 	var page1 tools.SearchTransactionsOutput
@@ -1016,7 +1016,7 @@ func TestSearchTransactionsPaginationSurvivesLedgerChanges(t *testing.T) {
 	if page1.NextCursor == "" {
 		t.Fatal("page1: expected a next_cursor")
 	}
-	// page1 should be [T0 (balance_adjustment), T1].
+	// page1 should be [T0 (adjustment), T1].
 	if page1.Transactions[1].ID != ids[0] {
 		t.Fatalf("page1[1].ID = %q, want T1 %q", page1.Transactions[1].ID, ids[0])
 	}

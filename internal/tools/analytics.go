@@ -16,7 +16,7 @@ func registerAnalyticsTools(s *mcp.Server, deps Deps) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "get_financial_summary",
 		Description: "Aggregate income, expense, and net totals over an optional time range, grouped by " +
-			"currency, and broken down by category and by account. balance_adjustment transactions are not " +
+			"currency, and broken down by category and by account. adjustment transactions are not " +
 			"real income/expense activity, so they're excluded from these totals and reported separately, " +
 			"grouped by currency. With no time range, summarizes the ledger's entire history.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in GetFinancialSummaryInput) (*mcp.CallToolResult, GetFinancialSummaryOutput, error) {
@@ -58,20 +58,20 @@ type AccountSummary struct {
 	Expense   int64  `json:"expense" jsonschema:"total expense on this account (as a positive number), over the requested time range"`
 }
 
-// BalanceAdjustmentTotal is the total of balance_adjustment transactions in
+// AdjustmentTotal is the total of adjustment transactions in
 // one currency. It's reported separately from CurrencyTotals because
-// balance_adjustment isn't real income/expense activity (see
+// adjustment isn't real income/expense activity (see
 // get_financial_summary's description).
-type BalanceAdjustmentTotal struct {
+type AdjustmentTotal struct {
 	Currency string `json:"currency" jsonschema:"the ISO 4217 currency code this total is denominated in"`
-	Amount   int64  `json:"amount" jsonschema:"total balance_adjustment amount in this currency's smallest unit, over the requested time range; carries its own sign"`
+	Amount   int64  `json:"amount" jsonschema:"total adjustment amount in this currency's smallest unit, over the requested time range; carries its own sign"`
 }
 
 type GetFinancialSummaryOutput struct {
 	TotalsByCurrency            []CurrencyTotals         `json:"totals_by_currency" jsonschema:"total income/expense/net for the requested time range, one entry per currency that had any income/expense activity"`
 	ByCategory                  []CategorySummary        `json:"by_category" jsonschema:"income/expense subtotals broken down by category (and currency); only categories with matching transactions appear"`
 	ByAccount                   []AccountSummary         `json:"by_account" jsonschema:"income/expense subtotals broken down by account; only accounts with matching transactions appear"`
-	BalanceAdjustmentByCurrency []BalanceAdjustmentTotal `json:"balance_adjustment_by_currency" jsonschema:"balance_adjustment totals, one entry per currency that had any balance_adjustment transactions; not counted in totals_by_currency, by_category, or by_account"`
+	AdjustmentByCurrency []AdjustmentTotal `json:"adjustment_by_currency" jsonschema:"adjustment totals, one entry per currency that had any adjustment transactions; not counted in totals_by_currency, by_category, or by_account"`
 }
 
 func getFinancialSummary(ctx context.Context, deps Deps, in GetFinancialSummaryInput) (*mcp.CallToolResult, GetFinancialSummaryOutput, error) {
@@ -106,7 +106,7 @@ func getFinancialSummary(ctx context.Context, deps Deps, in GetFinancialSummaryI
 	}
 
 	totals := make([]CurrencyTotals, 0, len(currencyRows))
-	balanceAdjustments := make([]BalanceAdjustmentTotal, 0, len(currencyRows))
+	adjustments := make([]AdjustmentTotal, 0, len(currencyRows))
 	for _, r := range currencyRows {
 		if r.Income != 0 || r.Expense != 0 {
 			totals = append(totals, CurrencyTotals{
@@ -116,10 +116,10 @@ func getFinancialSummary(ctx context.Context, deps Deps, in GetFinancialSummaryI
 				Net:      r.Income - r.Expense,
 			})
 		}
-		if r.BalanceAdjustment != 0 {
-			balanceAdjustments = append(balanceAdjustments, BalanceAdjustmentTotal{
+		if r.Adjustment != 0 {
+			adjustments = append(adjustments, AdjustmentTotal{
 				Currency: r.Currency,
-				Amount:   r.BalanceAdjustment,
+				Amount:   r.Adjustment,
 			})
 		}
 	}
@@ -148,6 +148,6 @@ func getFinancialSummary(ctx context.Context, deps Deps, in GetFinancialSummaryI
 		TotalsByCurrency:            totals,
 		ByCategory:                  byCategory,
 		ByAccount:                   byAccount,
-		BalanceAdjustmentByCurrency: balanceAdjustments,
+		AdjustmentByCurrency: adjustments,
 	}, nil
 }

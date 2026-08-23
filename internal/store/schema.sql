@@ -26,9 +26,9 @@ CREATE TABLE IF NOT EXISTS categories (
 
 CREATE TABLE IF NOT EXISTS transactions (
     id           INTEGER PRIMARY KEY,
-    type         TEXT NOT NULL,             -- income / expense / balance_adjustment
+    type         TEXT NOT NULL,             -- income / expense / adjustment
     account_id   INTEGER NOT NULL REFERENCES accounts(id),
-    category_id  INTEGER REFERENCES categories(id),  -- NULL for balance_adjustment
+    category_id  INTEGER REFERENCES categories(id),  -- NULL for adjustment
     amount       INTEGER NOT NULL,          -- signed, in the account currency's smallest unit
     time         INTEGER NOT NULL,          -- unix seconds
     comment      TEXT NOT NULL DEFAULT '',
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     updated_at   INTEGER NOT NULL,
     CHECK (
         (type IN ('income', 'expense') AND category_id IS NOT NULL) OR
-        (type = 'balance_adjustment' AND category_id IS NULL)
+        (type = 'adjustment' AND category_id IS NULL)
     )
 );
 

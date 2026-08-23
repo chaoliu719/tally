@@ -162,13 +162,13 @@ func createAccount(ctx context.Context, deps Deps, in ManageAccountInput) (*mcp.
 		return nil, ManageAccountOutput{}, err
 	}
 
-	// A nonzero initial balance is recorded as a balance_adjustment
+	// A nonzero initial balance is recorded as an adjustment
 	// transaction in the same DB transaction as the account row, so a
 	// concurrent list_accounts can never observe the account with the
 	// account's balance (computed as SUM(amount)) still at zero.
 	if in.Balance != 0 {
 		if _, err := q.CreateTransaction(ctx, store.CreateTransactionParams{
-			Type:       "balance_adjustment",
+			Type:       "adjustment",
 			AccountID:  account.ID,
 			CategoryID: sql.NullInt64{},
 			Amount:     in.Balance,

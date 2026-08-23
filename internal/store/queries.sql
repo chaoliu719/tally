@@ -117,17 +117,17 @@ DELETE FROM transactions
 WHERE id = ?;
 
 -- name: SummarizeTransactionsByCurrency :many
--- Aggregates income/expense/balance_adjustment totals grouped by account
+-- Aggregates income/expense/adjustment totals grouped by account
 -- currency, over an optional [start_time, end_time] window. Used by
 -- get_financial_summary (internal/tools/analytics.go). expense amounts are
 -- stored negative, so SUM(-amount) turns them back into a positive total;
--- balance_adjustment is reported here but excluded from income/expense by
+-- adjustment is reported here but excluded from income/expense by
 -- SummarizeTransactionsByCategory/ByAccount below.
 SELECT
     a.currency AS currency,
     CAST(COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) AS INTEGER) AS income,
     CAST(COALESCE(SUM(CASE WHEN t.type = 'expense' THEN -t.amount ELSE 0 END), 0) AS INTEGER) AS expense,
-    CAST(COALESCE(SUM(CASE WHEN t.type = 'balance_adjustment' THEN t.amount ELSE 0 END), 0) AS INTEGER) AS balance_adjustment
+    CAST(COALESCE(SUM(CASE WHEN t.type = 'adjustment' THEN t.amount ELSE 0 END), 0) AS INTEGER) AS adjustment
 FROM transactions t
 JOIN accounts a ON a.id = t.account_id
 WHERE (sqlc.narg('start_time') IS NULL OR t.time >= sqlc.narg('start_time'))
@@ -138,7 +138,7 @@ ORDER BY a.currency;
 -- name: SummarizeTransactionsByCategory :many
 -- Aggregates income/expense totals grouped by category and account
 -- currency, over an optional [start_time, end_time] window.
--- balance_adjustment transactions have no category and are excluded.
+-- adjustment transactions have no category and are excluded.
 SELECT
     t.category_id AS category_id,
     a.currency AS currency,
@@ -154,7 +154,7 @@ ORDER BY t.category_id, a.currency;
 
 -- name: SummarizeTransactionsByAccount :many
 -- Aggregates income/expense totals grouped by account, over an optional
--- [start_time, end_time] window. balance_adjustment transactions are
+-- [start_time, end_time] window. adjustment transactions are
 -- excluded (see SummarizeTransactionsByCurrency for their total).
 SELECT
     t.account_id AS account_id,

@@ -23,7 +23,7 @@ func init() {
 func registerTransactionTools(s *mcp.Server, deps Deps) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "create_transaction",
-		Description: "Record one income, expense, or balance_adjustment transaction; the account's balance is updated accordingly. income/expense require an existing category_id (any category in the ledger). balance_adjustment is the formal way to correct an account's balance: it takes a signed, nonzero amount and must not have a category_id.",
+		Description: "Record one income, expense, or adjustment transaction; the account's balance is updated accordingly. income/expense require an existing category_id (any category in the ledger). adjustment is the formal way to correct an account's balance: it takes a signed, nonzero amount and must not have a category_id.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in CreateTransactionInput) (*mcp.CallToolResult, CreateTransactionOutput, error) {
 		return createTransaction(ctx, deps, in)
 	})
@@ -46,7 +46,7 @@ func registerTransactionTools(s *mcp.Server, deps Deps) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "update_transaction",
-		Description: "Replace a transaction's fields (type, account, category, amount, time, comment) by id. This is a full replacement, not a partial update -- all fields must be provided, and the same income/expense/balance_adjustment validation rules as create_transaction apply. Does not require confirmation.",
+		Description: "Replace a transaction's fields (type, account, category, amount, time, comment) by id. This is a full replacement, not a partial update -- all fields must be provided, and the same income/expense/adjustment validation rules as create_transaction apply. Does not require confirmation.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in UpdateTransactionInput) (*mcp.CallToolResult, UpdateTransactionOutput, error) {
 		return updateTransaction(ctx, deps, in)
 	})
@@ -64,27 +64,27 @@ func registerTransactionTools(s *mcp.Server, deps Deps) {
 var createableTransactionTypes = map[string]bool{
 	"income":             true,
 	"expense":            true,
-	"balance_adjustment": true,
+	"adjustment": true,
 }
 
 // TransactionInfo is the wire representation of a transaction returned by
 // create_transaction, get_transaction, and search_transactions.
 type TransactionInfo struct {
 	ID         string `json:"id" jsonschema:"the transaction's unique id, as a decimal string"`
-	Type       string `json:"type" jsonschema:"the transaction's type: income, expense, or balance_adjustment"`
+	Type       string `json:"type" jsonschema:"the transaction's type: income, expense, or adjustment"`
 	AccountID  string `json:"account_id" jsonschema:"the id of the account this transaction affects, as a decimal string"`
-	CategoryID string `json:"category_id" jsonschema:"the id of the transaction's category, as a decimal string; \"0\" for a balance_adjustment transaction, which has no category"`
-	Amount     int64  `json:"amount" jsonschema:"the transaction amount, in the account currency's smallest unit; how many decimal places that represents varies by currency (e.g. 2 for USD/CNY, 0 for JPY, 3 for BHD). Positive for income and expense; balance_adjustment amounts carry their own sign"`
+	CategoryID string `json:"category_id" jsonschema:"the id of the transaction's category, as a decimal string; \"0\" for an adjustment transaction, which has no category"`
+	Amount     int64  `json:"amount" jsonschema:"the transaction amount, in the account currency's smallest unit; how many decimal places that represents varies by currency (e.g. 2 for USD/CNY, 0 for JPY, 3 for BHD). Positive for income and expense; adjustment amounts carry their own sign"`
 	Currency   string `json:"currency" jsonschema:"the account's currency, as an ISO 4217 code"`
 	Time       int64  `json:"time" jsonschema:"when the transaction occurred, as unix seconds"`
 	Comment    string `json:"comment,omitempty" jsonschema:"an optional note about the transaction"`
 }
 
 type CreateTransactionInput struct {
-	Type       string `json:"type" jsonschema:"the transaction's type: income, expense, or balance_adjustment"`
+	Type       string `json:"type" jsonschema:"the transaction's type: income, expense, or adjustment"`
 	AccountID  string `json:"account_id" jsonschema:"the id of the account this transaction affects, as a decimal string"`
-	CategoryID string `json:"category_id,omitempty" jsonschema:"the id of the transaction's category, as a decimal string; required for income/expense (any existing category), must be omitted for balance_adjustment"`
-	Amount     int64  `json:"amount" jsonschema:"the transaction amount, in the account currency's smallest unit; how many decimal places that represents varies by currency (e.g. 2 for USD/CNY, 0 for JPY, 3 for BHD); must be positive for income/expense, nonzero (positive or negative) for balance_adjustment"`
+	CategoryID string `json:"category_id,omitempty" jsonschema:"the id of the transaction's category, as a decimal string; required for income/expense (any existing category), must be omitted for adjustment"`
+	Amount     int64  `json:"amount" jsonschema:"the transaction amount, in the account currency's smallest unit; how many decimal places that represents varies by currency (e.g. 2 for USD/CNY, 0 for JPY, 3 for BHD); must be positive for income/expense, nonzero (positive or negative) for adjustment"`
 	Time       int64  `json:"time" jsonschema:"when the transaction occurred, as unix seconds"`
 	Comment    string `json:"comment,omitempty" jsonschema:"an optional note about the transaction"`
 }
@@ -95,7 +95,7 @@ type CreateTransactionOutput struct {
 
 // validatedTransactionFields is the normalized, validated form of the fields
 // shared by create_transaction and update_transaction: the account id, the
-// resolved category_id (NULL for balance_adjustment), and the signed amount
+// resolved category_id (NULL for adjustment), and the signed amount
 // to store (income/expense amounts are stored signed -- income positive,
 // expense negative -- so SUM(amount) is directly the account balance; the
 // wire format keeps both sides of *Amount positive for income/expense).
@@ -108,7 +108,7 @@ type validatedTransactionFields struct {
 // validateTransactionInput checks and normalizes the type/account_id/
 // category_id/amount/time rules shared by create_transaction and
 // update_transaction: income/expense require an existing category_id and a
-// positive amount; balance_adjustment forbids a category_id and requires a
+// positive amount; adjustment forbids a category_id and requires a
 // nonzero amount. It returns the resolved account (for its currency)
 // alongside the normalized fields.
 func validateTransactionInput(ctx context.Context, deps Deps, txType, accountIDStr, categoryIDStr string, amount, txTime int64) (store.Account, validatedTransactionFields, error) {
@@ -139,12 +139,12 @@ func validateTransactionInput(ctx context.Context, deps Deps, txType, accountIDS
 	var categoryID sql.NullInt64
 	var signedAmount int64
 
-	if txType == "balance_adjustment" {
+	if txType == "adjustment" {
 		if categoryIDStr != "" {
-			return store.Account{}, validatedTransactionFields{}, fmt.Errorf("balance_adjustment transactions cannot specify a category_id")
+			return store.Account{}, validatedTransactionFields{}, fmt.Errorf("adjustment transactions cannot specify a category_id")
 		}
 		if amount == 0 {
-			return store.Account{}, validatedTransactionFields{}, fmt.Errorf("missing required field: amount (must be nonzero for balance_adjustment)")
+			return store.Account{}, validatedTransactionFields{}, fmt.Errorf("missing required field: amount (must be nonzero for adjustment)")
 		}
 		signedAmount = amount
 	} else {
@@ -234,10 +234,10 @@ func getTransaction(ctx context.Context, deps Deps, in GetTransactionInput) (*mc
 
 type UpdateTransactionInput struct {
 	ID         string `json:"id" jsonschema:"the transaction's unique id, as a decimal string"`
-	Type       string `json:"type" jsonschema:"the transaction's type: income, expense, or balance_adjustment"`
+	Type       string `json:"type" jsonschema:"the transaction's type: income, expense, or adjustment"`
 	AccountID  string `json:"account_id" jsonschema:"the id of the account this transaction affects, as a decimal string; may differ from the transaction's current account_id to move it to another account"`
-	CategoryID string `json:"category_id,omitempty" jsonschema:"the id of the transaction's category, as a decimal string; required for income/expense (any existing category), must be omitted for balance_adjustment"`
-	Amount     int64  `json:"amount" jsonschema:"the transaction amount, in the account currency's smallest unit; how many decimal places that represents varies by currency (e.g. 2 for USD/CNY, 0 for JPY, 3 for BHD); must be positive for income/expense, nonzero (positive or negative) for balance_adjustment"`
+	CategoryID string `json:"category_id,omitempty" jsonschema:"the id of the transaction's category, as a decimal string; required for income/expense (any existing category), must be omitted for adjustment"`
+	Amount     int64  `json:"amount" jsonschema:"the transaction amount, in the account currency's smallest unit; how many decimal places that represents varies by currency (e.g. 2 for USD/CNY, 0 for JPY, 3 for BHD); must be positive for income/expense, nonzero (positive or negative) for adjustment"`
 	Time       int64  `json:"time" jsonschema:"when the transaction occurred, as unix seconds"`
 	Comment    string `json:"comment,omitempty" jsonschema:"an optional note about the transaction"`
 }
@@ -512,7 +512,7 @@ func toTransactionInfos(ctx context.Context, deps Deps, transactions []store.Tra
 
 func toTransactionInfo(t store.Transaction, currencyCode string) TransactionInfo {
 	amount := t.Amount
-	if t.Type != "balance_adjustment" {
+	if t.Type != "adjustment" {
 		amount = abs64(amount)
 	}
 

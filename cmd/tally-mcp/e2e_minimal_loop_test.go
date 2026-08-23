@@ -52,7 +52,7 @@ func TestE2EMinimalLoop(t *testing.T) {
 		Comment:    "weekly groceries",
 	}, &transaction)
 
-	// 4. search_transactions: find both the expense and the balance_adjustment
+	// 4. search_transactions: find both the expense and the adjustment
 	// that manage_account's nonzero initial balance produced -- neither is
 	// hidden from search (see design.md's "交易可见性" decision).
 	var searchResult tools.SearchTransactionsOutput
@@ -61,20 +61,20 @@ func TestE2EMinimalLoop(t *testing.T) {
 		t.Fatalf("expected 2 transactions from search, got %d", len(searchResult.Transactions))
 	}
 
-	var sawExpense, sawBalanceAdjustment bool
+	var sawExpense, sawAdjustment bool
 	for _, txn := range searchResult.Transactions {
 		switch {
 		case txn.ID == transaction.Transaction.ID:
 			sawExpense = true
-		case txn.Type == "balance_adjustment":
-			sawBalanceAdjustment = true
+		case txn.Type == "adjustment":
+			sawAdjustment = true
 		}
 	}
 	if !sawExpense {
 		t.Fatalf("search result missing the recorded expense (id %q): %+v", transaction.Transaction.ID, searchResult.Transactions)
 	}
-	if !sawBalanceAdjustment {
-		t.Fatalf("search result missing the account-creation balance_adjustment: %+v", searchResult.Transactions)
+	if !sawAdjustment {
+		t.Fatalf("search result missing the account-creation adjustment: %+v", searchResult.Transactions)
 	}
 
 	// 5. get_transaction: fetch it by id, and confirm the account balance

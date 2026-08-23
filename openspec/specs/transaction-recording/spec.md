@@ -25,22 +25,22 @@
 - **THEN** 请求被拒绝,不记录交易
 
 ### Requirement: 记录一笔余额调整交易
-用户 SHALL 能够通过 `create_transaction` 工具,以 `type="balance_adjustment"`,记录一笔余额调整交易,作为修正账户余额的正式方式。这类交易指定所属账户、带符号的调整金额与发生时间,不指定分类。
+用户 SHALL 能够通过 `create_transaction` 工具,以 `type="adjustment"`,记录一笔余额调整交易,作为修正账户余额的正式方式。这类交易指定所属账户、带符号的调整金额与发生时间,不指定分类。
 
 #### Scenario: 提供有效信息记录余额调整
-- **WHEN** 调用 `create_transaction`(`type="balance_adjustment"`),指定的账户已存在,`amount` 是一个非零值(正数表示增加余额,负数表示减少余额),发生时间合法,且未提供分类
+- **WHEN** 调用 `create_transaction`(`type="adjustment"`),指定的账户已存在,`amount` 是一个非零值(正数表示增加余额,负数表示减少余额),发生时间合法,且未提供分类
 - **THEN** 交易被记录,随后可以通过 `get_transaction` 查到,所属账户的余额按 `amount` 的符号与大小相应变化
 
 #### Scenario: 携带分类
-- **WHEN** 调用 `create_transaction`(`type="balance_adjustment"`)时提供了 `category_id`
+- **WHEN** 调用 `create_transaction`(`type="adjustment"`)时提供了 `category_id`
 - **THEN** 请求被拒绝,返回说明余额调整交易不能指定分类的错误,不记录交易,账户余额不变
 
 #### Scenario: 金额为零
-- **WHEN** 调用 `create_transaction`(`type="balance_adjustment"`)时 `amount` 为 0
+- **WHEN** 调用 `create_transaction`(`type="adjustment"`)时 `amount` 为 0
 - **THEN** 请求被拒绝,返回说明调整金额不能为零的错误,不记录交易
 
 #### Scenario: 引用不存在的账户
-- **WHEN** 调用 `create_transaction`(`type="balance_adjustment"`),指定的账户 ID 在当前账本中不存在
+- **WHEN** 调用 `create_transaction`(`type="adjustment"`),指定的账户 ID 在当前账本中不存在
 - **THEN** 请求被拒绝,返回说明引用无效的错误,不记录交易
 
 ### Requirement: 按 ID 查询单条交易
@@ -90,7 +90,7 @@
 - **THEN** 翻页仍然基于 `cursor` 中记录的位置(`time`、`id`)继续,不因为新增/变更的交易而重复返回或跳过尚未返回的交易
 
 ### Requirement: 更新一笔交易
-用户 SHALL 能够通过 `update_transaction` 工具,用交易 ID 替换一笔已存在交易的全部可变字段(`type`/`account_id`/`category_id`/`amount`/`time`/`comment`)。这是完整字段替换语义,不支持只修改其中一部分字段;字段校验规则与 `create_transaction` 完全一致(income/expense 需要合法 `category_id` 且 `amount` 为正;`balance_adjustment` 不能带 `category_id` 且 `amount` 非零)。更新不需要二次确认,直接执行。
+用户 SHALL 能够通过 `update_transaction` 工具,用交易 ID 替换一笔已存在交易的全部可变字段(`type`/`account_id`/`category_id`/`amount`/`time`/`comment`)。这是完整字段替换语义,不支持只修改其中一部分字段;字段校验规则与 `create_transaction` 完全一致(income/expense 需要合法 `category_id` 且 `amount` 为正;`adjustment` 不能带 `category_id` 且 `amount` 非零)。更新不需要二次确认,直接执行。
 
 #### Scenario: 提供完整合法字段更新交易
 - **WHEN** 调用 `update_transaction`,提供一个已存在交易的 ID,以及完整、合法的 `type`/`account_id`/`category_id`/`amount`/`time`/`comment`(账户与分类均存在,金额/分类规则与指定的 `type` 相符)
@@ -104,8 +104,8 @@
 - **WHEN** 调用 `update_transaction`,指定的 `account_id` 或 `category_id` 在当前账本中不存在
 - **THEN** 请求被拒绝,返回说明引用无效的错误,交易不发生变化
 
-#### Scenario: balance_adjustment 携带分类或金额为零
-- **WHEN** 调用 `update_transaction`,`type="balance_adjustment"` 但提供了 `category_id`,或 `amount` 为 0
+#### Scenario: adjustment 携带分类或金额为零
+- **WHEN** 调用 `update_transaction`,`type="adjustment"` 但提供了 `category_id`,或 `amount` 为 0
 - **THEN** 请求被拒绝,交易不发生变化
 
 #### Scenario: income/expense 金额非正或缺少分类
@@ -136,7 +136,7 @@
 - **THEN** 请求被拒绝,返回说明状态已变化、需要重新预览的错误,不执行删除
 
 #### Scenario: 清空账户下全部交易后可以删除该账户
-- **WHEN** 一个账户名下的全部交易(含 `balance_adjustment`)都已通过 `delete_transaction` 成功删除
+- **WHEN** 一个账户名下的全部交易(含 `adjustment`)都已通过 `delete_transaction` 成功删除
 - **THEN** 对该账户调用 `manage_account`(`operation="delete"`)可以正常完成 preview → apply 流程并成功删除该账户
 
 #### Scenario: 清空分类下全部交易后可以删除该分类

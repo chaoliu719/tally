@@ -10,15 +10,15 @@ import (
 // capabilities added by the account-category-lifecycle change, all through
 // main()'s real buildMux wiring.
 //
-// The two capabilities under test -- update/delete and balance_adjustment --
+// The two capabilities under test -- update/delete and adjustment --
 // use separate accounts here for clarity: per specs/account-management/
-// spec.md, an account referenced by any transaction (balance_adjustment
+// spec.md, an account referenced by any transaction (adjustment
 // included) can never be deleted directly. delete_transaction (added by the
 // transaction-lifecycle change) can clear that reference first -- see
 // TestE2ETransactionLifecycleUnblocksAccountAndCategoryDeletion for that
 // path -- but this test keeps the two concerns apart: account A demonstrates
 // the update -> preview-delete -> apply-delete chain on an account that
-// never records a transaction, and account B demonstrates balance_adjustment
+// never records a transaction, and account B demonstrates adjustment
 // and is intentionally never deleted.
 func TestE2EAccountLifecycle(t *testing.T) {
 	session := newE2ESession(t)
@@ -75,8 +75,8 @@ func TestE2EAccountLifecycle(t *testing.T) {
 		t.Fatalf("Status = %q, want %q", appliedA.Status, "deleted")
 	}
 
-	// Account B: create -> record a balance_adjustment -> verify the balance
-	// via list_accounts. Never deleted -- the balance_adjustment transaction
+	// Account B: create -> record an adjustment -> verify the balance
+	// via list_accounts. Never deleted -- the adjustment transaction
 	// now references it, which correctly and permanently blocks deletion.
 	var accountB tools.ManageAccountOutput
 	call(t, session, "manage_account", tools.ManageAccountInput{
@@ -88,7 +88,7 @@ func TestE2EAccountLifecycle(t *testing.T) {
 
 	var adjustment tools.CreateTransactionOutput
 	call(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type:      "balance_adjustment",
+		Type:      "adjustment",
 		AccountID: accountB.Account.ID,
 		Amount:    -500,
 		Time:      futureTime(),

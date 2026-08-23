@@ -51,7 +51,7 @@
 - **THEN** 请求被拒绝,返回说明这两个字段不可通过更新修改的错误,不修改任何账户
 
 ### Requirement: 删除账户
-用户 SHALL 能够通过 `manage_account` 工具,以 `operation="delete"` 并指定账户 `id`,删除一个账户。这是一个破坏性操作,遵循 `write-confirmation` 能力定义的 preview → apply 两步流程。一个账户只要被任意交易(包括 `balance_adjustment` 类型的交易)引用,就不能被删除,且不提供强制覆盖的方式。
+用户 SHALL 能够通过 `manage_account` 工具,以 `operation="delete"` 并指定账户 `id`,删除一个账户。这是一个破坏性操作,遵循 `write-confirmation` 能力定义的 preview → apply 两步流程。一个账户只要被任意交易(包括 `adjustment` 类型的交易)引用,就不能被删除,且不提供强制覆盖的方式。
 
 #### Scenario: 删除一个没有交易记录的账户
 - **WHEN** 先以 `operation="delete"` 不带 `confirmation_token` 调用 `manage_account`(得到预览与 `confirmation_token`),再以同样的 `id` 携带该 `confirmation_token` 调用 `operation="delete"`,且这个账户在两次调用之间始终没有被任何交易引用

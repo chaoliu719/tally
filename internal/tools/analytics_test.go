@@ -86,7 +86,7 @@ func TestGetFinancialSummaryTimeRange(t *testing.T) {
 
 func TestGetFinancialSummaryNoTimeRange(t *testing.T) {
 	session := newTestSession(t)
-	// Nonzero initial balance triggers an implicit balance_adjustment
+	// Nonzero initial balance triggers an implicit adjustment
 	// transaction (see manage_account's operation=create), which this test
 	// deliberately includes since it queries with no time filter.
 	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
@@ -116,9 +116,9 @@ func TestGetFinancialSummaryNoTimeRange(t *testing.T) {
 		t.Errorf("ByAccount summary = %+v, want income=500 expense=200", as)
 	}
 
-	ba := findBalanceAdjustment(t, out.BalanceAdjustmentByCurrency, "CNY")
+	ba := findAdjustment(t, out.AdjustmentByCurrency, "CNY")
 	if ba.Amount != 10000 {
-		t.Errorf("BalanceAdjustmentByCurrency amount = %d, want 10000", ba.Amount)
+		t.Errorf("AdjustmentByCurrency amount = %d, want 10000", ba.Amount)
 	}
 }
 
@@ -145,8 +145,8 @@ func TestGetFinancialSummaryEmptyRange(t *testing.T) {
 	if len(out.ByAccount) != 0 {
 		t.Errorf("ByAccount = %+v, want empty", out.ByAccount)
 	}
-	if len(out.BalanceAdjustmentByCurrency) != 0 {
-		t.Errorf("BalanceAdjustmentByCurrency = %+v, want empty", out.BalanceAdjustmentByCurrency)
+	if len(out.AdjustmentByCurrency) != 0 {
+		t.Errorf("AdjustmentByCurrency = %+v, want empty", out.AdjustmentByCurrency)
 	}
 }
 
@@ -283,22 +283,22 @@ func TestGetFinancialSummaryByAccount(t *testing.T) {
 	}
 }
 
-// findBalanceAdjustment returns the BalanceAdjustmentTotal entry for
+// findAdjustment returns the AdjustmentTotal entry for
 // currency, failing the test if it's not present.
-func findBalanceAdjustment(t *testing.T, rows []tools.BalanceAdjustmentTotal, currency string) tools.BalanceAdjustmentTotal {
+func findAdjustment(t *testing.T, rows []tools.AdjustmentTotal, currency string) tools.AdjustmentTotal {
 	t.Helper()
 	for _, ba := range rows {
 		if ba.Currency == currency {
 			return ba
 		}
 	}
-	t.Fatalf("no BalanceAdjustmentTotal for currency %q in %+v", currency, rows)
-	return tools.BalanceAdjustmentTotal{}
+	t.Fatalf("no AdjustmentTotal for currency %q in %+v", currency, rows)
+	return tools.AdjustmentTotal{}
 }
 
-func TestGetFinancialSummaryBalanceAdjustmentPresent(t *testing.T) {
+func TestGetFinancialSummaryAdjustmentPresent(t *testing.T) {
 	session := newTestSession(t)
-	// Zero initial balance so the only balance_adjustment transaction is the
+	// Zero initial balance so the only adjustment transaction is the
 	// one this test creates explicitly, inside the queried time range.
 	accountID, categoryID := setupAccountAndCategory(t, session, 0)
 
@@ -309,7 +309,7 @@ func TestGetFinancialSummaryBalanceAdjustmentPresent(t *testing.T) {
 		Type: "expense", AccountID: accountID, CategoryID: categoryID, Amount: 100, Time: rangeStart + 10,
 	}, &tools.CreateTransactionOutput{})
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "balance_adjustment", AccountID: accountID, Amount: -50, Time: rangeStart + 20,
+		Type: "adjustment", AccountID: accountID, Amount: -50, Time: rangeStart + 20,
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.GetFinancialSummaryOutput
@@ -318,15 +318,15 @@ func TestGetFinancialSummaryBalanceAdjustmentPresent(t *testing.T) {
 		EndTime:   rangeEnd,
 	}, &out)
 
-	ba := findBalanceAdjustment(t, out.BalanceAdjustmentByCurrency, "CNY")
+	ba := findAdjustment(t, out.AdjustmentByCurrency, "CNY")
 	if ba.Amount != -50 {
-		t.Errorf("BalanceAdjustmentByCurrency amount = %d, want -50", ba.Amount)
+		t.Errorf("AdjustmentByCurrency amount = %d, want -50", ba.Amount)
 	}
 
-	// The balance_adjustment must not leak into totals/by_category/by_account.
+	// The adjustment must not leak into totals/by_category/by_account.
 	ct := findCurrencyTotals(t, out.TotalsByCurrency, "CNY")
 	if ct.Income != 0 || ct.Expense != 100 || ct.Net != -100 {
-		t.Errorf("TotalsByCurrency = %+v, want income=0 expense=100 net=-100 (balance_adjustment excluded)", ct)
+		t.Errorf("TotalsByCurrency = %+v, want income=0 expense=100 net=-100 (adjustment excluded)", ct)
 	}
 	if len(out.ByCategory) != 1 || out.ByCategory[0].Income != 0 || out.ByCategory[0].Expense != 100 {
 		t.Errorf("ByCategory = %+v, want a single entry with income=0 expense=100", out.ByCategory)
@@ -336,9 +336,9 @@ func TestGetFinancialSummaryBalanceAdjustmentPresent(t *testing.T) {
 	}
 }
 
-func TestGetFinancialSummaryBalanceAdjustmentAbsent(t *testing.T) {
+func TestGetFinancialSummaryAdjustmentAbsent(t *testing.T) {
 	session := newTestSession(t)
-	// Zero initial balance means no implicit balance_adjustment transaction.
+	// Zero initial balance means no implicit adjustment transaction.
 	accountID, categoryID := setupAccountAndCategory(t, session, 0)
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
@@ -348,7 +348,7 @@ func TestGetFinancialSummaryBalanceAdjustmentAbsent(t *testing.T) {
 	var out tools.GetFinancialSummaryOutput
 	callTool(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{}, &out)
 
-	if len(out.BalanceAdjustmentByCurrency) != 0 {
-		t.Errorf("BalanceAdjustmentByCurrency = %+v, want empty", out.BalanceAdjustmentByCurrency)
+	if len(out.AdjustmentByCurrency) != 0 {
+		t.Errorf("AdjustmentByCurrency = %+v, want empty", out.AdjustmentByCurrency)
 	}
 }

@@ -258,7 +258,7 @@ func TestManageAccountDeleteHappyPath(t *testing.T) {
 
 func TestManageAccountDeleteBlockedByReferences(t *testing.T) {
 	session := newTestSession(t)
-	// A nonzero initial balance records a balance_adjustment transaction,
+	// A nonzero initial balance records an adjustment transaction,
 	// which alone should be enough to block deletion.
 	accountID := createTestAccount(t, session, 10000)
 

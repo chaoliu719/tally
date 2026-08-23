@@ -9,7 +9,7 @@ import (
 // TestE2ETransactionLifecycleUnblocksAccountAndCategoryDeletion is the
 // journey the transaction-lifecycle change exists to unblock: before
 // delete_transaction existed, an account or category referenced by any
-// transaction (balance_adjustment included) could never be deleted, because
+// transaction (adjustment included) could never be deleted, because
 // there was no way to clear that reference. This test drives an account and
 // a category into exactly that blocked state, then uses delete_transaction
 // to clear every referencing transaction and confirms manage_account/
@@ -23,7 +23,7 @@ func TestE2ETransactionLifecycleUnblocksAccountAndCategoryDeletion(t *testing.T)
 		Name:      "Checking",
 		Type:      "checking_account",
 		Currency:  "CNY",
-		Balance:   5000, // records an initial balance_adjustment transaction
+		Balance:   5000, // records an initial adjustment transaction
 	}, &account)
 
 	var category tools.ManageCategoryOutput
@@ -92,7 +92,7 @@ func TestE2ETransactionLifecycleUnblocksAccountAndCategoryDeletion(t *testing.T)
 		t.Fatalf("expected the category to be gone, got %d: %+v", len(categoriesAfter.Categories), categoriesAfter.Categories)
 	}
 
-	// The account still has its initial balance_adjustment transaction, so it
+	// The account still has its initial adjustment transaction, so it
 	// remains blocked until that is cleared too.
 	callExpectError(t, session, "manage_account", tools.ManageAccountInput{
 		Operation: "delete",
@@ -102,7 +102,7 @@ func TestE2ETransactionLifecycleUnblocksAccountAndCategoryDeletion(t *testing.T)
 	var remaining tools.SearchTransactionsOutput
 	call(t, session, "search_transactions", tools.SearchTransactionsInput{AccountID: account.Account.ID}, &remaining)
 	if len(remaining.Transactions) != 1 {
-		t.Fatalf("expected only the initial balance_adjustment left on the account, got %d: %+v", len(remaining.Transactions), remaining.Transactions)
+		t.Fatalf("expected only the initial adjustment left on the account, got %d: %+v", len(remaining.Transactions), remaining.Transactions)
 	}
 	adjustmentID := remaining.Transactions[0].ID
 
@@ -114,7 +114,7 @@ func TestE2ETransactionLifecycleUnblocksAccountAndCategoryDeletion(t *testing.T)
 		ConfirmationToken: adjustmentPreview.ConfirmationToken,
 	}, &adjustmentApplied)
 	if adjustmentApplied.Status != "deleted" {
-		t.Fatalf("balance_adjustment apply Status = %q, want %q", adjustmentApplied.Status, "deleted")
+		t.Fatalf("adjustment apply Status = %q, want %q", adjustmentApplied.Status, "deleted")
 	}
 
 	// Every referencing transaction is now gone -- the account's own

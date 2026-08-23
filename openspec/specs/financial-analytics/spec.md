@@ -40,12 +40,12 @@
 - **THEN** 返回结果为每个发生过交易的账户给出对应的收入/支出小计,未发生交易的账户不出现在结果中
 
 ### Requirement: 单独统计余额调整总额
-`get_financial_summary` SHALL 单独返回统计范围内 `balance_adjustment` 类型交易的总额(按币种分组),不计入总收入、总支出或净额,也不计入分类/账户拆分。
+`get_financial_summary` SHALL 单独返回统计范围内 `adjustment` 类型交易的总额(按币种分组),不计入总收入、总支出或净额,也不计入分类/账户拆分。
 
 #### Scenario: 范围内存在余额调整交易
-- **WHEN** 统计范围内存在一笔或多笔 `balance_adjustment` 交易
+- **WHEN** 统计范围内存在一笔或多笔 `adjustment` 交易
 - **THEN** 返回结果中的总收入、总支出、净额、分类拆分、账户拆分均不包含这些交易的金额,同时另有一个按币种分组的余额调整总额字段反映它们
 
 #### Scenario: 范围内没有余额调整交易
-- **WHEN** 统计范围内没有任何 `balance_adjustment` 交易
+- **WHEN** 统计范围内没有任何 `adjustment` 交易
 - **THEN** 余额调整总额字段为空

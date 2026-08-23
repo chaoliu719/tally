@@ -47,9 +47,9 @@ func TestAggregatedBalanceMatchesTransactionSum(t *testing.T) {
 	}
 
 	if _, err := q.CreateTransaction(ctx, CreateTransactionParams{
-		Type: "balance_adjustment", AccountID: account.ID, CategoryID: sql.NullInt64{}, Amount: 10000, Time: now, CreatedAt: now, UpdatedAt: now,
+		Type: "adjustment", AccountID: account.ID, CategoryID: sql.NullInt64{}, Amount: 10000, Time: now, CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
-		t.Fatalf("CreateTransaction (balance_adjustment) failed: %v", err)
+		t.Fatalf("CreateTransaction (adjustment) failed: %v", err)
 	}
 	if _, err := q.CreateTransaction(ctx, CreateTransactionParams{
 		Type: "expense", AccountID: account.ID, CategoryID: sql.NullInt64{Int64: sub.ID, Valid: true}, Amount: -2500, Time: now, CreatedAt: now, UpdatedAt: now,
@@ -98,7 +98,7 @@ func TestCheckConstraintRejectsIncomeExpenseWithoutCategory(t *testing.T) {
 	}
 }
 
-func TestCheckConstraintRejectsBalanceAdjustmentWithCategory(t *testing.T) {
+func TestCheckConstraintRejectsAdjustmentWithCategory(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	q := New(db)
@@ -118,9 +118,9 @@ func TestCheckConstraintRejectsBalanceAdjustmentWithCategory(t *testing.T) {
 	}
 
 	_, err = q.CreateTransaction(ctx, CreateTransactionParams{
-		Type: "balance_adjustment", AccountID: account.ID, CategoryID: sql.NullInt64{Int64: category.ID, Valid: true}, Amount: 100, Time: now, CreatedAt: now, UpdatedAt: now,
+		Type: "adjustment", AccountID: account.ID, CategoryID: sql.NullInt64{Int64: category.ID, Valid: true}, Amount: 100, Time: now, CreatedAt: now, UpdatedAt: now,
 	})
 	if err == nil {
-		t.Fatal("expected CHECK constraint violation for balance_adjustment with category_id, got nil error")
+		t.Fatal("expected CHECK constraint violation for adjustment with category_id, got nil error")
 	}
 }
