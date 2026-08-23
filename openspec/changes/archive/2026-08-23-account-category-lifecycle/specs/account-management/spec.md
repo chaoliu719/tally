@@ -1,20 +1,4 @@
-# account-management Specification
-
-## Purpose
-让唯一用户能够通过 MCP 工具查看、创建、更新、删除账户,为记录交易提供必要的账户主数据。隐藏、排序等能力留给后续 change。
-
-## Requirements
-
-### Requirement: 查看全部账户
-用户 SHALL 能够通过 `list_accounts` 工具获取当前账本下的全部账户及其关键信息(名称、类型、币种、当前余额)。
-
-#### Scenario: 账本为空
-- **WHEN** 调用 `list_accounts` 时账本中还没有任何账户
-- **THEN** 返回一个空列表,而不是错误
-
-#### Scenario: 账本已有账户
-- **WHEN** 调用 `list_accounts` 时账本中已存在账户
-- **THEN** 返回全部账户,每个账户包含名称、类型、币种、当前余额
+## MODIFIED Requirements
 
 ### Requirement: 创建新账户
 用户 SHALL 能够通过 `manage_account` 工具,以 `operation="create"`,创建一个新账户,指定名称、类型、币种与初始余额。
@@ -30,6 +14,8 @@
 #### Scenario: 币种不受支持
 - **WHEN** 调用 `manage_account`(`operation="create"`)创建账户,指定的币种代码不是系统支持的货币
 - **THEN** 请求被拒绝,不创建账户
+
+## ADDED Requirements
 
 ### Requirement: 更新账户信息
 用户 SHALL 能够通过 `manage_account` 工具,以 `operation="update"` 并指定账户 `id`,更新一个已存在账户的 `name`、`type`、`comment`。这三个字段必须一并提供(完整替换),不支持只修改其中一个字段而保留其余字段原值。`currency` 与 `balance` 不能通过这个操作修改。

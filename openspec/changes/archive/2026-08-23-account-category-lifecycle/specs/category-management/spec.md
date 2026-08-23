@@ -1,9 +1,4 @@
-# category-management Specification
-
-## Purpose
-让唯一用户能够通过 MCP 工具查看、创建、更新、删除交易分类,为记录交易提供必要的分类主数据。分类可以任意嵌套——`parent_id` 可以指向账本中任意已存在的分类,不限层级深度;`create_transaction` 可以引用账本中任意分类。排序等能力留给后续 change。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: 查看全部交易分类
 用户 SHALL 能够通过 `list_categories` 工具获取当前账本下的全部交易分类及其名称与父分类 id。分类不再区分固定的层级——`parent_id` 可以指向账本中任意已存在的分类,嵌套深度不限;`parent_id` 为空/0 表示这是一个顶层分类。
@@ -38,6 +33,8 @@
 #### Scenario: 缺少必填字段
 - **WHEN** 调用 `manage_category`(`operation="create"`)创建分类,但缺少名称
 - **THEN** 请求被拒绝,返回说明缺少哪个字段的错误,不创建任何分类
+
+## ADDED Requirements
 
 ### Requirement: 更新交易分类
 用户 SHALL 能够通过 `manage_category` 工具,以 `operation="update"` 并指定分类 `id`,更新一个已存在分类的 `name` 与 `parent_id`。这两个字段必须一并提供(完整替换)。`parent_id` 可以指向账本中除该分类自身及其所有子孙分类之外的任意其他分类,也可以是 0(把该分类变为顶层分类)。
