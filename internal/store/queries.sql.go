@@ -442,6 +442,182 @@ func (q *Queries) SearchTransactions(ctx context.Context, arg SearchTransactions
 	return items, nil
 }
 
+const summarizeTransactionsByAccount = `-- name: SummarizeTransactionsByAccount :many
+SELECT
+    t.account_id AS account_id,
+    a.currency AS currency,
+    CAST(COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) AS INTEGER) AS income,
+    CAST(COALESCE(SUM(CASE WHEN t.type = 'expense' THEN -t.amount ELSE 0 END), 0) AS INTEGER) AS expense
+FROM transactions t
+JOIN accounts a ON a.id = t.account_id
+WHERE t.type IN ('income', 'expense')
+  AND (?1 IS NULL OR t.time >= ?1)
+  AND (?2   IS NULL OR t.time <= ?2)
+GROUP BY t.account_id, a.currency
+ORDER BY t.account_id, a.currency
+`
+
+type SummarizeTransactionsByAccountParams struct {
+	StartTime interface{}
+	EndTime   interface{}
+}
+
+type SummarizeTransactionsByAccountRow struct {
+	AccountID int64
+	Currency  string
+	Income    int64
+	Expense   int64
+}
+
+// Aggregates income/expense totals grouped by account, over an optional
+// [start_time, end_time] window. balance_adjustment transactions are
+// excluded (see SummarizeTransactionsByCurrency for their total).
+func (q *Queries) SummarizeTransactionsByAccount(ctx context.Context, arg SummarizeTransactionsByAccountParams) ([]SummarizeTransactionsByAccountRow, error) {
+	rows, err := q.db.QueryContext(ctx, summarizeTransactionsByAccount, arg.StartTime, arg.EndTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SummarizeTransactionsByAccountRow{}
+	for rows.Next() {
+		var i SummarizeTransactionsByAccountRow
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.Currency,
+			&i.Income,
+			&i.Expense,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const summarizeTransactionsByCategory = `-- name: SummarizeTransactionsByCategory :many
+SELECT
+    t.category_id AS category_id,
+    a.currency AS currency,
+    CAST(COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) AS INTEGER) AS income,
+    CAST(COALESCE(SUM(CASE WHEN t.type = 'expense' THEN -t.amount ELSE 0 END), 0) AS INTEGER) AS expense
+FROM transactions t
+JOIN accounts a ON a.id = t.account_id
+WHERE t.type IN ('income', 'expense')
+  AND (?1 IS NULL OR t.time >= ?1)
+  AND (?2   IS NULL OR t.time <= ?2)
+GROUP BY t.category_id, a.currency
+ORDER BY t.category_id, a.currency
+`
+
+type SummarizeTransactionsByCategoryParams struct {
+	StartTime interface{}
+	EndTime   interface{}
+}
+
+type SummarizeTransactionsByCategoryRow struct {
+	CategoryID sql.NullInt64
+	Currency   string
+	Income     int64
+	Expense    int64
+}
+
+// Aggregates income/expense totals grouped by category and account
+// currency, over an optional [start_time, end_time] window.
+// balance_adjustment transactions have no category and are excluded.
+func (q *Queries) SummarizeTransactionsByCategory(ctx context.Context, arg SummarizeTransactionsByCategoryParams) ([]SummarizeTransactionsByCategoryRow, error) {
+	rows, err := q.db.QueryContext(ctx, summarizeTransactionsByCategory, arg.StartTime, arg.EndTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SummarizeTransactionsByCategoryRow{}
+	for rows.Next() {
+		var i SummarizeTransactionsByCategoryRow
+		if err := rows.Scan(
+			&i.CategoryID,
+			&i.Currency,
+			&i.Income,
+			&i.Expense,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const summarizeTransactionsByCurrency = `-- name: SummarizeTransactionsByCurrency :many
+SELECT
+    a.currency AS currency,
+    CAST(COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) AS INTEGER) AS income,
+    CAST(COALESCE(SUM(CASE WHEN t.type = 'expense' THEN -t.amount ELSE 0 END), 0) AS INTEGER) AS expense,
+    CAST(COALESCE(SUM(CASE WHEN t.type = 'balance_adjustment' THEN t.amount ELSE 0 END), 0) AS INTEGER) AS balance_adjustment
+FROM transactions t
+JOIN accounts a ON a.id = t.account_id
+WHERE (?1 IS NULL OR t.time >= ?1)
+  AND (?2   IS NULL OR t.time <= ?2)
+GROUP BY a.currency
+ORDER BY a.currency
+`
+
+type SummarizeTransactionsByCurrencyParams struct {
+	StartTime interface{}
+	EndTime   interface{}
+}
+
+type SummarizeTransactionsByCurrencyRow struct {
+	Currency          string
+	Income            int64
+	Expense           int64
+	BalanceAdjustment int64
+}
+
+// Aggregates income/expense/balance_adjustment totals grouped by account
+// currency, over an optional [start_time, end_time] window. Used by
+// get_financial_summary (internal/tools/analytics.go). expense amounts are
+// stored negative, so SUM(-amount) turns them back into a positive total;
+// balance_adjustment is reported here but excluded from income/expense by
+// SummarizeTransactionsByCategory/ByAccount below.
+func (q *Queries) SummarizeTransactionsByCurrency(ctx context.Context, arg SummarizeTransactionsByCurrencyParams) ([]SummarizeTransactionsByCurrencyRow, error) {
+	rows, err := q.db.QueryContext(ctx, summarizeTransactionsByCurrency, arg.StartTime, arg.EndTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SummarizeTransactionsByCurrencyRow{}
+	for rows.Next() {
+		var i SummarizeTransactionsByCurrencyRow
+		if err := rows.Scan(
+			&i.Currency,
+			&i.Income,
+			&i.Expense,
+			&i.BalanceAdjustment,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateAccount = `-- name: UpdateAccount :one
 UPDATE accounts
 SET name = ?, type = ?, comment = ?, updated_at = ?

@@ -27,6 +27,21 @@ type Querier interface {
 	ListCategories(ctx context.Context) ([]Category, error)
 	ListCategoryDescendantIDs(ctx context.Context, targetID int64) ([]int64, error)
 	SearchTransactions(ctx context.Context, arg SearchTransactionsParams) ([]Transaction, error)
+	// Aggregates income/expense totals grouped by account, over an optional
+	// [start_time, end_time] window. balance_adjustment transactions are
+	// excluded (see SummarizeTransactionsByCurrency for their total).
+	SummarizeTransactionsByAccount(ctx context.Context, arg SummarizeTransactionsByAccountParams) ([]SummarizeTransactionsByAccountRow, error)
+	// Aggregates income/expense totals grouped by category and account
+	// currency, over an optional [start_time, end_time] window.
+	// balance_adjustment transactions have no category and are excluded.
+	SummarizeTransactionsByCategory(ctx context.Context, arg SummarizeTransactionsByCategoryParams) ([]SummarizeTransactionsByCategoryRow, error)
+	// Aggregates income/expense/balance_adjustment totals grouped by account
+	// currency, over an optional [start_time, end_time] window. Used by
+	// get_financial_summary (internal/tools/analytics.go). expense amounts are
+	// stored negative, so SUM(-amount) turns them back into a positive total;
+	// balance_adjustment is reported here but excluded from income/expense by
+	// SummarizeTransactionsByCategory/ByAccount below.
+	SummarizeTransactionsByCurrency(ctx context.Context, arg SummarizeTransactionsByCurrencyParams) ([]SummarizeTransactionsByCurrencyRow, error)
 	UpdateAccount(ctx context.Context, arg UpdateAccountParams) (Account, error)
 	UpdateCategory(ctx context.Context, arg UpdateCategoryParams) (Category, error)
 	UpdateTransaction(ctx context.Context, arg UpdateTransactionParams) (Transaction, error)

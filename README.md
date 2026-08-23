@@ -20,6 +20,7 @@ one implicit ledger; there's no user account to create or log into.
 | `search_transactions` | List transactions, optionally filtered by time range, account, and/or category. |
 | `update_transaction` | Replace every field of an existing transaction by id (same validation rules as `create_transaction`). Full replacement, not a partial update; no confirmation required. |
 | `delete_transaction` | Delete a transaction by id. Two-step preview → apply confirmation (see below); unlike account/category deletion, any existing transaction can be deleted. |
+| `get_financial_summary` | Aggregate income/expense/net totals over an optional time range, grouped by currency, and broken down by category and by account. balance_adjustment totals are reported separately, not counted as income/expense. Read-only. |
 
 Categories can nest to any depth — `parent_id` may point at any existing category, and any
 category (top-level or nested) can be referenced by `create_transaction`. All ids on the wire
