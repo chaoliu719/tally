@@ -1,0 +1,59 @@
+# source-management Specification
+
+## Purpose
+
+让唯一用户能够通过 MCP 工具查看、创建、更新、删除"来源"——一笔交易上"钱从哪来/去了哪"的标签,为记录交易提供必要的来源主数据。来源没有余额、没有币种,只是一个纯标签,取代原先带余额、带币种的"账户"概念。
+
+## Requirements
+
+### Requirement: 查看全部来源
+用户 SHALL 能够通过 `list_sources` 工具获取当前账本下的全部来源及其名称。
+
+#### Scenario: 账本为空
+- **WHEN** 调用 `list_sources` 时账本中还没有任何来源
+- **THEN** 返回一个空列表,而不是错误
+
+#### Scenario: 账本已有来源
+- **WHEN** 调用 `list_sources` 时账本中已存在来源
+- **THEN** 返回全部来源,每个来源包含 `id` 与名称
+
+### Requirement: 创建新来源
+用户 SHALL 能够通过 `manage_source` 工具,以 `operation="create"`,创建一个新来源,指定名称。
+
+#### Scenario: 提供有效信息创建来源
+- **WHEN** 调用 `manage_source`(`operation="create"`)创建来源,提供的名称合法
+- **THEN** 来源被创建,随后出现在 `list_sources` 的结果中
+
+#### Scenario: 缺少必填字段
+- **WHEN** 调用 `manage_source`(`operation="create"`)创建来源,但缺少名称
+- **THEN** 请求被拒绝,返回说明缺少名称的错误,不创建任何来源
+
+### Requirement: 更新来源信息
+用户 SHALL 能够通过 `manage_source` 工具,以 `operation="update"` 并指定来源 `id`,更新一个已存在来源的 `name`。
+
+#### Scenario: 提供有效信息更新来源
+- **WHEN** 调用 `manage_source`(`operation="update"`),指定一个已存在的来源 `id`,并提供合法的 `name`
+- **THEN** 来源的名称被更新为新值,随后 `list_sources` 反映新值
+
+#### Scenario: 目标来源不存在
+- **WHEN** 调用 `manage_source`(`operation="update"`),指定的 `id` 不对应任何已存在的来源
+- **THEN** 请求被拒绝,返回"未找到"错误,不修改任何来源
+
+#### Scenario: 缺少必填字段
+- **WHEN** 调用 `manage_source`(`operation="update"`),但未提供 `name`
+- **THEN** 请求被拒绝,返回说明缺少名称的错误,不修改任何来源
+
+### Requirement: 删除来源
+用户 SHALL 能够通过 `manage_source` 工具,以 `operation="delete"` 并指定来源 `id`,删除一个来源。这是一个破坏性操作,遵循 `write-confirmation` 能力定义的 preview → apply 两步流程。一个来源只要被任意交易引用,就不能被删除,且不提供强制覆盖的方式。
+
+#### Scenario: 删除一个没有交易记录的来源
+- **WHEN** 先以 `operation="delete"` 不带 `confirmation_token` 调用 `manage_source`(得到预览与 `confirmation_token`),再以同样的 `id` 携带该 `confirmation_token` 调用 `operation="delete"`,且这个来源在两次调用之间始终没有被任何交易引用
+- **THEN** 来源被删除,不再出现在 `list_sources` 的结果中
+
+#### Scenario: 删除一个仍被交易引用的来源
+- **WHEN** 以 `operation="delete"` 调用 `manage_source`,目标来源被至少一笔交易引用
+- **THEN** 请求被拒绝,返回说明来源仍被引用、无法删除的错误,不删除该来源,也不签发 `confirmation_token`
+
+#### Scenario: 目标来源不存在
+- **WHEN** 调用 `manage_source`(`operation="delete"`),指定的 `id` 不对应任何已存在的来源
+- **THEN** 请求被拒绝,返回"未找到"错误

@@ -7,7 +7,7 @@
 ## Requirements
 
 ### Requirement: 按时间范围统计财务汇总
-用户 SHALL 能够通过 `get_financial_summary` 工具,指定一个可选的时间范围(`start_time`/`end_time`,unix 秒,语义与 `search_transactions` 一致),获得该范围内 `income`/`expense` 类型交易的总收入、总支出、净额(总收入减总支出),以及按分类、按账户拆分的收入/支出小计。金额按币种分组返回,不做任何汇率换算。
+用户 SHALL 能够通过 `get_financial_summary` 工具,指定一个可选的时间范围(`start_time`/`end_time`,unix 秒,语义与 `search_transactions` 一致),获得该范围内 `income`/`expense` 类型交易的总收入、总支出、净额(总收入减总支出),以及按分类、按来源拆分的收入/支出小计。金额按币种分组返回,不做任何汇率换算。
 
 #### Scenario: 提供时间范围统计
 - **WHEN** 调用 `get_financial_summary` 并指定 `start_time`/`end_time`
@@ -22,7 +22,7 @@
 - **THEN** 返回总收入、总支出、净额均为空(不返回任何币种分组),而不是错误
 
 #### Scenario: 多币种账本分别汇总
-- **WHEN** 账本中存在多个不同币种的账户,统计范围内两种币种都有交易
+- **WHEN** 统计范围内存在多笔不同币种的 `income`/`expense` 交易
 - **THEN** 返回结果按币种分别给出总收入、总支出、净额,不合并换算成单一数值
 
 ### Requirement: 按分类拆分收支
@@ -32,20 +32,9 @@
 - **WHEN** 统计范围内的交易分布在多个不同分类下
 - **THEN** 返回结果为每个出现过交易的分类给出对应的收入/支出小计,未出现交易的分类不出现在结果中
 
-### Requirement: 按账户拆分收支
-`get_financial_summary` 的返回结果 SHALL 包含按账户拆分的收入/支出小计:对统计范围内每个发生过 `income` 或 `expense` 交易的账户,给出该账户上的收入小计与支出小计。
+### Requirement: 按来源拆分收支
+`get_financial_summary` 的返回结果 SHALL 包含按来源拆分的收入/支出小计:对统计范围内每个发生过 `income` 或 `expense` 交易的来源,给出该来源上的收入小计与支出小计。
 
-#### Scenario: 交易分布在多个账户
-- **WHEN** 统计范围内的交易分布在多个不同账户下
-- **THEN** 返回结果为每个发生过交易的账户给出对应的收入/支出小计,未发生交易的账户不出现在结果中
-
-### Requirement: 单独统计余额调整总额
-`get_financial_summary` SHALL 单独返回统计范围内 `adjustment` 类型交易的总额(按币种分组),不计入总收入、总支出或净额,也不计入分类/账户拆分。
-
-#### Scenario: 范围内存在余额调整交易
-- **WHEN** 统计范围内存在一笔或多笔 `adjustment` 交易
-- **THEN** 返回结果中的总收入、总支出、净额、分类拆分、账户拆分均不包含这些交易的金额,同时另有一个按币种分组的余额调整总额字段反映它们
-
-#### Scenario: 范围内没有余额调整交易
-- **WHEN** 统计范围内没有任何 `adjustment` 交易
-- **THEN** 余额调整总额字段为空
+#### Scenario: 交易分布在多个来源
+- **WHEN** 统计范围内的交易分布在多个不同来源下
+- **THEN** 返回结果为每个发生过交易的来源给出对应的收入/支出小计,未发生交易的来源不出现在结果中

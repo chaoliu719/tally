@@ -33,4 +33,4 @@
 
 ## 6. Spec sync
 
-- [ ] 6.1 Once implementation is verified, run the sync/archive workflow to merge this change's delta specs into `openspec/specs/` and archive the change directory.
+- [x] 6.1 Once implementation is verified, run the sync/archive workflow to merge this change's delta specs into `openspec/specs/` and archive the change directory.
