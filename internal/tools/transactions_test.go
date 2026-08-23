@@ -16,17 +16,19 @@ func futureTime() int64 {
 // setupSourceAndCategory creates a source and a usable category, returning
 // their ids. Categories no longer have a level restriction, so a plain
 // top-level category works fine here.
-func setupSourceAndCategory(t *testing.T, session *mcp.ClientSession) (sourceID, categoryID string) {
+func setupSourceAndCategory(t *testing.T, session *mcp.ClientSession, ledgerID string) (sourceID, categoryID string) {
 	t.Helper()
 
 	var source tools.ManageSourceOutput
 	callTool(t, session, "manage_source", tools.ManageSourceInput{
+		LedgerID:  ledgerID,
 		Operation: "create",
 		Name:      "Cash Wallet",
 	}, &source)
 
 	var category tools.ManageCategoryOutput
 	callTool(t, session, "manage_category", tools.ManageCategoryInput{
+		LedgerID:  ledgerID,
 		Operation: "create",
 		Name:      "Groceries",
 	}, &category)
@@ -35,11 +37,12 @@ func setupSourceAndCategory(t *testing.T, session *mcp.ClientSession) (sourceID,
 }
 
 func TestCreateTransactionExpense(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, categoryID := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID:   ledgerID,
 		Type:       "expense",
 		SourceID:   sourceID,
 		CategoryID: categoryID,
@@ -60,24 +63,26 @@ func TestCreateTransactionExpense(t *testing.T) {
 	}
 
 	var got tools.GetTransactionOutput
-	callTool(t, session, "get_transaction", tools.GetTransactionInput{ID: created.Transaction.ID}, &got)
+	callTool(t, session, "get_transaction", tools.GetTransactionInput{LedgerID: ledgerID, ID: created.Transaction.ID}, &got)
 	if got.Transaction.ID != created.Transaction.ID {
 		t.Errorf("get_transaction id = %q, want %q", got.Transaction.ID, created.Transaction.ID)
 	}
 }
 
 func TestCreateTransactionIncome(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, _ := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID, _ := setupSourceAndCategory(t, session, ledgerID)
 
 	var incomeCategory tools.ManageCategoryOutput
 	callTool(t, session, "manage_category", tools.ManageCategoryInput{
+		LedgerID:  ledgerID,
 		Operation: "create",
 		Name:      "Salary",
 	}, &incomeCategory)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID:   ledgerID,
 		Type:       "income",
 		SourceID:   sourceID,
 		CategoryID: incomeCategory.Category.ID,
@@ -92,10 +97,11 @@ func TestCreateTransactionIncome(t *testing.T) {
 }
 
 func TestCreateTransactionRejectsNonexistentSource(t *testing.T) {
-	session := newTestSession(t)
-	_, categoryID := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	_, categoryID := setupSourceAndCategory(t, session, ledgerID)
 
 	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID:   ledgerID,
 		Type:       "expense",
 		SourceID:   "999999",
 		CategoryID: categoryID,
@@ -105,17 +111,18 @@ func TestCreateTransactionRejectsNonexistentSource(t *testing.T) {
 	})
 
 	var list tools.SearchTransactionsOutput
-	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{}, &list)
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID}, &list)
 	if len(list.Transactions) != 0 {
 		t.Fatalf("expected no transaction recorded, got %d", len(list.Transactions))
 	}
 }
 
 func TestCreateTransactionRejectsNonexistentCategory(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, _ := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID, _ := setupSourceAndCategory(t, session, ledgerID)
 
 	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID:   ledgerID,
 		Type:       "expense",
 		SourceID:   sourceID,
 		CategoryID: "999999",
@@ -125,7 +132,7 @@ func TestCreateTransactionRejectsNonexistentCategory(t *testing.T) {
 	})
 
 	var list tools.SearchTransactionsOutput
-	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{}, &list)
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID}, &list)
 	if len(list.Transactions) != 0 {
 		t.Fatalf("expected no transaction recorded, got %d", len(list.Transactions))
 	}
@@ -135,16 +142,18 @@ func TestCreateTransactionRejectsNonexistentCategory(t *testing.T) {
 // second-level category" restriction is gone: a plain top-level category
 // (no parent) can now be referenced directly by create_transaction.
 func TestCreateTransactionAllowsTopLevelCategory(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, _ := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID, _ := setupSourceAndCategory(t, session, ledgerID)
 
 	var topLevel tools.ManageCategoryOutput
 	callTool(t, session, "manage_category", tools.ManageCategoryInput{
+		LedgerID:  ledgerID,
 		Operation: "create",
 		Name:      "Housing",
 	}, &topLevel)
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID:   ledgerID,
 		Type:       "expense",
 		SourceID:   sourceID,
 		CategoryID: topLevel.Category.ID,
@@ -155,10 +164,11 @@ func TestCreateTransactionAllowsTopLevelCategory(t *testing.T) {
 }
 
 func TestCreateTransactionMissingRequiredField(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, _ := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID, _ := setupSourceAndCategory(t, session, ledgerID)
 
 	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID,
 		Type:     "expense",
 		SourceID: sourceID,
 		// CategoryID omitted
@@ -168,17 +178,18 @@ func TestCreateTransactionMissingRequiredField(t *testing.T) {
 	})
 
 	var list tools.SearchTransactionsOutput
-	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{}, &list)
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID}, &list)
 	if len(list.Transactions) != 0 {
 		t.Fatalf("expected no transaction recorded, got %d", len(list.Transactions))
 	}
 }
 
 func TestCreateTransactionMissingCurrency(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, categoryID := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
 
 	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID:   ledgerID,
 		Type:       "expense",
 		SourceID:   sourceID,
 		CategoryID: categoryID,
@@ -188,17 +199,18 @@ func TestCreateTransactionMissingCurrency(t *testing.T) {
 	})
 
 	var list tools.SearchTransactionsOutput
-	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{}, &list)
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID}, &list)
 	if len(list.Transactions) != 0 {
 		t.Fatalf("expected no transaction recorded, got %d", len(list.Transactions))
 	}
 }
 
 func TestCreateTransactionUnsupportedCurrency(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, categoryID := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
 
 	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID:   ledgerID,
 		Type:       "expense",
 		SourceID:   sourceID,
 		CategoryID: categoryID,
@@ -208,52 +220,57 @@ func TestCreateTransactionUnsupportedCurrency(t *testing.T) {
 	})
 
 	var list tools.SearchTransactionsOutput
-	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{}, &list)
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID}, &list)
 	if len(list.Transactions) != 0 {
 		t.Fatalf("expected no transaction recorded, got %d", len(list.Transactions))
 	}
 }
 
 func TestGetTransactionNotFound(t *testing.T) {
-	session := newTestSession(t)
+	session, ledgerID := newTestSession(t)
 
-	callToolExpectError(t, session, "get_transaction", tools.GetTransactionInput{ID: "999999"})
+	callToolExpectError(t, session, "get_transaction", tools.GetTransactionInput{LedgerID: ledgerID, ID: "999999"})
 }
 
 func TestSearchTransactionsNoFilter(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, categoryID := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 200, Currency: "CNY", Time: futureTime() + 3600,
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 200, Currency: "CNY", Time: futureTime() + 3600,
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.SearchTransactionsOutput
-	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{}, &out)
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID}, &out)
 	if len(out.Transactions) != 2 {
 		t.Fatalf("expected 2 transactions, got %d", len(out.Transactions))
 	}
 }
 
 func TestSearchTransactionsTimeRange(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, categoryID := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
 
 	earlyTime := futureTime()
 	lateTime := earlyTime + 100000
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: earlyTime,
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: earlyTime,
 	}, &tools.CreateTransactionOutput{})
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 200, Currency: "CNY", Time: lateTime,
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 200, Currency: "CNY", Time: lateTime,
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.SearchTransactionsOutput
 	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{
+		LedgerID:  ledgerID,
 		StartTime: earlyTime - 10,
 		EndTime:   earlyTime + 10,
 	}, &out)
@@ -267,11 +284,12 @@ func TestSearchTransactionsTimeRange(t *testing.T) {
 }
 
 func TestUpdateTransactionHappyPath(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, categoryID := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID:   ledgerID,
 		Type:       "expense",
 		SourceID:   sourceID,
 		CategoryID: categoryID,
@@ -283,12 +301,14 @@ func TestUpdateTransactionHappyPath(t *testing.T) {
 
 	var otherCategory tools.ManageCategoryOutput
 	callTool(t, session, "manage_category", tools.ManageCategoryInput{
+		LedgerID:  ledgerID,
 		Operation: "create",
 		Name:      "Dining",
 	}, &otherCategory)
 
 	var updated tools.UpdateTransactionOutput
 	callTool(t, session, "update_transaction", tools.UpdateTransactionInput{
+		LedgerID:   ledgerID,
 		ID:         created.Transaction.ID,
 		Type:       "expense",
 		SourceID:   sourceID,
@@ -310,24 +330,26 @@ func TestUpdateTransactionHappyPath(t *testing.T) {
 	}
 
 	var got tools.GetTransactionOutput
-	callTool(t, session, "get_transaction", tools.GetTransactionInput{ID: created.Transaction.ID}, &got)
+	callTool(t, session, "get_transaction", tools.GetTransactionInput{LedgerID: ledgerID, ID: created.Transaction.ID}, &got)
 	if got.Transaction.Amount != 4000 {
 		t.Errorf("get_transaction Amount = %d, want 4000", got.Transaction.Amount)
 	}
 }
 
 func TestUpdateTransactionChangesSource(t *testing.T) {
-	session := newTestSession(t)
-	sourceA, categoryID := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceA, categoryID := setupSourceAndCategory(t, session, ledgerID)
 
 	var sourceB tools.ManageSourceOutput
 	callTool(t, session, "manage_source", tools.ManageSourceInput{
+		LedgerID:  ledgerID,
 		Operation: "create",
 		Name:      "Second Wallet",
 	}, &sourceB)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID:   ledgerID,
 		Type:       "expense",
 		SourceID:   sourceA,
 		CategoryID: categoryID,
@@ -338,6 +360,7 @@ func TestUpdateTransactionChangesSource(t *testing.T) {
 
 	var updated tools.UpdateTransactionOutput
 	callTool(t, session, "update_transaction", tools.UpdateTransactionInput{
+		LedgerID:   ledgerID,
 		ID:         created.Transaction.ID,
 		Type:       "expense",
 		SourceID:   sourceB.Source.ID,
@@ -353,17 +376,19 @@ func TestUpdateTransactionChangesSource(t *testing.T) {
 }
 
 func TestUpdateTransactionMissingRequiredField(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, categoryID := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
 	}, &created)
 
 	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
-		ID:   created.Transaction.ID,
-		Type: "expense",
+		LedgerID: ledgerID,
+		ID:       created.Transaction.ID,
+		Type:     "expense",
 		// SourceID omitted
 		CategoryID: categoryID,
 		Amount:     100,
@@ -372,22 +397,24 @@ func TestUpdateTransactionMissingRequiredField(t *testing.T) {
 	})
 
 	var got tools.GetTransactionOutput
-	callTool(t, session, "get_transaction", tools.GetTransactionInput{ID: created.Transaction.ID}, &got)
+	callTool(t, session, "get_transaction", tools.GetTransactionInput{LedgerID: ledgerID, ID: created.Transaction.ID}, &got)
 	if got.Transaction.Amount != 100 {
 		t.Fatalf("transaction changed after rejected update: Amount = %d, want 100", got.Transaction.Amount)
 	}
 }
 
 func TestUpdateTransactionRejectsNonexistentSource(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, categoryID := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
 	}, &created)
 
 	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
+		LedgerID:   ledgerID,
 		ID:         created.Transaction.ID,
 		Type:       "expense",
 		SourceID:   "999999",
@@ -399,15 +426,17 @@ func TestUpdateTransactionRejectsNonexistentSource(t *testing.T) {
 }
 
 func TestUpdateTransactionRejectsNonexistentCategory(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, categoryID := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
 	}, &created)
 
 	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
+		LedgerID:   ledgerID,
 		ID:         created.Transaction.ID,
 		Type:       "expense",
 		SourceID:   sourceID,
@@ -419,15 +448,17 @@ func TestUpdateTransactionRejectsNonexistentCategory(t *testing.T) {
 }
 
 func TestUpdateTransactionRejectsUnsupportedCurrency(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, categoryID := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
 	}, &created)
 
 	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
+		LedgerID:   ledgerID,
 		ID:         created.Transaction.ID,
 		Type:       "expense",
 		SourceID:   sourceID,
@@ -439,15 +470,17 @@ func TestUpdateTransactionRejectsUnsupportedCurrency(t *testing.T) {
 }
 
 func TestUpdateTransactionIncomeExpenseRejectsNonPositiveAmount(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, categoryID := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
 	}, &created)
 
 	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
+		LedgerID:   ledgerID,
 		ID:         created.Transaction.ID,
 		Type:       "expense",
 		SourceID:   sourceID,
@@ -459,11 +492,12 @@ func TestUpdateTransactionIncomeExpenseRejectsNonPositiveAmount(t *testing.T) {
 }
 
 func TestUpdateTransactionNotFound(t *testing.T) {
-	session := newTestSession(t)
-	_, categoryID := setupSourceAndCategory(t, session)
-	sourceID, _ := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	_, categoryID := setupSourceAndCategory(t, session, ledgerID)
+	sourceID, _ := setupSourceAndCategory(t, session, ledgerID)
 
 	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
+		LedgerID:   ledgerID,
 		ID:         "999999",
 		Type:       "expense",
 		SourceID:   sourceID,
@@ -475,16 +509,17 @@ func TestUpdateTransactionNotFound(t *testing.T) {
 }
 
 func TestDeleteTransactionHappyPath(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, categoryID := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 2500, Currency: "CNY", Time: futureTime(),
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 2500, Currency: "CNY", Time: futureTime(),
 	}, &created)
 
 	var preview tools.DeleteTransactionOutput
-	callTool(t, session, "delete_transaction", tools.DeleteTransactionInput{ID: created.Transaction.ID}, &preview)
+	callTool(t, session, "delete_transaction", tools.DeleteTransactionInput{LedgerID: ledgerID, ID: created.Transaction.ID}, &preview)
 	if preview.Status != "pending_confirmation" {
 		t.Fatalf("Status = %q, want %q", preview.Status, "pending_confirmation")
 	}
@@ -494,10 +529,11 @@ func TestDeleteTransactionHappyPath(t *testing.T) {
 
 	// Preview must not delete anything.
 	var stillThere tools.GetTransactionOutput
-	callTool(t, session, "get_transaction", tools.GetTransactionInput{ID: created.Transaction.ID}, &stillThere)
+	callTool(t, session, "get_transaction", tools.GetTransactionInput{LedgerID: ledgerID, ID: created.Transaction.ID}, &stillThere)
 
 	var applied tools.DeleteTransactionOutput
 	callTool(t, session, "delete_transaction", tools.DeleteTransactionInput{
+		LedgerID:          ledgerID,
 		ID:                created.Transaction.ID,
 		ConfirmationToken: preview.ConfirmationToken,
 	}, &applied)
@@ -505,10 +541,10 @@ func TestDeleteTransactionHappyPath(t *testing.T) {
 		t.Fatalf("Status = %q, want %q", applied.Status, "deleted")
 	}
 
-	callToolExpectError(t, session, "get_transaction", tools.GetTransactionInput{ID: created.Transaction.ID})
+	callToolExpectError(t, session, "get_transaction", tools.GetTransactionInput{LedgerID: ledgerID, ID: created.Transaction.ID})
 
 	var list tools.SearchTransactionsOutput
-	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{}, &list)
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID}, &list)
 	for _, txn := range list.Transactions {
 		if txn.ID == created.Transaction.ID {
 			t.Fatalf("deleted transaction %q still present in search_transactions", created.Transaction.ID)
@@ -517,48 +553,52 @@ func TestDeleteTransactionHappyPath(t *testing.T) {
 }
 
 func TestDeleteTransactionNotFound(t *testing.T) {
-	session := newTestSession(t)
+	session, ledgerID := newTestSession(t)
 
-	callToolExpectError(t, session, "delete_transaction", tools.DeleteTransactionInput{ID: "999999"})
-	callToolExpectError(t, session, "delete_transaction", tools.DeleteTransactionInput{ID: "999999", ConfirmationToken: "irrelevant"})
+	callToolExpectError(t, session, "delete_transaction", tools.DeleteTransactionInput{LedgerID: ledgerID, ID: "999999"})
+	callToolExpectError(t, session, "delete_transaction", tools.DeleteTransactionInput{LedgerID: ledgerID, ID: "999999", ConfirmationToken: "irrelevant"})
 }
 
 func TestDeleteTransactionExpiredToken(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, categoryID := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
 	}, &created)
 
 	expired := craftConfirmationToken(t, testConfirmSecret, "delete_transaction", created.Transaction.ID, "irrelevant-revision", time.Now().Add(-time.Minute).Unix())
 
 	callToolExpectError(t, session, "delete_transaction", tools.DeleteTransactionInput{
+		LedgerID:          ledgerID,
 		ID:                created.Transaction.ID,
 		ConfirmationToken: expired,
 	})
 
 	// The transaction must survive the expired token.
-	callTool(t, session, "get_transaction", tools.GetTransactionInput{ID: created.Transaction.ID}, &tools.GetTransactionOutput{})
+	callTool(t, session, "get_transaction", tools.GetTransactionInput{LedgerID: ledgerID, ID: created.Transaction.ID}, &tools.GetTransactionOutput{})
 }
 
 func TestDeleteTransactionDriftedRevisionAfterUpdate(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, categoryID := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
 	}, &created)
 
 	var preview tools.DeleteTransactionOutput
-	callTool(t, session, "delete_transaction", tools.DeleteTransactionInput{ID: created.Transaction.ID}, &preview)
+	callTool(t, session, "delete_transaction", tools.DeleteTransactionInput{LedgerID: ledgerID, ID: created.Transaction.ID}, &preview)
 
 	// The transaction changes after the preview but before apply -- the stale
 	// token must be rejected rather than deleting a transaction whose state no
 	// longer matches what was previewed.
 	callTool(t, session, "update_transaction", tools.UpdateTransactionInput{
+		LedgerID:   ledgerID,
 		ID:         created.Transaction.ID,
 		Type:       "expense",
 		SourceID:   sourceID,
@@ -569,26 +609,29 @@ func TestDeleteTransactionDriftedRevisionAfterUpdate(t *testing.T) {
 	}, &tools.UpdateTransactionOutput{})
 
 	callToolExpectError(t, session, "delete_transaction", tools.DeleteTransactionInput{
+		LedgerID:          ledgerID,
 		ID:                created.Transaction.ID,
 		ConfirmationToken: preview.ConfirmationToken,
 	})
 
-	callTool(t, session, "get_transaction", tools.GetTransactionInput{ID: created.Transaction.ID}, &tools.GetTransactionOutput{})
+	callTool(t, session, "get_transaction", tools.GetTransactionInput{LedgerID: ledgerID, ID: created.Transaction.ID}, &tools.GetTransactionOutput{})
 }
 
 func TestDeleteTransactionTokenReplay(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, categoryID := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
 
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
 	}, &created)
 
 	var preview tools.DeleteTransactionOutput
-	callTool(t, session, "delete_transaction", tools.DeleteTransactionInput{ID: created.Transaction.ID}, &preview)
+	callTool(t, session, "delete_transaction", tools.DeleteTransactionInput{LedgerID: ledgerID, ID: created.Transaction.ID}, &preview)
 
 	callTool(t, session, "delete_transaction", tools.DeleteTransactionInput{
+		LedgerID:          ledgerID,
 		ID:                created.Transaction.ID,
 		ConfirmationToken: preview.ConfirmationToken,
 	}, &tools.DeleteTransactionOutput{})
@@ -596,21 +639,24 @@ func TestDeleteTransactionTokenReplay(t *testing.T) {
 	// Reusing the same token to confirm the same delete a second time must
 	// fail -- the transaction is already gone.
 	callToolExpectError(t, session, "delete_transaction", tools.DeleteTransactionInput{
+		LedgerID:          ledgerID,
 		ID:                created.Transaction.ID,
 		ConfirmationToken: preview.ConfirmationToken,
 	})
 }
 
 func TestSearchTransactionsEmptyResult(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, categoryID := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.SearchTransactionsOutput
 	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{
+		LedgerID:  ledgerID,
 		StartTime: futureTime() + 1000000,
 		EndTime:   futureTime() + 1100000,
 	}, &out)
@@ -630,12 +676,13 @@ func TestSearchTransactionsEmptyResult(t *testing.T) {
 // offsets, at time base+offset, and returns their ids in the same order as
 // offsets. Offsets should be distinct and increasing so time alone
 // determines a deterministic order.
-func createExpensesAtOffsets(t *testing.T, session *mcp.ClientSession, sourceID, categoryID string, base int64, offsets []int64) []string {
+func createExpensesAtOffsets(t *testing.T, session *mcp.ClientSession, ledgerID, sourceID, categoryID string, base int64, offsets []int64) []string {
 	t.Helper()
 	ids := make([]string, 0, len(offsets))
 	for i, off := range offsets {
 		var created tools.CreateTransactionOutput
 		callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+			LedgerID:   ledgerID,
 			Type:       "expense",
 			SourceID:   sourceID,
 			CategoryID: categoryID,
@@ -651,13 +698,13 @@ func createExpensesAtOffsets(t *testing.T, session *mcp.ClientSession, sourceID,
 // createNExpenses creates n expense transactions at times baseTime+1,
 // baseTime+2, ..., baseTime+n (strictly increasing, so ordering by time
 // alone is deterministic) and returns their ids in creation order.
-func createNExpenses(t *testing.T, session *mcp.ClientSession, sourceID, categoryID string, n int, baseTime int64) []string {
+func createNExpenses(t *testing.T, session *mcp.ClientSession, ledgerID, sourceID, categoryID string, n int, baseTime int64) []string {
 	t.Helper()
 	offsets := make([]int64, n)
 	for i := range offsets {
 		offsets[i] = int64(i + 1)
 	}
-	return createExpensesAtOffsets(t, session, sourceID, categoryID, baseTime, offsets)
+	return createExpensesAtOffsets(t, session, ledgerID, sourceID, categoryID, baseTime, offsets)
 }
 
 // TestSearchTransactionsDefaultPageSize verifies the default page size is 50
@@ -665,12 +712,12 @@ func createNExpenses(t *testing.T, session *mcp.ClientSession, sourceID, categor
 // not everything) by creating more than 50 matching transactions and calling
 // search_transactions with limit omitted.
 func TestSearchTransactionsDefaultPageSize(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, categoryID := setupSourceAndCategory(t, session)
-	createNExpenses(t, session, sourceID, categoryID, 55, futureTime())
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+	createNExpenses(t, session, ledgerID, sourceID, categoryID, 55, futureTime())
 
 	var out tools.SearchTransactionsOutput
-	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{}, &out)
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID}, &out)
 
 	if len(out.Transactions) != 50 {
 		t.Fatalf("expected the default page size of 50 transactions, got %d", len(out.Transactions))
@@ -684,12 +731,12 @@ func TestSearchTransactionsDefaultPageSize(t *testing.T) {
 // spec.md's "结果超过一页" scenario: next_cursor is present when there's
 // another page, and absent when the current page is the last one.
 func TestSearchTransactionsNextCursorOnlyWhenMoreResults(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, categoryID := setupSourceAndCategory(t, session)
-	createNExpenses(t, session, sourceID, categoryID, 5, futureTime())
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+	createNExpenses(t, session, ledgerID, sourceID, categoryID, 5, futureTime())
 
 	var exactFit tools.SearchTransactionsOutput
-	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{Limit: 5}, &exactFit)
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Limit: 5}, &exactFit)
 	if len(exactFit.Transactions) != 5 {
 		t.Fatalf("expected 5 transactions, got %d", len(exactFit.Transactions))
 	}
@@ -698,7 +745,7 @@ func TestSearchTransactionsNextCursorOnlyWhenMoreResults(t *testing.T) {
 	}
 
 	var shortOfFit tools.SearchTransactionsOutput
-	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{Limit: 4}, &shortOfFit)
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Limit: 4}, &shortOfFit)
 	if len(shortOfFit.Transactions) != 4 {
 		t.Fatalf("expected 4 transactions, got %d", len(shortOfFit.Transactions))
 	}
@@ -712,12 +759,12 @@ func TestSearchTransactionsNextCursorOnlyWhenMoreResults(t *testing.T) {
 // next_cursor disappears yields exactly the same set (no duplicates, no
 // omissions, same order) as fetching everything in one page.
 func TestSearchTransactionsCursorPaginationCoversAllResults(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, categoryID := setupSourceAndCategory(t, session)
-	createNExpenses(t, session, sourceID, categoryID, 12, futureTime())
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+	createNExpenses(t, session, ledgerID, sourceID, categoryID, 12, futureTime())
 
 	var full tools.SearchTransactionsOutput
-	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{Limit: 200}, &full)
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Limit: 200}, &full)
 	if len(full.Transactions) != 12 {
 		t.Fatalf("expected 12 transactions unpaginated, got %d", len(full.Transactions))
 	}
@@ -729,7 +776,7 @@ func TestSearchTransactionsCursorPaginationCoversAllResults(t *testing.T) {
 			t.Fatal("pagination did not terminate")
 		}
 		var page tools.SearchTransactionsOutput
-		callTool(t, session, "search_transactions", tools.SearchTransactionsInput{Limit: 5, Cursor: cursor}, &page)
+		callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Limit: 5, Cursor: cursor}, &page)
 		paged = append(paged, page.Transactions...)
 		if page.NextCursor == "" {
 			break
@@ -756,28 +803,30 @@ func TestSearchTransactionsCursorPaginationCoversAllResults(t *testing.T) {
 // TestSearchTransactionsLimitOverMaxRejected cover spec.md's "cursor 无效或
 // 已不匹配当前筛选条件" and "limit 超过上限" scenarios.
 func TestSearchTransactionsInvalidCursorRejected(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, categoryID := setupSourceAndCategory(t, session)
-	createNExpenses(t, session, sourceID, categoryID, 3, futureTime())
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+	createNExpenses(t, session, ledgerID, sourceID, categoryID, 3, futureTime())
 
 	callToolExpectError(t, session, "search_transactions", tools.SearchTransactionsInput{
-		Cursor: "this-is-not-a-valid-cursor",
+		LedgerID: ledgerID,
+		Cursor:   "this-is-not-a-valid-cursor",
 	})
 }
 
 func TestSearchTransactionsCursorRejectedWhenFiltersChange(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, categoryID := setupSourceAndCategory(t, session)
-	createNExpenses(t, session, sourceID, categoryID, 3, futureTime())
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+	createNExpenses(t, session, ledgerID, sourceID, categoryID, 3, futureTime())
 
 	var otherSource tools.ManageSourceOutput
 	callTool(t, session, "manage_source", tools.ManageSourceInput{
+		LedgerID:  ledgerID,
 		Operation: "create",
 		Name:      "Other Wallet",
 	}, &otherSource)
 
 	var page tools.SearchTransactionsOutput
-	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{Limit: 1}, &page)
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Limit: 1}, &page)
 	if page.NextCursor == "" {
 		t.Fatal("expected next_cursor from the first page to exercise the mismatch")
 	}
@@ -785,6 +834,7 @@ func TestSearchTransactionsCursorRejectedWhenFiltersChange(t *testing.T) {
 	// Same cursor, but now scoped to a different source_id filter than the
 	// one it was issued under -- must be rejected, not silently reused.
 	callToolExpectError(t, session, "search_transactions", tools.SearchTransactionsInput{
+		LedgerID: ledgerID,
 		Limit:    1,
 		SourceID: otherSource.Source.ID,
 		Cursor:   page.NextCursor,
@@ -792,10 +842,10 @@ func TestSearchTransactionsCursorRejectedWhenFiltersChange(t *testing.T) {
 }
 
 func TestSearchTransactionsLimitOverMaxRejected(t *testing.T) {
-	session := newTestSession(t)
-	setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	setupSourceAndCategory(t, session, ledgerID)
 
-	callToolExpectError(t, session, "search_transactions", tools.SearchTransactionsInput{Limit: 201})
+	callToolExpectError(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Limit: 201})
 }
 
 // TestSearchTransactionsPaginationSurvivesLedgerChanges covers spec.md's
@@ -808,15 +858,15 @@ func TestSearchTransactionsLimitOverMaxRejected(t *testing.T) {
 // excluded, since keyset pagination cannot retroactively insert rows before
 // a position already paged past.
 func TestSearchTransactionsPaginationSurvivesLedgerChanges(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, categoryID := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
 	base := futureTime()
 
 	// T1..T4 at base+10, +20, +30, +40.
-	ids := createExpensesAtOffsets(t, session, sourceID, categoryID, base, []int64{10, 20, 30, 40})
+	ids := createExpensesAtOffsets(t, session, ledgerID, sourceID, categoryID, base, []int64{10, 20, 30, 40})
 
 	var page1 tools.SearchTransactionsOutput
-	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{Limit: 2}, &page1)
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Limit: 2}, &page1)
 	if len(page1.Transactions) != 2 {
 		t.Fatalf("page1: expected 2 transactions, got %d", len(page1.Transactions))
 	}
@@ -836,17 +886,20 @@ func TestSearchTransactionsPaginationSurvivesLedgerChanges(t *testing.T) {
 	//   already paged past.
 	var before tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 999, Currency: "CNY", Time: base + 5,
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 999, Currency: "CNY", Time: base + 5,
 	}, &before)
 	// - a new transaction inserted after everything so far -- must appear.
 	var after tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 998, Currency: "CNY", Time: base + 50,
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 998, Currency: "CNY", Time: base + 50,
 	}, &after)
 	// - T1 (already returned in page1) is updated -- must not reappear or
 	//   otherwise disturb pagination. Time is left unchanged so its keyset
 	//   position is stable.
 	callTool(t, session, "update_transaction", tools.UpdateTransactionInput{
+		LedgerID:   ledgerID,
 		ID:         ids[0],
 		Type:       "expense",
 		SourceID:   sourceID,
@@ -864,7 +917,7 @@ func TestSearchTransactionsPaginationSurvivesLedgerChanges(t *testing.T) {
 			t.Fatal("pagination did not terminate")
 		}
 		var page tools.SearchTransactionsOutput
-		callTool(t, session, "search_transactions", tools.SearchTransactionsInput{Limit: 2, Cursor: cursor}, &page)
+		callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Limit: 2, Cursor: cursor}, &page)
 		rest = append(rest, page.Transactions...)
 		if page.NextCursor == "" {
 			break
@@ -897,4 +950,186 @@ func idsOf(txns []tools.TransactionInfo) []string {
 		ids[i] = txn.ID
 	}
 	return ids
+}
+
+func TestCreateTransactionRejectsNonexistentLedger(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+
+	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID:   "999999",
+		Type:       "expense",
+		SourceID:   sourceID,
+		CategoryID: categoryID,
+		Amount:     100,
+		Currency:   "CNY",
+		Time:       futureTime(),
+	})
+}
+
+func TestCreateTransactionRejectsSourceFromAnotherLedger(t *testing.T) {
+	session, ledgerA := newTestSession(t)
+	_, categoryA := setupSourceAndCategory(t, session, ledgerA)
+
+	var ledgerBOut tools.ManageLedgerOutput
+	callTool(t, session, "manage_ledger", tools.ManageLedgerInput{Operation: "create", Name: "Other Ledger"}, &ledgerBOut)
+	ledgerB := ledgerBOut.Ledger.ID
+	sourceB := createTestSource(t, session, ledgerB)
+
+	// sourceB belongs to ledgerB, categoryA belongs to ledgerA -- referencing
+	// sourceB from a transaction created under ledgerA must be rejected.
+	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID:   ledgerA,
+		Type:       "expense",
+		SourceID:   sourceB,
+		CategoryID: categoryA,
+		Amount:     100,
+		Currency:   "CNY",
+		Time:       futureTime(),
+	})
+}
+
+func TestCreateTransactionRejectsCategoryFromAnotherLedger(t *testing.T) {
+	session, ledgerA := newTestSession(t)
+	sourceA, _ := setupSourceAndCategory(t, session, ledgerA)
+
+	var ledgerBOut tools.ManageLedgerOutput
+	callTool(t, session, "manage_ledger", tools.ManageLedgerInput{Operation: "create", Name: "Other Ledger"}, &ledgerBOut)
+	ledgerB := ledgerBOut.Ledger.ID
+	categoryB := createTestCategory(t, session, ledgerB, "Food", "")
+
+	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID:   ledgerA,
+		Type:       "expense",
+		SourceID:   sourceA,
+		CategoryID: categoryB,
+		Amount:     100,
+		Currency:   "CNY",
+		Time:       futureTime(),
+	})
+}
+
+func TestGetTransactionCrossLedgerNotFound(t *testing.T) {
+	session, ledgerA := newTestSession(t)
+	sourceA, categoryA := setupSourceAndCategory(t, session, ledgerA)
+
+	var created tools.CreateTransactionOutput
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID:   ledgerA,
+		Type:       "expense",
+		SourceID:   sourceA,
+		CategoryID: categoryA,
+		Amount:     100,
+		Currency:   "CNY",
+		Time:       futureTime(),
+	}, &created)
+
+	var ledgerBOut tools.ManageLedgerOutput
+	callTool(t, session, "manage_ledger", tools.ManageLedgerInput{Operation: "create", Name: "Other Ledger"}, &ledgerBOut)
+	ledgerB := ledgerBOut.Ledger.ID
+
+	// The transaction exists, but under ledgerA, not ledgerB -- asking for it
+	// under ledgerB must behave exactly like asking for a nonexistent id.
+	callToolExpectError(t, session, "get_transaction", tools.GetTransactionInput{
+		LedgerID: ledgerB,
+		ID:       created.Transaction.ID,
+	})
+}
+
+func TestUpdateTransactionRejectsSourceFromAnotherLedger(t *testing.T) {
+	session, ledgerA := newTestSession(t)
+	sourceA, categoryA := setupSourceAndCategory(t, session, ledgerA)
+
+	var created tools.CreateTransactionOutput
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID:   ledgerA,
+		Type:       "expense",
+		SourceID:   sourceA,
+		CategoryID: categoryA,
+		Amount:     100,
+		Currency:   "CNY",
+		Time:       futureTime(),
+	}, &created)
+
+	var ledgerBOut tools.ManageLedgerOutput
+	callTool(t, session, "manage_ledger", tools.ManageLedgerInput{Operation: "create", Name: "Other Ledger"}, &ledgerBOut)
+	sourceB := createTestSource(t, session, ledgerBOut.Ledger.ID)
+
+	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
+		ID:         created.Transaction.ID,
+		LedgerID:   ledgerA,
+		Type:       "expense",
+		SourceID:   sourceB,
+		CategoryID: categoryA,
+		Amount:     100,
+		Currency:   "CNY",
+		Time:       futureTime(),
+	})
+}
+
+func TestSearchTransactionsIsolatedByLedger(t *testing.T) {
+	session, ledgerA := newTestSession(t)
+	sourceA, categoryA := setupSourceAndCategory(t, session, ledgerA)
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID:   ledgerA,
+		Type:       "expense",
+		SourceID:   sourceA,
+		CategoryID: categoryA,
+		Amount:     100,
+		Currency:   "CNY",
+		Time:       futureTime(),
+	}, &tools.CreateTransactionOutput{})
+
+	var ledgerBOut tools.ManageLedgerOutput
+	callTool(t, session, "manage_ledger", tools.ManageLedgerInput{Operation: "create", Name: "Other Ledger"}, &ledgerBOut)
+	ledgerB := ledgerBOut.Ledger.ID
+	sourceB, categoryB := setupSourceAndCategory(t, session, ledgerB)
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID:   ledgerB,
+		Type:       "expense",
+		SourceID:   sourceB,
+		CategoryID: categoryB,
+		Amount:     200,
+		Currency:   "CNY",
+		Time:       futureTime(),
+	}, &tools.CreateTransactionOutput{})
+
+	var resultsB tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerB}, &resultsB)
+	if len(resultsB.Transactions) != 1 {
+		t.Fatalf("expected 1 transaction in ledgerB, got %d", len(resultsB.Transactions))
+	}
+	if resultsB.Transactions[0].Amount != 200 {
+		t.Errorf("ledgerB transaction amount = %d, want 200 (ledgerA's transaction leaked in)", resultsB.Transactions[0].Amount)
+	}
+}
+
+func TestSearchTransactionsCursorRejectedAcrossLedgers(t *testing.T) {
+	session, ledgerA := newTestSession(t)
+	sourceA, categoryA := setupSourceAndCategory(t, session, ledgerA)
+	for range 2 {
+		callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+			LedgerID:   ledgerA,
+			Type:       "expense",
+			SourceID:   sourceA,
+			CategoryID: categoryA,
+			Amount:     100,
+			Currency:   "CNY",
+			Time:       futureTime(),
+		}, &tools.CreateTransactionOutput{})
+	}
+
+	var page tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerA, Limit: 1}, &page)
+	if page.NextCursor == "" {
+		t.Fatal("expected a next_cursor with 2 transactions and limit=1")
+	}
+
+	var ledgerBOut tools.ManageLedgerOutput
+	callTool(t, session, "manage_ledger", tools.ManageLedgerInput{Operation: "create", Name: "Other Ledger"}, &ledgerBOut)
+	ledgerB := ledgerBOut.Ledger.ID
+
+	// A cursor issued under ledgerA must not be replayable under ledgerB --
+	// the filter fingerprint includes ledger_id.
+	callToolExpectError(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerB, Cursor: page.NextCursor})
 }

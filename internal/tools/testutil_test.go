@@ -26,8 +26,10 @@ const testConfirmSecret = "test-confirmation-secret"
 
 // newTestSession spins up a fresh SQLite-backed server (in a temp dir) with
 // every tool registered, and returns a connected MCP client session talking
-// to it over real streamable HTTP. Each call gets its own empty ledger.
-func newTestSession(t *testing.T) *mcp.ClientSession {
+// to it over real streamable HTTP, along with the id of a freshly created
+// default ledger that the session's sources/categories/transactions can be
+// scoped to. Each call gets its own empty ledger.
+func newTestSession(t *testing.T) (*mcp.ClientSession, string) {
 	t.Helper()
 
 	dbPath := filepath.Join(t.TempDir(), "tally-test.db")
@@ -58,7 +60,10 @@ func newTestSession(t *testing.T) *mcp.ClientSession {
 	}
 	t.Cleanup(func() { session.Close() })
 
-	return session
+	var ledgerOut tools.ManageLedgerOutput
+	callTool(t, session, "manage_ledger", tools.ManageLedgerInput{Operation: "create", Name: "Test Ledger"}, &ledgerOut)
+
+	return session, ledgerOut.Ledger.ID
 }
 
 // callTool invokes a tool and unmarshals its structured output into out. It

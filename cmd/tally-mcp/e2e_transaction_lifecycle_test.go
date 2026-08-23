@@ -15,22 +15,22 @@ import (
 // transaction and confirms manage_source/manage_category's own preview ->
 // apply delete now completes successfully.
 func TestE2ETransactionLifecycleUnblocksSourceAndCategoryDeletion(t *testing.T) {
-	session := newE2ESession(t)
+	session, ledgerID := newE2ESession(t)
 
 	var source tools.ManageSourceOutput
-	call(t, session, "manage_source", tools.ManageSourceInput{
+	call(t, session, "manage_source", tools.ManageSourceInput{LedgerID: ledgerID,
 		Operation: "create",
 		Name:      "Checking",
 	}, &source)
 
 	var category tools.ManageCategoryOutput
-	call(t, session, "manage_category", tools.ManageCategoryInput{
+	call(t, session, "manage_category", tools.ManageCategoryInput{LedgerID: ledgerID,
 		Operation: "create",
 		Name:      "Groceries",
 	}, &category)
 
 	var expense tools.CreateTransactionOutput
-	call(t, session, "create_transaction", tools.CreateTransactionInput{
+	call(t, session, "create_transaction", tools.CreateTransactionInput{LedgerID: ledgerID,
 		Type:       "expense",
 		SourceID:   source.Source.ID,
 		CategoryID: category.Category.ID,
@@ -41,11 +41,11 @@ func TestE2ETransactionLifecycleUnblocksSourceAndCategoryDeletion(t *testing.T) 
 
 	// Both are referenced by the expense right now, so both deletes must be
 	// rejected -- this is the deadlock this change fixes.
-	callExpectError(t, session, "manage_source", tools.ManageSourceInput{
+	callExpectError(t, session, "manage_source", tools.ManageSourceInput{LedgerID: ledgerID,
 		Operation: "delete",
 		ID:        source.Source.ID,
 	})
-	callExpectError(t, session, "manage_category", tools.ManageCategoryInput{
+	callExpectError(t, session, "manage_category", tools.ManageCategoryInput{LedgerID: ledgerID,
 		Operation: "delete",
 		ID:        category.Category.ID,
 	})
@@ -53,12 +53,12 @@ func TestE2ETransactionLifecycleUnblocksSourceAndCategoryDeletion(t *testing.T) 
 	// Clear the only reference (the expense) via delete_transaction
 	// preview -> apply, then both become deletable.
 	var expensePreview tools.DeleteTransactionOutput
-	call(t, session, "delete_transaction", tools.DeleteTransactionInput{ID: expense.Transaction.ID}, &expensePreview)
+	call(t, session, "delete_transaction", tools.DeleteTransactionInput{LedgerID: ledgerID, ID: expense.Transaction.ID}, &expensePreview)
 	if expensePreview.Status != "pending_confirmation" {
 		t.Fatalf("expense preview Status = %q, want %q", expensePreview.Status, "pending_confirmation")
 	}
 	var expenseApplied tools.DeleteTransactionOutput
-	call(t, session, "delete_transaction", tools.DeleteTransactionInput{
+	call(t, session, "delete_transaction", tools.DeleteTransactionInput{LedgerID: ledgerID,
 		ID:                expense.Transaction.ID,
 		ConfirmationToken: expensePreview.ConfirmationToken,
 	}, &expenseApplied)
@@ -67,7 +67,7 @@ func TestE2ETransactionLifecycleUnblocksSourceAndCategoryDeletion(t *testing.T) 
 	}
 
 	var categoryPreview tools.ManageCategoryOutput
-	call(t, session, "manage_category", tools.ManageCategoryInput{
+	call(t, session, "manage_category", tools.ManageCategoryInput{LedgerID: ledgerID,
 		Operation: "delete",
 		ID:        category.Category.ID,
 	}, &categoryPreview)
@@ -75,7 +75,7 @@ func TestE2ETransactionLifecycleUnblocksSourceAndCategoryDeletion(t *testing.T) 
 		t.Fatalf("category delete preview Status = %q, want %q", categoryPreview.Status, "pending_confirmation")
 	}
 	var categoryApplied tools.ManageCategoryOutput
-	call(t, session, "manage_category", tools.ManageCategoryInput{
+	call(t, session, "manage_category", tools.ManageCategoryInput{LedgerID: ledgerID,
 		Operation:         "delete",
 		ID:                category.Category.ID,
 		ConfirmationToken: categoryPreview.ConfirmationToken,
@@ -85,7 +85,7 @@ func TestE2ETransactionLifecycleUnblocksSourceAndCategoryDeletion(t *testing.T) 
 	}
 
 	var categoriesAfter tools.ListCategoriesOutput
-	call(t, session, "list_categories", tools.ListCategoriesInput{}, &categoriesAfter)
+	call(t, session, "list_categories", tools.ListCategoriesInput{LedgerID: ledgerID}, &categoriesAfter)
 	if len(categoriesAfter.Categories) != 0 {
 		t.Fatalf("expected the category to be gone, got %d: %+v", len(categoriesAfter.Categories), categoriesAfter.Categories)
 	}
@@ -93,7 +93,7 @@ func TestE2ETransactionLifecycleUnblocksSourceAndCategoryDeletion(t *testing.T) 
 	// Every referencing transaction is now gone -- the source's own
 	// preview -> apply delete must complete successfully.
 	var sourcePreview tools.ManageSourceOutput
-	call(t, session, "manage_source", tools.ManageSourceInput{
+	call(t, session, "manage_source", tools.ManageSourceInput{LedgerID: ledgerID,
 		Operation: "delete",
 		ID:        source.Source.ID,
 	}, &sourcePreview)
@@ -101,7 +101,7 @@ func TestE2ETransactionLifecycleUnblocksSourceAndCategoryDeletion(t *testing.T) 
 		t.Fatalf("source delete preview Status = %q, want %q", sourcePreview.Status, "pending_confirmation")
 	}
 	var sourceApplied tools.ManageSourceOutput
-	call(t, session, "manage_source", tools.ManageSourceInput{
+	call(t, session, "manage_source", tools.ManageSourceInput{LedgerID: ledgerID,
 		Operation:         "delete",
 		ID:                source.Source.ID,
 		ConfirmationToken: sourcePreview.ConfirmationToken,
@@ -111,7 +111,7 @@ func TestE2ETransactionLifecycleUnblocksSourceAndCategoryDeletion(t *testing.T) 
 	}
 
 	var sourcesAfter tools.ListSourcesOutput
-	call(t, session, "list_sources", tools.ListSourcesInput{}, &sourcesAfter)
+	call(t, session, "list_sources", tools.ListSourcesInput{LedgerID: ledgerID}, &sourcesAfter)
 	if len(sourcesAfter.Sources) != 0 {
 		t.Fatalf("expected the source to be gone, got %d: %+v", len(sourcesAfter.Sources), sourcesAfter.Sources)
 	}

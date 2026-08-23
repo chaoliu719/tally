@@ -2,6 +2,9 @@ package tools
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -15,7 +18,7 @@ func init() {
 func registerAnalyticsTools(s *mcp.Server, deps Deps) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "get_financial_summary",
-		Description: "Aggregate income, expense, and net totals over an optional time range, grouped by " +
+		Description: "Aggregate income, expense, and net totals over an optional time range within one ledger, grouped by " +
 			"currency, and broken down by category and by source. With no time range, summarizes the " +
 			"ledger's entire history.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in GetFinancialSummaryInput) (*mcp.CallToolResult, GetFinancialSummaryOutput, error) {
@@ -24,8 +27,9 @@ func registerAnalyticsTools(s *mcp.Server, deps Deps) {
 }
 
 type GetFinancialSummaryInput struct {
-	StartTime int64 `json:"start_time,omitempty" jsonschema:"only include transactions at or after this unix time (seconds); omit for no lower bound"`
-	EndTime   int64 `json:"end_time,omitempty" jsonschema:"only include transactions at or before this unix time (seconds); omit for no upper bound"`
+	LedgerID  string `json:"ledger_id" jsonschema:"the id of the ledger to summarize, as a decimal string"`
+	StartTime int64  `json:"start_time,omitempty" jsonschema:"only include transactions at or after this unix time (seconds); omit for no lower bound"`
+	EndTime   int64  `json:"end_time,omitempty" jsonschema:"only include transactions at or before this unix time (seconds); omit for no upper bound"`
 }
 
 // CurrencyTotals is the income/expense/net summary for one currency, over
@@ -64,9 +68,23 @@ type GetFinancialSummaryOutput struct {
 }
 
 func getFinancialSummary(ctx context.Context, deps Deps, in GetFinancialSummaryInput) (*mcp.CallToolResult, GetFinancialSummaryOutput, error) {
-	var currencyParams store.SummarizeTransactionsByCurrencyParams
-	var categoryParams store.SummarizeTransactionsByCategoryParams
-	var sourceParams store.SummarizeTransactionsBySourceParams
+	if in.LedgerID == "" {
+		return nil, GetFinancialSummaryOutput{}, fmt.Errorf("missing required field: ledger_id")
+	}
+	ledgerID, err := parseID(in.LedgerID)
+	if err != nil {
+		return nil, GetFinancialSummaryOutput{}, err
+	}
+	if _, err := deps.Q.GetLedger(ctx, ledgerID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, GetFinancialSummaryOutput{}, fmt.Errorf("ledger %q not found", in.LedgerID)
+		}
+		return nil, GetFinancialSummaryOutput{}, err
+	}
+
+	currencyParams := store.SummarizeTransactionsByCurrencyParams{LedgerID: ledgerID}
+	categoryParams := store.SummarizeTransactionsByCategoryParams{LedgerID: ledgerID}
+	sourceParams := store.SummarizeTransactionsBySourceParams{LedgerID: ledgerID}
 
 	if in.StartTime > 0 {
 		currencyParams.StartTime = in.StartTime

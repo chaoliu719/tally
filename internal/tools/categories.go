@@ -23,9 +23,9 @@ func init() {
 func registerCategoryTools(s *mcp.Server, deps Deps) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_categories",
-		Description: "List every transaction category in the ledger, including its name and parent category id. A category with parent_id 0 is a top-level category; otherwise parent_id is the id of its parent category. Categories can nest to any depth and any existing category can be referenced by create_transaction.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ ListCategoriesInput) (*mcp.CallToolResult, ListCategoriesOutput, error) {
-		return listCategories(ctx, deps)
+		Description: "List every transaction category in a ledger, including its name and parent category id. A category with parent_id 0 is a top-level category; otherwise parent_id is the id of its parent category (always in the same ledger). Categories can nest to any depth and any existing category in the ledger can be referenced by create_transaction.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ListCategoriesInput) (*mcp.CallToolResult, ListCategoriesOutput, error) {
+		return listCategories(ctx, deps, in)
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -54,14 +54,30 @@ type CategoryInfo struct {
 	ParentID string `json:"parent_id" jsonschema:"\"0\" for a top-level category; otherwise the id of this category's parent, as a decimal string"`
 }
 
-type ListCategoriesInput struct{}
+type ListCategoriesInput struct {
+	LedgerID string `json:"ledger_id" jsonschema:"the id of the ledger to list categories from, as a decimal string"`
+}
 
 type ListCategoriesOutput struct {
 	Categories []CategoryInfo `json:"categories" jsonschema:"every transaction category in the ledger"`
 }
 
-func listCategories(ctx context.Context, deps Deps) (*mcp.CallToolResult, ListCategoriesOutput, error) {
-	rows, err := deps.Q.ListCategories(ctx)
+func listCategories(ctx context.Context, deps Deps, in ListCategoriesInput) (*mcp.CallToolResult, ListCategoriesOutput, error) {
+	if in.LedgerID == "" {
+		return nil, ListCategoriesOutput{}, fmt.Errorf("missing required field: ledger_id")
+	}
+	ledgerID, err := parseID(in.LedgerID)
+	if err != nil {
+		return nil, ListCategoriesOutput{}, err
+	}
+	if _, err := deps.Q.GetLedger(ctx, ledgerID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ListCategoriesOutput{}, fmt.Errorf("ledger %q not found", in.LedgerID)
+		}
+		return nil, ListCategoriesOutput{}, err
+	}
+
+	rows, err := deps.Q.ListCategories(ctx, ledgerID)
 	if err != nil {
 		return nil, ListCategoriesOutput{}, err
 	}
@@ -76,10 +92,11 @@ func listCategories(ctx context.Context, deps Deps) (*mcp.CallToolResult, ListCa
 
 type ManageCategoryInput struct {
 	Operation string `json:"operation" jsonschema:"the operation to perform: create, update, or delete"`
+	LedgerID  string `json:"ledger_id" jsonschema:"the id of the ledger this category belongs to, as a decimal string"`
 	ID        string `json:"id,omitempty" jsonschema:"the category's id, as a decimal string; required for operation=update and operation=delete"`
 
 	Name     string `json:"name,omitempty" jsonschema:"the category's name; required for create and update"`
-	ParentID string `json:"parent_id,omitempty" jsonschema:"omit or pass \"0\" for a top-level category; otherwise the id (decimal string) of an existing category to nest this one under, to any depth. Used by create and update; for update, cannot equal the category's own id or any of its descendants"`
+	ParentID string `json:"parent_id,omitempty" jsonschema:"omit or pass \"0\" for a top-level category; otherwise the id (decimal string) of an existing category in the same ledger to nest this one under, to any depth. Used by create and update; for update, cannot equal the category's own id or any of its descendants"`
 
 	ConfirmationToken string `json:"confirmation_token,omitempty" jsonschema:"for operation=delete only: omit to preview the deletion and receive a token, or supply the token from a prior preview to actually delete"`
 }
@@ -117,6 +134,19 @@ func createCategory(ctx context.Context, deps Deps, in ManageCategoryInput) (*mc
 	if in.Name == "" {
 		return nil, ManageCategoryOutput{}, fmt.Errorf("missing required field: name")
 	}
+	if in.LedgerID == "" {
+		return nil, ManageCategoryOutput{}, fmt.Errorf("missing required field: ledger_id")
+	}
+	ledgerID, err := parseID(in.LedgerID)
+	if err != nil {
+		return nil, ManageCategoryOutput{}, err
+	}
+	if _, err := deps.Q.GetLedger(ctx, ledgerID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ManageCategoryOutput{}, fmt.Errorf("ledger %q not found", in.LedgerID)
+		}
+		return nil, ManageCategoryOutput{}, err
+	}
 
 	parentID, err := parseParentID(in.ParentID)
 	if err != nil {
@@ -124,7 +154,7 @@ func createCategory(ctx context.Context, deps Deps, in ManageCategoryInput) (*mc
 	}
 
 	if parentID != topLevelParentID {
-		if _, err := deps.Q.GetCategory(ctx, parentID); err != nil {
+		if _, err := deps.Q.GetCategory(ctx, store.GetCategoryParams{ID: parentID, LedgerID: ledgerID}); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil, ManageCategoryOutput{}, fmt.Errorf("parent category %q not found", in.ParentID)
 			}
@@ -134,6 +164,7 @@ func createCategory(ctx context.Context, deps Deps, in ManageCategoryInput) (*mc
 
 	now := time.Now().Unix()
 	category, err := deps.Q.CreateCategory(ctx, store.CreateCategoryParams{
+		LedgerID:  ledgerID,
 		Name:      in.Name,
 		ParentID:  parentID,
 		CreatedAt: now,
@@ -158,13 +189,20 @@ func updateCategory(ctx context.Context, deps Deps, in ManageCategoryInput) (*mc
 	if in.Name == "" {
 		return nil, ManageCategoryOutput{}, fmt.Errorf("missing required field: name")
 	}
+	if in.LedgerID == "" {
+		return nil, ManageCategoryOutput{}, fmt.Errorf("missing required field: ledger_id")
+	}
+	ledgerID, err := parseID(in.LedgerID)
+	if err != nil {
+		return nil, ManageCategoryOutput{}, err
+	}
 
 	newParentID, err := parseParentID(in.ParentID)
 	if err != nil {
 		return nil, ManageCategoryOutput{}, err
 	}
 
-	if _, err := deps.Q.GetCategory(ctx, id); err != nil {
+	if _, err := deps.Q.GetCategory(ctx, store.GetCategoryParams{ID: id, LedgerID: ledgerID}); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ManageCategoryOutput{}, fmt.Errorf("category %q not found", in.ID)
 		}
@@ -176,7 +214,7 @@ func updateCategory(ctx context.Context, deps Deps, in ManageCategoryInput) (*mc
 			return nil, ManageCategoryOutput{}, fmt.Errorf("category %q cannot be its own parent", in.ID)
 		}
 
-		if _, err := deps.Q.GetCategory(ctx, newParentID); err != nil {
+		if _, err := deps.Q.GetCategory(ctx, store.GetCategoryParams{ID: newParentID, LedgerID: ledgerID}); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil, ManageCategoryOutput{}, fmt.Errorf("parent category %q not found", in.ParentID)
 			}
@@ -242,8 +280,15 @@ func deleteCategory(ctx context.Context, deps Deps, in ManageCategoryInput) (*mc
 	if err != nil {
 		return nil, ManageCategoryOutput{}, err
 	}
+	if in.LedgerID == "" {
+		return nil, ManageCategoryOutput{}, fmt.Errorf("missing required field: ledger_id")
+	}
+	ledgerID, err := parseID(in.LedgerID)
+	if err != nil {
+		return nil, ManageCategoryOutput{}, err
+	}
 
-	category, err := deps.Q.GetCategory(ctx, id)
+	category, err := deps.Q.GetCategory(ctx, store.GetCategoryParams{ID: id, LedgerID: ledgerID})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ManageCategoryOutput{}, fmt.Errorf("category %q not found", in.ID)

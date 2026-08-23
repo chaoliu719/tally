@@ -9,34 +9,43 @@ import (
 )
 
 type Querier interface {
+	CountCategoriesByLedger(ctx context.Context, ledgerID int64) (int64, error)
 	CountChildCategories(ctx context.Context, parentID int64) (int64, error)
+	CountSourcesByLedger(ctx context.Context, ledgerID int64) (int64, error)
 	CountTransactionsByCategory(ctx context.Context, categoryID int64) (int64, error)
+	CountTransactionsByLedger(ctx context.Context, ledgerID int64) (int64, error)
 	CountTransactionsBySource(ctx context.Context, sourceID int64) (int64, error)
 	CreateCategory(ctx context.Context, arg CreateCategoryParams) (Category, error)
+	CreateLedger(ctx context.Context, arg CreateLedgerParams) (Ledger, error)
 	CreateSource(ctx context.Context, arg CreateSourceParams) (Source, error)
 	CreateTransaction(ctx context.Context, arg CreateTransactionParams) (Transaction, error)
 	DeleteCategory(ctx context.Context, id int64) error
+	DeleteLedger(ctx context.Context, id int64) error
 	DeleteSource(ctx context.Context, id int64) error
 	DeleteTransaction(ctx context.Context, id int64) error
-	GetCategory(ctx context.Context, id int64) (Category, error)
-	GetSource(ctx context.Context, id int64) (Source, error)
-	GetTransaction(ctx context.Context, id int64) (Transaction, error)
-	ListCategories(ctx context.Context) ([]Category, error)
+	GetCategory(ctx context.Context, arg GetCategoryParams) (Category, error)
+	GetLedger(ctx context.Context, id int64) (Ledger, error)
+	GetSource(ctx context.Context, arg GetSourceParams) (Source, error)
+	GetTransaction(ctx context.Context, arg GetTransactionParams) (Transaction, error)
+	ListCategories(ctx context.Context, ledgerID int64) ([]Category, error)
 	ListCategoryDescendantIDs(ctx context.Context, targetID int64) ([]int64, error)
-	ListSources(ctx context.Context) ([]Source, error)
+	ListLedgers(ctx context.Context) ([]Ledger, error)
+	ListSources(ctx context.Context, ledgerID int64) ([]Source, error)
 	SearchTransactions(ctx context.Context, arg SearchTransactionsParams) ([]Transaction, error)
-	// Aggregates income/expense totals grouped by category and currency, over
-	// an optional [start_time, end_time] window.
+	// Aggregates income/expense totals grouped by category and currency, within
+	// one ledger, over an optional [start_time, end_time] window.
 	SummarizeTransactionsByCategory(ctx context.Context, arg SummarizeTransactionsByCategoryParams) ([]SummarizeTransactionsByCategoryRow, error)
 	// Aggregates income/expense totals grouped by the transaction's own
-	// currency, over an optional [start_time, end_time] window. Used by
-	// get_financial_summary (internal/tools/analytics.go). expense amounts are
-	// stored negative, so SUM(-amount) turns them back into a positive total.
+	// currency, within one ledger, over an optional [start_time, end_time]
+	// window. Used by get_financial_summary (internal/tools/analytics.go).
+	// expense amounts are stored negative, so SUM(-amount) turns them back into
+	// a positive total.
 	SummarizeTransactionsByCurrency(ctx context.Context, arg SummarizeTransactionsByCurrencyParams) ([]SummarizeTransactionsByCurrencyRow, error)
-	// Aggregates income/expense totals grouped by source and currency, over
-	// an optional [start_time, end_time] window.
+	// Aggregates income/expense totals grouped by source and currency, within
+	// one ledger, over an optional [start_time, end_time] window.
 	SummarizeTransactionsBySource(ctx context.Context, arg SummarizeTransactionsBySourceParams) ([]SummarizeTransactionsBySourceRow, error)
 	UpdateCategory(ctx context.Context, arg UpdateCategoryParams) (Category, error)
+	UpdateLedger(ctx context.Context, arg UpdateLedgerParams) (Ledger, error)
 	UpdateSource(ctx context.Context, arg UpdateSourceParams) (Source, error)
 	UpdateTransaction(ctx context.Context, arg UpdateTransactionParams) (Transaction, error)
 }

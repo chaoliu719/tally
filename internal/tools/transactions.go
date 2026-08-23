@@ -81,9 +81,10 @@ type TransactionInfo struct {
 }
 
 type CreateTransactionInput struct {
+	LedgerID   string `json:"ledger_id" jsonschema:"the id of the ledger this transaction belongs to, as a decimal string"`
 	Type       string `json:"type" jsonschema:"the transaction's type: income or expense"`
-	SourceID   string `json:"source_id" jsonschema:"the id of the source this transaction is from/to, as a decimal string"`
-	CategoryID string `json:"category_id" jsonschema:"the id of the transaction's category, as a decimal string; any existing category"`
+	SourceID   string `json:"source_id" jsonschema:"the id of the source this transaction is from/to, as a decimal string; must belong to the same ledger"`
+	CategoryID string `json:"category_id" jsonschema:"the id of the transaction's category, as a decimal string; any existing category in the same ledger"`
 	Amount     int64  `json:"amount" jsonschema:"the transaction amount, in the currency's smallest unit; how many decimal places that represents varies by currency (e.g. 2 for USD/CNY, 0 for JPY, 3 for BHD); must be positive"`
 	Currency   string `json:"currency" jsonschema:"the transaction's currency, as an ISO 4217 code, e.g. CNY, USD"`
 	Time       int64  `json:"time" jsonschema:"when the transaction occurred, as unix seconds"`
@@ -95,24 +96,40 @@ type CreateTransactionOutput struct {
 }
 
 // validatedTransactionFields is the normalized, validated form of the fields
-// shared by create_transaction and update_transaction: the source id, the
-// resolved category_id, and the signed amount to store (income amounts are
-// stored positive, expense negative, so SUM(amount) is directly the net
-// total; the wire format keeps *Amount positive for both).
+// shared by create_transaction and update_transaction: the ledger id, the
+// source id, the resolved category_id, and the signed amount to store
+// (income amounts are stored positive, expense negative, so SUM(amount) is
+// directly the net total; the wire format keeps *Amount positive for both).
 type validatedTransactionFields struct {
+	LedgerID   int64
 	SourceID   int64
 	CategoryID int64
 	Currency   string
 	Amount     int64
 }
 
-// validateTransactionInput checks and normalizes the type/source_id/
-// category_id/amount/currency/time rules shared by create_transaction and
-// update_transaction: income/expense require an existing source_id and
-// category_id, a positive amount, and a supported currency code.
-func validateTransactionInput(ctx context.Context, deps Deps, txType, sourceIDStr, categoryIDStr string, amount int64, currencyCode string, txTime int64) (validatedTransactionFields, error) {
+// validateTransactionInput checks and normalizes the ledger_id/type/
+// source_id/category_id/amount/currency/time rules shared by
+// create_transaction and update_transaction: income/expense require an
+// existing ledger, a source_id and category_id both belonging to that
+// ledger, a positive amount, and a supported currency code.
+func validateTransactionInput(ctx context.Context, deps Deps, ledgerIDStr, txType, sourceIDStr, categoryIDStr string, amount int64, currencyCode string, txTime int64) (validatedTransactionFields, error) {
 	if !createableTransactionTypes[txType] {
 		return validatedTransactionFields{}, fmt.Errorf("missing or unsupported transaction type: %q", txType)
+	}
+
+	if ledgerIDStr == "" {
+		return validatedTransactionFields{}, fmt.Errorf("missing required field: ledger_id")
+	}
+	ledgerID, err := parseID(ledgerIDStr)
+	if err != nil {
+		return validatedTransactionFields{}, err
+	}
+	if _, err := deps.Q.GetLedger(ctx, ledgerID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return validatedTransactionFields{}, fmt.Errorf("ledger %q not found", ledgerIDStr)
+		}
+		return validatedTransactionFields{}, err
 	}
 
 	if sourceIDStr == "" {
@@ -127,7 +144,7 @@ func validateTransactionInput(ctx context.Context, deps Deps, txType, sourceIDSt
 		return validatedTransactionFields{}, fmt.Errorf("missing required field: time")
 	}
 
-	if _, err := deps.Q.GetSource(ctx, sourceID); err != nil {
+	if _, err := deps.Q.GetSource(ctx, store.GetSourceParams{ID: sourceID, LedgerID: ledgerID}); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return validatedTransactionFields{}, fmt.Errorf("source %q not found", sourceIDStr)
 		}
@@ -141,7 +158,7 @@ func validateTransactionInput(ctx context.Context, deps Deps, txType, sourceIDSt
 	if err != nil {
 		return validatedTransactionFields{}, err
 	}
-	if _, err := deps.Q.GetCategory(ctx, categoryID); err != nil {
+	if _, err := deps.Q.GetCategory(ctx, store.GetCategoryParams{ID: categoryID, LedgerID: ledgerID}); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return validatedTransactionFields{}, fmt.Errorf("category %q not found", categoryIDStr)
 		}
@@ -164,17 +181,18 @@ func validateTransactionInput(ctx context.Context, deps Deps, txType, sourceIDSt
 		signedAmount = -amount
 	}
 
-	return validatedTransactionFields{SourceID: sourceID, CategoryID: categoryID, Currency: currencyCode, Amount: signedAmount}, nil
+	return validatedTransactionFields{LedgerID: ledgerID, SourceID: sourceID, CategoryID: categoryID, Currency: currencyCode, Amount: signedAmount}, nil
 }
 
 func createTransaction(ctx context.Context, deps Deps, in CreateTransactionInput) (*mcp.CallToolResult, CreateTransactionOutput, error) {
-	fields, err := validateTransactionInput(ctx, deps, in.Type, in.SourceID, in.CategoryID, in.Amount, in.Currency, in.Time)
+	fields, err := validateTransactionInput(ctx, deps, in.LedgerID, in.Type, in.SourceID, in.CategoryID, in.Amount, in.Currency, in.Time)
 	if err != nil {
 		return nil, CreateTransactionOutput{}, err
 	}
 
 	now := time.Now().Unix()
 	transaction, err := deps.Q.CreateTransaction(ctx, store.CreateTransactionParams{
+		LedgerID:   fields.LedgerID,
 		Type:       in.Type,
 		SourceID:   fields.SourceID,
 		CategoryID: fields.CategoryID,
@@ -193,7 +211,8 @@ func createTransaction(ctx context.Context, deps Deps, in CreateTransactionInput
 }
 
 type GetTransactionInput struct {
-	ID string `json:"id" jsonschema:"the transaction's unique id, as a decimal string"`
+	ID       string `json:"id" jsonschema:"the transaction's unique id, as a decimal string"`
+	LedgerID string `json:"ledger_id" jsonschema:"the id of the ledger this transaction belongs to, as a decimal string"`
 }
 
 type GetTransactionOutput struct {
@@ -208,8 +227,15 @@ func getTransaction(ctx context.Context, deps Deps, in GetTransactionInput) (*mc
 	if err != nil {
 		return nil, GetTransactionOutput{}, err
 	}
+	if in.LedgerID == "" {
+		return nil, GetTransactionOutput{}, fmt.Errorf("missing required field: ledger_id")
+	}
+	ledgerID, err := parseID(in.LedgerID)
+	if err != nil {
+		return nil, GetTransactionOutput{}, err
+	}
 
-	transaction, err := deps.Q.GetTransaction(ctx, id)
+	transaction, err := deps.Q.GetTransaction(ctx, store.GetTransactionParams{ID: id, LedgerID: ledgerID})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, GetTransactionOutput{}, fmt.Errorf("transaction %q not found", in.ID)
@@ -222,9 +248,10 @@ func getTransaction(ctx context.Context, deps Deps, in GetTransactionInput) (*mc
 
 type UpdateTransactionInput struct {
 	ID         string `json:"id" jsonschema:"the transaction's unique id, as a decimal string"`
+	LedgerID   string `json:"ledger_id" jsonschema:"the id of the ledger this transaction belongs to, as a decimal string"`
 	Type       string `json:"type" jsonschema:"the transaction's type: income or expense"`
-	SourceID   string `json:"source_id" jsonschema:"the id of the source this transaction is from/to, as a decimal string; may differ from the transaction's current source_id to move it to another source"`
-	CategoryID string `json:"category_id" jsonschema:"the id of the transaction's category, as a decimal string; any existing category"`
+	SourceID   string `json:"source_id" jsonschema:"the id of the source this transaction is from/to, as a decimal string; may differ from the transaction's current source_id to move it to another source in the same ledger"`
+	CategoryID string `json:"category_id" jsonschema:"the id of the transaction's category, as a decimal string; any existing category in the same ledger"`
 	Amount     int64  `json:"amount" jsonschema:"the transaction amount, in the currency's smallest unit; how many decimal places that represents varies by currency (e.g. 2 for USD/CNY, 0 for JPY, 3 for BHD); must be positive"`
 	Currency   string `json:"currency" jsonschema:"the transaction's currency, as an ISO 4217 code, e.g. CNY, USD"`
 	Time       int64  `json:"time" jsonschema:"when the transaction occurred, as unix seconds"`
@@ -238,7 +265,9 @@ type UpdateTransactionOutput struct {
 // updateTransaction replaces every mutable field of an existing transaction.
 // This is full-field-replacement semantics (like manage_source/
 // manage_category's operation=update), reusing the exact validation rules
-// create_transaction applies -- see validateTransactionInput.
+// create_transaction applies -- see validateTransactionInput. The
+// transaction's ledger cannot be changed: ledger_id must match the
+// transaction's current ledger, and source_id/category_id must belong to it.
 func updateTransaction(ctx context.Context, deps Deps, in UpdateTransactionInput) (*mcp.CallToolResult, UpdateTransactionOutput, error) {
 	if in.ID == "" {
 		return nil, UpdateTransactionOutput{}, fmt.Errorf("missing required field: id")
@@ -247,15 +276,22 @@ func updateTransaction(ctx context.Context, deps Deps, in UpdateTransactionInput
 	if err != nil {
 		return nil, UpdateTransactionOutput{}, err
 	}
+	if in.LedgerID == "" {
+		return nil, UpdateTransactionOutput{}, fmt.Errorf("missing required field: ledger_id")
+	}
+	ledgerID, err := parseID(in.LedgerID)
+	if err != nil {
+		return nil, UpdateTransactionOutput{}, err
+	}
 
-	if _, err := deps.Q.GetTransaction(ctx, id); err != nil {
+	if _, err := deps.Q.GetTransaction(ctx, store.GetTransactionParams{ID: id, LedgerID: ledgerID}); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, UpdateTransactionOutput{}, fmt.Errorf("transaction %q not found", in.ID)
 		}
 		return nil, UpdateTransactionOutput{}, err
 	}
 
-	fields, err := validateTransactionInput(ctx, deps, in.Type, in.SourceID, in.CategoryID, in.Amount, in.Currency, in.Time)
+	fields, err := validateTransactionInput(ctx, deps, in.LedgerID, in.Type, in.SourceID, in.CategoryID, in.Amount, in.Currency, in.Time)
 	if err != nil {
 		return nil, UpdateTransactionOutput{}, err
 	}
@@ -314,6 +350,7 @@ const confirmActionDeleteTransaction = "delete_transaction"
 
 type DeleteTransactionInput struct {
 	ID                string `json:"id" jsonschema:"the transaction's unique id, as a decimal string"`
+	LedgerID          string `json:"ledger_id" jsonschema:"the id of the ledger this transaction belongs to, as a decimal string"`
 	ConfirmationToken string `json:"confirmation_token,omitempty" jsonschema:"omit to preview the deletion and receive a token, or supply the token from a prior preview to actually delete"`
 }
 
@@ -332,8 +369,15 @@ func deleteTransaction(ctx context.Context, deps Deps, in DeleteTransactionInput
 	if err != nil {
 		return nil, DeleteTransactionOutput{}, err
 	}
+	if in.LedgerID == "" {
+		return nil, DeleteTransactionOutput{}, fmt.Errorf("missing required field: ledger_id")
+	}
+	ledgerID, err := parseID(in.LedgerID)
+	if err != nil {
+		return nil, DeleteTransactionOutput{}, err
+	}
 
-	transaction, err := deps.Q.GetTransaction(ctx, id)
+	transaction, err := deps.Q.GetTransaction(ctx, store.GetTransactionParams{ID: id, LedgerID: ledgerID})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, DeleteTransactionOutput{}, fmt.Errorf("transaction %q not found", in.ID)
@@ -366,7 +410,7 @@ func deleteTransaction(ctx context.Context, deps Deps, in DeleteTransactionInput
 
 	q := deps.Q.WithTx(tx)
 
-	if _, err := q.GetTransaction(ctx, id); err != nil {
+	if _, err := q.GetTransaction(ctx, store.GetTransactionParams{ID: id, LedgerID: ledgerID}); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, DeleteTransactionOutput{}, fmt.Errorf("transaction %q no longer exists; please preview again", in.ID)
 		}
@@ -390,12 +434,13 @@ const (
 )
 
 type SearchTransactionsInput struct {
+	LedgerID   string `json:"ledger_id" jsonschema:"the id of the ledger to search transactions in, as a decimal string"`
 	SourceID   string `json:"source_id,omitempty" jsonschema:"only include transactions from/to this source, as a decimal string"`
 	CategoryID string `json:"category_id,omitempty" jsonschema:"only include transactions in this category, as a decimal string"`
 	StartTime  int64  `json:"start_time,omitempty" jsonschema:"only include transactions at or after this unix time (seconds)"`
 	EndTime    int64  `json:"end_time,omitempty" jsonschema:"only include transactions at or before this unix time (seconds)"`
 	Limit      int64  `json:"limit,omitempty" jsonschema:"maximum number of transactions to return in this page; defaults to 50 when omitted, must be between 1 and 200 (requests over 200 are rejected, not truncated)"`
-	Cursor     string `json:"cursor,omitempty" jsonschema:"opaque pagination cursor from a previous response's next_cursor; omit to fetch the first page. Must be paired with the exact same source_id/category_id/start_time/end_time filters used to obtain it"`
+	Cursor     string `json:"cursor,omitempty" jsonschema:"opaque pagination cursor from a previous response's next_cursor; omit to fetch the first page. Must be paired with the exact same ledger_id/source_id/category_id/start_time/end_time filters used to obtain it"`
 }
 
 type SearchTransactionsOutput struct {
@@ -404,8 +449,22 @@ type SearchTransactionsOutput struct {
 }
 
 func searchTransactions(ctx context.Context, deps Deps, in SearchTransactionsInput) (*mcp.CallToolResult, SearchTransactionsOutput, error) {
-	params := store.SearchTransactionsParams{}
-	filter := searchTransactionsFilterFields{}
+	if in.LedgerID == "" {
+		return nil, SearchTransactionsOutput{}, fmt.Errorf("missing required field: ledger_id")
+	}
+	ledgerID, err := parseID(in.LedgerID)
+	if err != nil {
+		return nil, SearchTransactionsOutput{}, err
+	}
+	if _, err := deps.Q.GetLedger(ctx, ledgerID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, SearchTransactionsOutput{}, fmt.Errorf("ledger %q not found", in.LedgerID)
+		}
+		return nil, SearchTransactionsOutput{}, err
+	}
+
+	params := store.SearchTransactionsParams{LedgerID: ledgerID}
+	filter := searchTransactionsFilterFields{LedgerID: ledgerID}
 
 	if in.SourceID != "" {
 		id, err := parseID(in.SourceID)

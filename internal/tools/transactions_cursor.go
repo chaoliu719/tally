@@ -12,11 +12,12 @@ import (
 // searchTransactionsFilterFields is hashed to produce the filter_fingerprint
 // embedded in a search_transactions cursor (see design.md's "cursor 编码:
 // base64url(JSON)"). It captures exactly the filter parameters that affect
-// which rows are eligible for keyset pagination -- source_id/category_id/
-// start_time/end_time -- so a cursor issued under one set of filters is
-// rejected if replayed against a different set (see the spec's "cursor 无效
-// 或已不匹配当前筛选条件" scenario).
+// which rows are eligible for keyset pagination -- ledger_id/source_id/
+// category_id/start_time/end_time -- so a cursor issued under one set of
+// filters is rejected if replayed against a different set (see the spec's
+// "cursor 无效或已不匹配当前筛选条件" scenario).
 type searchTransactionsFilterFields struct {
+	LedgerID   int64
 	SourceID   sql.NullInt64
 	CategoryID sql.NullInt64
 	StartTime  sql.NullInt64

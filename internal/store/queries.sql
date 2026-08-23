@@ -1,17 +1,58 @@
+-- name: CreateLedger :one
+INSERT INTO ledgers (name, comment, created_at, updated_at)
+VALUES (?, ?, ?, ?)
+RETURNING *;
+
+-- name: ListLedgers :many
+SELECT id, name, comment, created_at, updated_at
+FROM ledgers
+ORDER BY id;
+
+-- name: GetLedger :one
+SELECT id, name, comment, created_at, updated_at
+FROM ledgers
+WHERE id = ?;
+
+-- name: UpdateLedger :one
+UPDATE ledgers
+SET name = ?, comment = ?, updated_at = ?
+WHERE id = ?
+RETURNING *;
+
+-- name: DeleteLedger :exec
+DELETE FROM ledgers
+WHERE id = ?;
+
+-- name: CountSourcesByLedger :one
+SELECT COUNT(*)
+FROM sources
+WHERE ledger_id = ?;
+
+-- name: CountCategoriesByLedger :one
+SELECT COUNT(*)
+FROM categories
+WHERE ledger_id = ?;
+
+-- name: CountTransactionsByLedger :one
+SELECT COUNT(*)
+FROM transactions
+WHERE ledger_id = ?;
+
 -- name: CreateSource :one
-INSERT INTO sources (name, created_at, updated_at)
-VALUES (?, ?, ?)
+INSERT INTO sources (ledger_id, name, created_at, updated_at)
+VALUES (?, ?, ?, ?)
 RETURNING *;
 
 -- name: ListSources :many
-SELECT id, name, created_at, updated_at
+SELECT id, ledger_id, name, created_at, updated_at
 FROM sources
+WHERE ledger_id = ?
 ORDER BY id;
 
 -- name: GetSource :one
-SELECT id, name, created_at, updated_at
+SELECT id, ledger_id, name, created_at, updated_at
 FROM sources
-WHERE id = ?;
+WHERE id = ? AND ledger_id = ?;
 
 -- name: UpdateSource :one
 UPDATE sources
@@ -29,19 +70,20 @@ FROM transactions
 WHERE source_id = ?;
 
 -- name: CreateCategory :one
-INSERT INTO categories (name, parent_id, created_at, updated_at)
-VALUES (?, ?, ?, ?)
+INSERT INTO categories (ledger_id, name, parent_id, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: ListCategories :many
-SELECT id, name, parent_id, created_at, updated_at
+SELECT id, ledger_id, name, parent_id, created_at, updated_at
 FROM categories
+WHERE ledger_id = ?
 ORDER BY id;
 
 -- name: GetCategory :one
-SELECT id, name, parent_id, created_at, updated_at
+SELECT id, ledger_id, name, parent_id, created_at, updated_at
 FROM categories
-WHERE id = ?;
+WHERE id = ? AND ledger_id = ?;
 
 -- name: UpdateCategory :one
 UPDATE categories
@@ -73,19 +115,20 @@ WITH RECURSIVE descendants(id) AS (
 SELECT id FROM descendants;
 
 -- name: CreateTransaction :one
-INSERT INTO transactions (type, source_id, category_id, currency, amount, time, comment, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO transactions (ledger_id, type, source_id, category_id, currency, amount, time, comment, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: GetTransaction :one
-SELECT id, type, source_id, category_id, currency, amount, time, comment, created_at, updated_at
+SELECT id, ledger_id, type, source_id, category_id, currency, amount, time, comment, created_at, updated_at
 FROM transactions
-WHERE id = ?;
+WHERE id = ? AND ledger_id = ?;
 
 -- name: SearchTransactions :many
-SELECT id, type, source_id, category_id, currency, amount, time, comment, created_at, updated_at
+SELECT id, ledger_id, type, source_id, category_id, currency, amount, time, comment, created_at, updated_at
 FROM transactions
-WHERE (sqlc.narg('source_id')   IS NULL OR source_id = sqlc.narg('source_id'))
+WHERE ledger_id = sqlc.arg('ledger_id')
+  AND (sqlc.narg('source_id')   IS NULL OR source_id = sqlc.narg('source_id'))
   AND (sqlc.narg('category_id') IS NULL OR category_id = sqlc.narg('category_id'))
   AND (sqlc.narg('start_time')  IS NULL OR time >= sqlc.narg('start_time'))
   AND (sqlc.narg('end_time')    IS NULL OR time <= sqlc.narg('end_time'))
@@ -109,43 +152,47 @@ WHERE id = ?;
 
 -- name: SummarizeTransactionsByCurrency :many
 -- Aggregates income/expense totals grouped by the transaction's own
--- currency, over an optional [start_time, end_time] window. Used by
--- get_financial_summary (internal/tools/analytics.go). expense amounts are
--- stored negative, so SUM(-amount) turns them back into a positive total.
+-- currency, within one ledger, over an optional [start_time, end_time]
+-- window. Used by get_financial_summary (internal/tools/analytics.go).
+-- expense amounts are stored negative, so SUM(-amount) turns them back into
+-- a positive total.
 SELECT
     t.currency AS currency,
     CAST(COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) AS INTEGER) AS income,
     CAST(COALESCE(SUM(CASE WHEN t.type = 'expense' THEN -t.amount ELSE 0 END), 0) AS INTEGER) AS expense
 FROM transactions t
-WHERE (sqlc.narg('start_time') IS NULL OR t.time >= sqlc.narg('start_time'))
+WHERE t.ledger_id = sqlc.arg('ledger_id')
+  AND (sqlc.narg('start_time') IS NULL OR t.time >= sqlc.narg('start_time'))
   AND (sqlc.narg('end_time')   IS NULL OR t.time <= sqlc.narg('end_time'))
 GROUP BY t.currency
 ORDER BY t.currency;
 
 -- name: SummarizeTransactionsByCategory :many
--- Aggregates income/expense totals grouped by category and currency, over
--- an optional [start_time, end_time] window.
+-- Aggregates income/expense totals grouped by category and currency, within
+-- one ledger, over an optional [start_time, end_time] window.
 SELECT
     t.category_id AS category_id,
     t.currency AS currency,
     CAST(COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) AS INTEGER) AS income,
     CAST(COALESCE(SUM(CASE WHEN t.type = 'expense' THEN -t.amount ELSE 0 END), 0) AS INTEGER) AS expense
 FROM transactions t
-WHERE (sqlc.narg('start_time') IS NULL OR t.time >= sqlc.narg('start_time'))
+WHERE t.ledger_id = sqlc.arg('ledger_id')
+  AND (sqlc.narg('start_time') IS NULL OR t.time >= sqlc.narg('start_time'))
   AND (sqlc.narg('end_time')   IS NULL OR t.time <= sqlc.narg('end_time'))
 GROUP BY t.category_id, t.currency
 ORDER BY t.category_id, t.currency;
 
 -- name: SummarizeTransactionsBySource :many
--- Aggregates income/expense totals grouped by source and currency, over
--- an optional [start_time, end_time] window.
+-- Aggregates income/expense totals grouped by source and currency, within
+-- one ledger, over an optional [start_time, end_time] window.
 SELECT
     t.source_id AS source_id,
     t.currency AS currency,
     CAST(COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) AS INTEGER) AS income,
     CAST(COALESCE(SUM(CASE WHEN t.type = 'expense' THEN -t.amount ELSE 0 END), 0) AS INTEGER) AS expense
 FROM transactions t
-WHERE (sqlc.narg('start_time') IS NULL OR t.time >= sqlc.narg('start_time'))
+WHERE t.ledger_id = sqlc.arg('ledger_id')
+  AND (sqlc.narg('start_time') IS NULL OR t.time >= sqlc.narg('start_time'))
   AND (sqlc.narg('end_time')   IS NULL OR t.time <= sqlc.narg('end_time'))
 GROUP BY t.source_id, t.currency
 ORDER BY t.source_id, t.currency;

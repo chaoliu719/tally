@@ -12,31 +12,31 @@ import (
 // nested tree, move a node to a different parent, then delete a leaf
 // category.
 func TestE2ECategoryLifecycle(t *testing.T) {
-	session := newE2ESession(t)
+	session, ledgerID := newE2ESession(t)
 
 	// Build a three-level tree: Expense -> Dining -> Delivery.
 	var expense tools.ManageCategoryOutput
-	call(t, session, "manage_category", tools.ManageCategoryInput{
+	call(t, session, "manage_category", tools.ManageCategoryInput{LedgerID: ledgerID,
 		Operation: "create",
 		Name:      "Expense",
 	}, &expense)
 
 	var dining tools.ManageCategoryOutput
-	call(t, session, "manage_category", tools.ManageCategoryInput{
+	call(t, session, "manage_category", tools.ManageCategoryInput{LedgerID: ledgerID,
 		Operation: "create",
 		Name:      "Dining",
 		ParentID:  expense.Category.ID,
 	}, &dining)
 
 	var delivery tools.ManageCategoryOutput
-	call(t, session, "manage_category", tools.ManageCategoryInput{
+	call(t, session, "manage_category", tools.ManageCategoryInput{LedgerID: ledgerID,
 		Operation: "create",
 		Name:      "Delivery",
 		ParentID:  dining.Category.ID,
 	}, &delivery)
 
 	var afterCreate tools.ListCategoriesOutput
-	call(t, session, "list_categories", tools.ListCategoriesInput{}, &afterCreate)
+	call(t, session, "list_categories", tools.ListCategoriesInput{LedgerID: ledgerID}, &afterCreate)
 	if len(afterCreate.Categories) != 3 {
 		t.Fatalf("expected 3 categories after building the tree, got %d", len(afterCreate.Categories))
 	}
@@ -44,7 +44,7 @@ func TestE2ECategoryLifecycle(t *testing.T) {
 	// Move Delivery out from under Dining, directly under Expense --
 	// exercising arbitrary-depth nesting and the move-with-cycle-check path.
 	var moved tools.ManageCategoryOutput
-	call(t, session, "manage_category", tools.ManageCategoryInput{
+	call(t, session, "manage_category", tools.ManageCategoryInput{LedgerID: ledgerID,
 		Operation: "update",
 		ID:        delivery.Category.ID,
 		Name:      "Delivery",
@@ -55,7 +55,7 @@ func TestE2ECategoryLifecycle(t *testing.T) {
 	}
 
 	var afterMove tools.ListCategoriesOutput
-	call(t, session, "list_categories", tools.ListCategoriesInput{}, &afterMove)
+	call(t, session, "list_categories", tools.ListCategoriesInput{LedgerID: ledgerID}, &afterMove)
 	var foundMoved bool
 	for _, c := range afterMove.Categories {
 		if c.ID != delivery.Category.ID {
@@ -72,7 +72,7 @@ func TestE2ECategoryLifecycle(t *testing.T) {
 
 	// Delete the now-leaf Delivery category via preview -> apply.
 	var preview tools.ManageCategoryOutput
-	call(t, session, "manage_category", tools.ManageCategoryInput{
+	call(t, session, "manage_category", tools.ManageCategoryInput{LedgerID: ledgerID,
 		Operation: "delete",
 		ID:        delivery.Category.ID,
 	}, &preview)
@@ -84,7 +84,7 @@ func TestE2ECategoryLifecycle(t *testing.T) {
 	}
 
 	var applied tools.ManageCategoryOutput
-	call(t, session, "manage_category", tools.ManageCategoryInput{
+	call(t, session, "manage_category", tools.ManageCategoryInput{LedgerID: ledgerID,
 		Operation:         "delete",
 		ID:                delivery.Category.ID,
 		ConfirmationToken: preview.ConfirmationToken,
@@ -94,7 +94,7 @@ func TestE2ECategoryLifecycle(t *testing.T) {
 	}
 
 	var final tools.ListCategoriesOutput
-	call(t, session, "list_categories", tools.ListCategoriesInput{}, &final)
+	call(t, session, "list_categories", tools.ListCategoriesInput{LedgerID: ledgerID}, &final)
 	if len(final.Categories) != 2 {
 		t.Fatalf("expected 2 categories (Expense, Dining) after deleting Delivery, got %d: %+v", len(final.Categories), final.Categories)
 	}

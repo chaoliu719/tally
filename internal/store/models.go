@@ -6,14 +6,24 @@ package store
 
 type Category struct {
 	ID        int64
+	LedgerID  int64
 	Name      string
 	ParentID  int64
 	CreatedAt int64
 	UpdatedAt int64
 }
 
+type Ledger struct {
+	ID        int64
+	Name      string
+	Comment   string
+	CreatedAt int64
+	UpdatedAt int64
+}
+
 type Source struct {
 	ID        int64
+	LedgerID  int64
 	Name      string
 	CreatedAt int64
 	UpdatedAt int64
@@ -21,6 +31,7 @@ type Source struct {
 
 type Transaction struct {
 	ID         int64
+	LedgerID   int64
 	Type       string
 	SourceID   int64
 	CategoryID int64

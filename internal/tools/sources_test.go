@@ -10,10 +10,10 @@ import (
 )
 
 func TestListSourcesEmptyLedger(t *testing.T) {
-	session := newTestSession(t)
+	session, ledgerID := newTestSession(t)
 
 	var out tools.ListSourcesOutput
-	callTool(t, session, "list_sources", tools.ListSourcesInput{}, &out)
+	callTool(t, session, "list_sources", tools.ListSourcesInput{LedgerID: ledgerID}, &out)
 
 	if out.Sources == nil {
 		t.Fatal("expected an empty slice, got nil")
@@ -24,10 +24,11 @@ func TestListSourcesEmptyLedger(t *testing.T) {
 }
 
 func TestManageSourceCreate(t *testing.T) {
-	session := newTestSession(t)
+	session, ledgerID := newTestSession(t)
 
 	var created tools.ManageSourceOutput
 	callTool(t, session, "manage_source", tools.ManageSourceInput{
+		LedgerID:  ledgerID,
 		Operation: "create",
 		Name:      "Cash Wallet",
 	}, &created)
@@ -40,7 +41,7 @@ func TestManageSourceCreate(t *testing.T) {
 	}
 
 	var list tools.ListSourcesOutput
-	callTool(t, session, "list_sources", tools.ListSourcesInput{}, &list)
+	callTool(t, session, "list_sources", tools.ListSourcesInput{LedgerID: ledgerID}, &list)
 
 	if len(list.Sources) != 1 {
 		t.Fatalf("expected 1 source after creation, got %d", len(list.Sources))
@@ -51,14 +52,15 @@ func TestManageSourceCreate(t *testing.T) {
 }
 
 func TestManageSourceMissingRequiredField(t *testing.T) {
-	session := newTestSession(t)
+	session, ledgerID := newTestSession(t)
 
 	callToolExpectError(t, session, "manage_source", tools.ManageSourceInput{
+		LedgerID:  ledgerID,
 		Operation: "create",
 	})
 
 	var list tools.ListSourcesOutput
-	callTool(t, session, "list_sources", tools.ListSourcesInput{}, &list)
+	callTool(t, session, "list_sources", tools.ListSourcesInput{LedgerID: ledgerID}, &list)
 	if len(list.Sources) != 0 {
 		t.Fatalf("expected no source created, got %d", len(list.Sources))
 	}
@@ -66,11 +68,12 @@ func TestManageSourceMissingRequiredField(t *testing.T) {
 
 // createTestSource is a small helper shared by the update/delete tests
 // below; it creates a source and returns its id.
-func createTestSource(t *testing.T, session *mcp.ClientSession) string {
+func createTestSource(t *testing.T, session *mcp.ClientSession, ledgerID string) string {
 	t.Helper()
 
 	var created tools.ManageSourceOutput
 	callTool(t, session, "manage_source", tools.ManageSourceInput{
+		LedgerID:  ledgerID,
 		Operation: "create",
 		Name:      "Cash Wallet",
 	}, &created)
@@ -79,11 +82,12 @@ func createTestSource(t *testing.T, session *mcp.ClientSession) string {
 }
 
 func TestManageSourceUpdateHappyPath(t *testing.T) {
-	session := newTestSession(t)
-	sourceID := createTestSource(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID := createTestSource(t, session, ledgerID)
 
 	var updated tools.ManageSourceOutput
 	callTool(t, session, "manage_source", tools.ManageSourceInput{
+		LedgerID:  ledgerID,
 		Operation: "update",
 		ID:        sourceID,
 		Name:      "Renamed Wallet",
@@ -97,16 +101,17 @@ func TestManageSourceUpdateHappyPath(t *testing.T) {
 	}
 
 	var list tools.ListSourcesOutput
-	callTool(t, session, "list_sources", tools.ListSourcesInput{}, &list)
+	callTool(t, session, "list_sources", tools.ListSourcesInput{LedgerID: ledgerID}, &list)
 	if list.Sources[0].Name != "Renamed Wallet" {
 		t.Errorf("listed name = %q, want %q", list.Sources[0].Name, "Renamed Wallet")
 	}
 }
 
 func TestManageSourceUpdateNotFound(t *testing.T) {
-	session := newTestSession(t)
+	session, ledgerID := newTestSession(t)
 
 	callToolExpectError(t, session, "manage_source", tools.ManageSourceInput{
+		LedgerID:  ledgerID,
 		Operation: "update",
 		ID:        "999999",
 		Name:      "Ghost",
@@ -114,28 +119,30 @@ func TestManageSourceUpdateNotFound(t *testing.T) {
 }
 
 func TestManageSourceUpdateMissingRequiredField(t *testing.T) {
-	session := newTestSession(t)
-	sourceID := createTestSource(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID := createTestSource(t, session, ledgerID)
 
 	callToolExpectError(t, session, "manage_source", tools.ManageSourceInput{
+		LedgerID:  ledgerID,
 		Operation: "update",
 		ID:        sourceID,
 		// Name omitted
 	})
 
 	var list tools.ListSourcesOutput
-	callTool(t, session, "list_sources", tools.ListSourcesInput{}, &list)
+	callTool(t, session, "list_sources", tools.ListSourcesInput{LedgerID: ledgerID}, &list)
 	if list.Sources[0].Name != "Cash Wallet" {
 		t.Fatalf("source was modified despite missing required field: name = %q", list.Sources[0].Name)
 	}
 }
 
 func TestManageSourceDeleteHappyPath(t *testing.T) {
-	session := newTestSession(t)
-	sourceID := createTestSource(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID := createTestSource(t, session, ledgerID)
 
 	var preview tools.ManageSourceOutput
 	callTool(t, session, "manage_source", tools.ManageSourceInput{
+		LedgerID:  ledgerID,
 		Operation: "delete",
 		ID:        sourceID,
 	}, &preview)
@@ -151,13 +158,14 @@ func TestManageSourceDeleteHappyPath(t *testing.T) {
 	}
 
 	var list tools.ListSourcesOutput
-	callTool(t, session, "list_sources", tools.ListSourcesInput{}, &list)
+	callTool(t, session, "list_sources", tools.ListSourcesInput{LedgerID: ledgerID}, &list)
 	if len(list.Sources) != 1 {
 		t.Fatalf("preview must not delete the source; got %d sources", len(list.Sources))
 	}
 
 	var applied tools.ManageSourceOutput
 	callTool(t, session, "manage_source", tools.ManageSourceInput{
+		LedgerID:          ledgerID,
 		Operation:         "delete",
 		ID:                sourceID,
 		ConfirmationToken: preview.ConfirmationToken,
@@ -167,18 +175,19 @@ func TestManageSourceDeleteHappyPath(t *testing.T) {
 		t.Fatalf("Status = %q, want %q", applied.Status, "deleted")
 	}
 
-	callTool(t, session, "list_sources", tools.ListSourcesInput{}, &list)
+	callTool(t, session, "list_sources", tools.ListSourcesInput{LedgerID: ledgerID}, &list)
 	if len(list.Sources) != 0 {
 		t.Fatalf("expected the source to be gone, got %d sources", len(list.Sources))
 	}
 }
 
 func TestManageSourceDeleteBlockedByReferences(t *testing.T) {
-	session := newTestSession(t)
-	sourceID := createTestSource(t, session)
-	categoryID := createTestCategory(t, session, "Food", "")
+	session, ledgerID := newTestSession(t)
+	sourceID := createTestSource(t, session, ledgerID)
+	categoryID := createTestCategory(t, session, ledgerID, "Food", "")
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID:   ledgerID,
 		Type:       "expense",
 		SourceID:   sourceID,
 		CategoryID: categoryID,
@@ -188,29 +197,32 @@ func TestManageSourceDeleteBlockedByReferences(t *testing.T) {
 	}, &tools.CreateTransactionOutput{})
 
 	callToolExpectError(t, session, "manage_source", tools.ManageSourceInput{
+		LedgerID:  ledgerID,
 		Operation: "delete",
 		ID:        sourceID,
 	})
 
 	var list tools.ListSourcesOutput
-	callTool(t, session, "list_sources", tools.ListSourcesInput{}, &list)
+	callTool(t, session, "list_sources", tools.ListSourcesInput{LedgerID: ledgerID}, &list)
 	if len(list.Sources) != 1 {
 		t.Fatalf("expected the source to survive a blocked delete, got %d sources", len(list.Sources))
 	}
 }
 
 func TestManageSourceDeleteTokenReplay(t *testing.T) {
-	session := newTestSession(t)
-	sourceID := createTestSource(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID := createTestSource(t, session, ledgerID)
 
 	var preview tools.ManageSourceOutput
 	callTool(t, session, "manage_source", tools.ManageSourceInput{
+		LedgerID:  ledgerID,
 		Operation: "delete",
 		ID:        sourceID,
 	}, &preview)
 
 	var applied tools.ManageSourceOutput
 	callTool(t, session, "manage_source", tools.ManageSourceInput{
+		LedgerID:          ledgerID,
 		Operation:         "delete",
 		ID:                sourceID,
 		ConfirmationToken: preview.ConfirmationToken,
@@ -224,52 +236,56 @@ func TestManageSourceDeleteTokenReplay(t *testing.T) {
 	// rejects it even though the token itself is still validly signed and
 	// unexpired.
 	callToolExpectError(t, session, "manage_source", tools.ManageSourceInput{
+		LedgerID:          ledgerID,
 		Operation:         "delete",
 		ID:                sourceID,
 		ConfirmationToken: preview.ConfirmationToken,
 	})
 
 	var list tools.ListSourcesOutput
-	callTool(t, session, "list_sources", tools.ListSourcesInput{}, &list)
+	callTool(t, session, "list_sources", tools.ListSourcesInput{LedgerID: ledgerID}, &list)
 	if len(list.Sources) != 0 {
 		t.Fatalf("expected the source to remain deleted, got %d sources", len(list.Sources))
 	}
 }
 
 func TestManageSourceDeleteNotFound(t *testing.T) {
-	session := newTestSession(t)
+	session, ledgerID := newTestSession(t)
 
 	callToolExpectError(t, session, "manage_source", tools.ManageSourceInput{
+		LedgerID:  ledgerID,
 		Operation: "delete",
 		ID:        "999999",
 	})
 }
 
 func TestManageSourceDeleteExpiredToken(t *testing.T) {
-	session := newTestSession(t)
-	sourceID := createTestSource(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID := createTestSource(t, session, ledgerID)
 
 	expired := craftConfirmationToken(t, testConfirmSecret, "delete_source", sourceID, "irrelevant-revision", time.Now().Add(-time.Minute).Unix())
 
 	callToolExpectError(t, session, "manage_source", tools.ManageSourceInput{
+		LedgerID:          ledgerID,
 		Operation:         "delete",
 		ID:                sourceID,
 		ConfirmationToken: expired,
 	})
 
 	var list tools.ListSourcesOutput
-	callTool(t, session, "list_sources", tools.ListSourcesInput{}, &list)
+	callTool(t, session, "list_sources", tools.ListSourcesInput{LedgerID: ledgerID}, &list)
 	if len(list.Sources) != 1 {
 		t.Fatalf("expired token must not delete the source, got %d sources", len(list.Sources))
 	}
 }
 
 func TestManageSourceDeleteDriftedRevision(t *testing.T) {
-	session := newTestSession(t)
-	sourceID := createTestSource(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID := createTestSource(t, session, ledgerID)
 
 	var preview tools.ManageSourceOutput
 	callTool(t, session, "manage_source", tools.ManageSourceInput{
+		LedgerID:  ledgerID,
 		Operation: "delete",
 		ID:        sourceID,
 	}, &preview)
@@ -278,20 +294,86 @@ func TestManageSourceDeleteDriftedRevision(t *testing.T) {
 	// stale token must be rejected rather than deleting a different source
 	// than the one previewed.
 	callTool(t, session, "manage_source", tools.ManageSourceInput{
+		LedgerID:  ledgerID,
 		Operation: "update",
 		ID:        sourceID,
 		Name:      "Renamed After Preview",
 	}, &tools.ManageSourceOutput{})
 
 	callToolExpectError(t, session, "manage_source", tools.ManageSourceInput{
+		LedgerID:          ledgerID,
 		Operation:         "delete",
 		ID:                sourceID,
 		ConfirmationToken: preview.ConfirmationToken,
 	})
 
 	var list tools.ListSourcesOutput
-	callTool(t, session, "list_sources", tools.ListSourcesInput{}, &list)
+	callTool(t, session, "list_sources", tools.ListSourcesInput{LedgerID: ledgerID}, &list)
 	if len(list.Sources) != 1 {
 		t.Fatalf("drifted-revision token must not delete the source, got %d sources", len(list.Sources))
 	}
+}
+
+func TestListSourcesRejectsNonexistentLedger(t *testing.T) {
+	session, _ := newTestSession(t)
+
+	callToolExpectError(t, session, "list_sources", tools.ListSourcesInput{LedgerID: "999999"})
+}
+
+func TestListSourcesIsolatedByLedger(t *testing.T) {
+	session, ledgerA := newTestSession(t)
+	createTestSource(t, session, ledgerA)
+
+	var ledgerBOut tools.ManageLedgerOutput
+	callTool(t, session, "manage_ledger", tools.ManageLedgerInput{Operation: "create", Name: "Other Ledger"}, &ledgerBOut)
+	ledgerB := ledgerBOut.Ledger.ID
+
+	var list tools.ListSourcesOutput
+	callTool(t, session, "list_sources", tools.ListSourcesInput{LedgerID: ledgerB}, &list)
+	if len(list.Sources) != 0 {
+		t.Fatalf("expected ledgerB to have no sources, got %d (ledgerA's source leaked in)", len(list.Sources))
+	}
+}
+
+func TestManageSourceCreateRejectsNonexistentLedger(t *testing.T) {
+	session, _ := newTestSession(t)
+
+	callToolExpectError(t, session, "manage_source", tools.ManageSourceInput{
+		LedgerID:  "999999",
+		Operation: "create",
+		Name:      "Cash Wallet",
+	})
+}
+
+func TestManageSourceUpdateRejectsSourceFromAnotherLedger(t *testing.T) {
+	session, ledgerA := newTestSession(t)
+	sourceID := createTestSource(t, session, ledgerA)
+
+	var ledgerBOut tools.ManageLedgerOutput
+	callTool(t, session, "manage_ledger", tools.ManageLedgerInput{Operation: "create", Name: "Other Ledger"}, &ledgerBOut)
+	ledgerB := ledgerBOut.Ledger.ID
+
+	// The source exists, but under ledgerA -- updating it while claiming
+	// ledgerB must behave like updating a nonexistent source.
+	callToolExpectError(t, session, "manage_source", tools.ManageSourceInput{
+		LedgerID:  ledgerB,
+		Operation: "update",
+		ID:        sourceID,
+		Name:      "Hijacked",
+	})
+}
+
+func TestManageSourceDeleteRejectsSourceFromAnotherLedger(t *testing.T) {
+	session, ledgerA := newTestSession(t)
+	sourceID := createTestSource(t, session, ledgerA)
+
+	var ledgerBOut tools.ManageLedgerOutput
+	callTool(t, session, "manage_ledger", tools.ManageLedgerInput{Operation: "create", Name: "Other Ledger"}, &ledgerBOut)
+	ledgerB := ledgerBOut.Ledger.ID
+
+	callToolExpectError(t, session, "manage_source", tools.ManageSourceInput{
+		LedgerID:  ledgerB,
+		Operation: "delete",
+		ID:        sourceID,
+	})
 }

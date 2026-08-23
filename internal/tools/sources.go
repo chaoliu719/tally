@@ -23,9 +23,9 @@ func init() {
 func registerSourceTools(s *mcp.Server, deps Deps) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_sources",
-		Description: "List every source in the ledger (a source is where a transaction's money comes from or goes to), including its name.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ ListSourcesInput) (*mcp.CallToolResult, ListSourcesOutput, error) {
-		return listSources(ctx, deps)
+		Description: "List every source in a ledger (a source is where a transaction's money comes from or goes to), including its name.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ListSourcesInput) (*mcp.CallToolResult, ListSourcesOutput, error) {
+		return listSources(ctx, deps, in)
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -48,14 +48,30 @@ type SourceInfo struct {
 	Name string `json:"name" jsonschema:"the source's name"`
 }
 
-type ListSourcesInput struct{}
+type ListSourcesInput struct {
+	LedgerID string `json:"ledger_id" jsonschema:"the id of the ledger to list sources from, as a decimal string"`
+}
 
 type ListSourcesOutput struct {
 	Sources []SourceInfo `json:"sources" jsonschema:"every source in the ledger"`
 }
 
-func listSources(ctx context.Context, deps Deps) (*mcp.CallToolResult, ListSourcesOutput, error) {
-	rows, err := deps.Q.ListSources(ctx)
+func listSources(ctx context.Context, deps Deps, in ListSourcesInput) (*mcp.CallToolResult, ListSourcesOutput, error) {
+	if in.LedgerID == "" {
+		return nil, ListSourcesOutput{}, fmt.Errorf("missing required field: ledger_id")
+	}
+	ledgerID, err := parseID(in.LedgerID)
+	if err != nil {
+		return nil, ListSourcesOutput{}, err
+	}
+	if _, err := deps.Q.GetLedger(ctx, ledgerID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ListSourcesOutput{}, fmt.Errorf("ledger %q not found", in.LedgerID)
+		}
+		return nil, ListSourcesOutput{}, err
+	}
+
+	rows, err := deps.Q.ListSources(ctx, ledgerID)
 	if err != nil {
 		return nil, ListSourcesOutput{}, err
 	}
@@ -70,6 +86,7 @@ func listSources(ctx context.Context, deps Deps) (*mcp.CallToolResult, ListSourc
 
 type ManageSourceInput struct {
 	Operation string `json:"operation" jsonschema:"the operation to perform: create, update, or delete"`
+	LedgerID  string `json:"ledger_id" jsonschema:"the id of the ledger this source belongs to, as a decimal string"`
 	ID        string `json:"id,omitempty" jsonschema:"the source's id, as a decimal string; required for operation=update and operation=delete"`
 
 	Name string `json:"name,omitempty" jsonschema:"the source's name; required for create and update"`
@@ -101,9 +118,23 @@ func createSource(ctx context.Context, deps Deps, in ManageSourceInput) (*mcp.Ca
 	if in.Name == "" {
 		return nil, ManageSourceOutput{}, fmt.Errorf("missing required field: name")
 	}
+	if in.LedgerID == "" {
+		return nil, ManageSourceOutput{}, fmt.Errorf("missing required field: ledger_id")
+	}
+	ledgerID, err := parseID(in.LedgerID)
+	if err != nil {
+		return nil, ManageSourceOutput{}, err
+	}
+	if _, err := deps.Q.GetLedger(ctx, ledgerID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ManageSourceOutput{}, fmt.Errorf("ledger %q not found", in.LedgerID)
+		}
+		return nil, ManageSourceOutput{}, err
+	}
 
 	now := time.Now().Unix()
 	source, err := deps.Q.CreateSource(ctx, store.CreateSourceParams{
+		LedgerID:  ledgerID,
 		Name:      in.Name,
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -127,8 +158,15 @@ func updateSource(ctx context.Context, deps Deps, in ManageSourceInput) (*mcp.Ca
 	if in.Name == "" {
 		return nil, ManageSourceOutput{}, fmt.Errorf("missing required field: name")
 	}
+	if in.LedgerID == "" {
+		return nil, ManageSourceOutput{}, fmt.Errorf("missing required field: ledger_id")
+	}
+	ledgerID, err := parseID(in.LedgerID)
+	if err != nil {
+		return nil, ManageSourceOutput{}, err
+	}
 
-	if _, err := deps.Q.GetSource(ctx, id); err != nil {
+	if _, err := deps.Q.GetSource(ctx, store.GetSourceParams{ID: id, LedgerID: ledgerID}); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ManageSourceOutput{}, fmt.Errorf("source %q not found", in.ID)
 		}
@@ -178,8 +216,15 @@ func deleteSource(ctx context.Context, deps Deps, in ManageSourceInput) (*mcp.Ca
 	if err != nil {
 		return nil, ManageSourceOutput{}, err
 	}
+	if in.LedgerID == "" {
+		return nil, ManageSourceOutput{}, fmt.Errorf("missing required field: ledger_id")
+	}
+	ledgerID, err := parseID(in.LedgerID)
+	if err != nil {
+		return nil, ManageSourceOutput{}, err
+	}
 
-	source, err := deps.Q.GetSource(ctx, id)
+	source, err := deps.Q.GetSource(ctx, store.GetSourceParams{ID: id, LedgerID: ledgerID})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ManageSourceOutput{}, fmt.Errorf("source %q not found", in.ID)

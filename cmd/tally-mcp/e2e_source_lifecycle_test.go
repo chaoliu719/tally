@@ -17,17 +17,17 @@ import (
 // reference first -- see TestE2ETransactionLifecycleUnblocksSourceAndCategoryDeletion
 // for that path -- but this test keeps the two concerns apart.
 func TestE2ESourceLifecycle(t *testing.T) {
-	session := newE2ESession(t)
+	session, ledgerID := newE2ESession(t)
 
 	// Source A: create -> update -> preview delete -> apply delete.
 	var sourceA tools.ManageSourceOutput
-	call(t, session, "manage_source", tools.ManageSourceInput{
+	call(t, session, "manage_source", tools.ManageSourceInput{LedgerID: ledgerID,
 		Operation: "create",
 		Name:      "Checking",
 	}, &sourceA)
 
 	var updatedA tools.ManageSourceOutput
-	call(t, session, "manage_source", tools.ManageSourceInput{
+	call(t, session, "manage_source", tools.ManageSourceInput{LedgerID: ledgerID,
 		Operation: "update",
 		ID:        sourceA.Source.ID,
 		Name:      "Checking (renamed)",
@@ -37,7 +37,7 @@ func TestE2ESourceLifecycle(t *testing.T) {
 	}
 
 	var afterUpdate tools.ListSourcesOutput
-	call(t, session, "list_sources", tools.ListSourcesInput{}, &afterUpdate)
+	call(t, session, "list_sources", tools.ListSourcesInput{LedgerID: ledgerID}, &afterUpdate)
 	if len(afterUpdate.Sources) != 1 {
 		t.Fatalf("expected 1 source (only A exists so far), got %d", len(afterUpdate.Sources))
 	}
@@ -46,7 +46,7 @@ func TestE2ESourceLifecycle(t *testing.T) {
 	}
 
 	var previewA tools.ManageSourceOutput
-	call(t, session, "manage_source", tools.ManageSourceInput{
+	call(t, session, "manage_source", tools.ManageSourceInput{LedgerID: ledgerID,
 		Operation: "delete",
 		ID:        sourceA.Source.ID,
 	}, &previewA)
@@ -58,7 +58,7 @@ func TestE2ESourceLifecycle(t *testing.T) {
 	}
 
 	var appliedA tools.ManageSourceOutput
-	call(t, session, "manage_source", tools.ManageSourceInput{
+	call(t, session, "manage_source", tools.ManageSourceInput{LedgerID: ledgerID,
 		Operation:         "delete",
 		ID:                sourceA.Source.ID,
 		ConfirmationToken: previewA.ConfirmationToken,
@@ -71,19 +71,19 @@ func TestE2ESourceLifecycle(t *testing.T) {
 	// the transaction now references it, which correctly and permanently
 	// blocks deletion.
 	var sourceB tools.ManageSourceOutput
-	call(t, session, "manage_source", tools.ManageSourceInput{
+	call(t, session, "manage_source", tools.ManageSourceInput{LedgerID: ledgerID,
 		Operation: "create",
 		Name:      "Savings",
 	}, &sourceB)
 
 	var category tools.ManageCategoryOutput
-	call(t, session, "manage_category", tools.ManageCategoryInput{
+	call(t, session, "manage_category", tools.ManageCategoryInput{LedgerID: ledgerID,
 		Operation: "create",
 		Name:      "Misc",
 	}, &category)
 
 	var expense tools.CreateTransactionOutput
-	call(t, session, "create_transaction", tools.CreateTransactionInput{
+	call(t, session, "create_transaction", tools.CreateTransactionInput{LedgerID: ledgerID,
 		Type:       "expense",
 		SourceID:   sourceB.Source.ID,
 		CategoryID: category.Category.ID,
@@ -93,13 +93,13 @@ func TestE2ESourceLifecycle(t *testing.T) {
 		Comment:    "keeps source B referenced",
 	}, &expense)
 
-	callExpectError(t, session, "manage_source", tools.ManageSourceInput{
+	callExpectError(t, session, "manage_source", tools.ManageSourceInput{LedgerID: ledgerID,
 		Operation: "delete",
 		ID:        sourceB.Source.ID,
 	})
 
 	var afterExpense tools.ListSourcesOutput
-	call(t, session, "list_sources", tools.ListSourcesInput{}, &afterExpense)
+	call(t, session, "list_sources", tools.ListSourcesInput{LedgerID: ledgerID}, &afterExpense)
 
 	var foundB bool
 	for _, s := range afterExpense.Sources {

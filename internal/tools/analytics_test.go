@@ -46,21 +46,24 @@ func findSourceSummary(t *testing.T, rows []tools.SourceSummary, sourceID string
 }
 
 func TestGetFinancialSummaryTimeRange(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, categoryID := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
 
 	earlyTime := futureTime()
 	lateTime := earlyTime + 100000
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: earlyTime,
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: earlyTime,
 	}, &tools.CreateTransactionOutput{})
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 200, Currency: "CNY", Time: lateTime,
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 200, Currency: "CNY", Time: lateTime,
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.GetFinancialSummaryOutput
 	callTool(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{
+		LedgerID:  ledgerID,
 		StartTime: earlyTime - 10,
 		EndTime:   earlyTime + 10,
 	}, &out)
@@ -85,18 +88,20 @@ func TestGetFinancialSummaryTimeRange(t *testing.T) {
 }
 
 func TestGetFinancialSummaryNoTimeRange(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, categoryID := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "income", SourceID: sourceID, CategoryID: categoryID, Amount: 500, Currency: "CNY", Time: futureTime(),
+		LedgerID: ledgerID,
+		Type:     "income", SourceID: sourceID, CategoryID: categoryID, Amount: 500, Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 200, Currency: "CNY", Time: futureTime(),
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 200, Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.GetFinancialSummaryOutput
-	callTool(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{}, &out)
+	callTool(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{LedgerID: ledgerID}, &out)
 
 	ct := findCurrencyTotals(t, out.TotalsByCurrency, "CNY")
 	if ct.Income != 500 || ct.Expense != 200 || ct.Net != 300 {
@@ -115,15 +120,17 @@ func TestGetFinancialSummaryNoTimeRange(t *testing.T) {
 }
 
 func TestGetFinancialSummaryEmptyRange(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, categoryID := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.GetFinancialSummaryOutput
 	callTool(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{
+		LedgerID:  ledgerID,
 		StartTime: futureTime() + 1000000,
 		EndTime:   futureTime() + 1100000,
 	}, &out)
@@ -140,27 +147,31 @@ func TestGetFinancialSummaryEmptyRange(t *testing.T) {
 }
 
 func TestGetFinancialSummaryMultiCurrency(t *testing.T) {
-	session := newTestSession(t)
+	session, ledgerID := newTestSession(t)
 
 	var source tools.ManageSourceOutput
 	callTool(t, session, "manage_source", tools.ManageSourceInput{
+		LedgerID:  ledgerID,
 		Operation: "create", Name: "Wallet",
 	}, &source)
 
 	var category tools.ManageCategoryOutput
 	callTool(t, session, "manage_category", tools.ManageCategoryInput{
+		LedgerID:  ledgerID,
 		Operation: "create", Name: "Misc",
 	}, &category)
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "income", SourceID: source.Source.ID, CategoryID: category.Category.ID, Amount: 1000, Currency: "CNY", Time: futureTime(),
+		LedgerID: ledgerID,
+		Type:     "income", SourceID: source.Source.ID, CategoryID: category.Category.ID, Amount: 1000, Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", SourceID: source.Source.ID, CategoryID: category.Category.ID, Amount: 300, Currency: "USD", Time: futureTime(),
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: source.Source.ID, CategoryID: category.Category.ID, Amount: 300, Currency: "USD", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.GetFinancialSummaryOutput
-	callTool(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{}, &out)
+	callTool(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{LedgerID: ledgerID}, &out)
 
 	if len(out.TotalsByCurrency) != 2 {
 		t.Fatalf("expected 2 currency totals, got %d: %+v", len(out.TotalsByCurrency), out.TotalsByCurrency)
@@ -178,29 +189,33 @@ func TestGetFinancialSummaryMultiCurrency(t *testing.T) {
 }
 
 func TestGetFinancialSummaryByCategory(t *testing.T) {
-	session := newTestSession(t)
-	sourceID, categoryA := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryA := setupSourceAndCategory(t, session, ledgerID)
 
 	var categoryB tools.ManageCategoryOutput
 	callTool(t, session, "manage_category", tools.ManageCategoryInput{
+		LedgerID:  ledgerID,
 		Operation: "create", Name: "Dining",
 	}, &categoryB)
 
 	// A third category with no transactions must not appear in the result.
 	var categoryC tools.ManageCategoryOutput
 	callTool(t, session, "manage_category", tools.ManageCategoryInput{
+		LedgerID:  ledgerID,
 		Operation: "create", Name: "Unused",
 	}, &categoryC)
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", SourceID: sourceID, CategoryID: categoryA, Amount: 100, Currency: "CNY", Time: futureTime(),
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryA, Amount: 100, Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", SourceID: sourceID, CategoryID: categoryB.Category.ID, Amount: 250, Currency: "CNY", Time: futureTime(),
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryB.Category.ID, Amount: 250, Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.GetFinancialSummaryOutput
-	callTool(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{}, &out)
+	callTool(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{LedgerID: ledgerID}, &out)
 
 	if len(out.ByCategory) != 2 {
 		t.Fatalf("expected 2 category summaries, got %d: %+v", len(out.ByCategory), out.ByCategory)
@@ -223,29 +238,33 @@ func TestGetFinancialSummaryByCategory(t *testing.T) {
 }
 
 func TestGetFinancialSummaryBySource(t *testing.T) {
-	session := newTestSession(t)
-	sourceA, categoryID := setupSourceAndCategory(t, session)
+	session, ledgerID := newTestSession(t)
+	sourceA, categoryID := setupSourceAndCategory(t, session, ledgerID)
 
 	var sourceB tools.ManageSourceOutput
 	callTool(t, session, "manage_source", tools.ManageSourceInput{
+		LedgerID:  ledgerID,
 		Operation: "create", Name: "Second Wallet",
 	}, &sourceB)
 
 	// A third source with no transactions must not appear in the result.
 	var sourceC tools.ManageSourceOutput
 	callTool(t, session, "manage_source", tools.ManageSourceInput{
+		LedgerID:  ledgerID,
 		Operation: "create", Name: "Unused Wallet",
 	}, &sourceC)
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", SourceID: sourceA, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceA, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
-		Type: "expense", SourceID: sourceB.Source.ID, CategoryID: categoryID, Amount: 250, Currency: "CNY", Time: futureTime(),
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceB.Source.ID, CategoryID: categoryID, Amount: 250, Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.GetFinancialSummaryOutput
-	callTool(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{}, &out)
+	callTool(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{LedgerID: ledgerID}, &out)
 
 	if len(out.BySource) != 2 {
 		t.Fatalf("expected 2 source summaries, got %d: %+v", len(out.BySource), out.BySource)
@@ -264,5 +283,43 @@ func TestGetFinancialSummaryBySource(t *testing.T) {
 		if ss.SourceID == sourceC.Source.ID {
 			t.Fatalf("unused source %q unexpectedly present in BySource", sourceC.Source.ID)
 		}
+	}
+}
+
+func TestGetFinancialSummaryRejectsNonexistentLedger(t *testing.T) {
+	session, _ := newTestSession(t)
+
+	callToolExpectError(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{LedgerID: "999999"})
+}
+
+// TestGetFinancialSummaryIsolatedByLedger verifies that summarizing one
+// ledger never mixes in another ledger's transactions, even when both hold
+// activity in the same currency over the same time range.
+func TestGetFinancialSummaryIsolatedByLedger(t *testing.T) {
+	session, ledgerA := newTestSession(t)
+	sourceA, categoryA := setupSourceAndCategory(t, session, ledgerA)
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerA,
+		Type:     "expense", SourceID: sourceA, CategoryID: categoryA, Amount: 100, Currency: "CNY", Time: futureTime(),
+	}, &tools.CreateTransactionOutput{})
+
+	var ledgerBOut tools.ManageLedgerOutput
+	callTool(t, session, "manage_ledger", tools.ManageLedgerInput{Operation: "create", Name: "Other Ledger"}, &ledgerBOut)
+	ledgerB := ledgerBOut.Ledger.ID
+	sourceB, categoryB := setupSourceAndCategory(t, session, ledgerB)
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerB,
+		Type:     "expense", SourceID: sourceB, CategoryID: categoryB, Amount: 999, Currency: "CNY", Time: futureTime(),
+	}, &tools.CreateTransactionOutput{})
+
+	var out tools.GetFinancialSummaryOutput
+	callTool(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{LedgerID: ledgerA}, &out)
+
+	ct := findCurrencyTotals(t, out.TotalsByCurrency, "CNY")
+	if ct.Expense != 100 {
+		t.Errorf("TotalsByCurrency expense = %d, want 100 (ledgerB's 999 must not be included)", ct.Expense)
+	}
+	if len(out.BySource) != 1 || len(out.ByCategory) != 1 {
+		t.Fatalf("expected exactly ledgerA's source/category in the breakdown, got BySource=%+v ByCategory=%+v", out.BySource, out.ByCategory)
 	}
 }

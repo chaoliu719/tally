@@ -12,6 +12,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"tally/internal/bootstrap"
+	"tally/internal/tools"
 )
 
 func futureTime() int64 {
@@ -20,9 +21,10 @@ func futureTime() int64 {
 
 // newE2ESession spins up a fresh SQLite-backed server (in a temp dir) using
 // the same buildMux wiring main() uses, and returns a connected MCP client
-// session talking to it over real authenticated HTTP. Each call gets its own
-// empty ledger; the server and client are torn down via t.Cleanup.
-func newE2ESession(t *testing.T) *mcp.ClientSession {
+// session talking to it over real authenticated HTTP, along with the id of a
+// freshly created default ledger. Each call gets its own empty ledger; the
+// server and client are torn down via t.Cleanup.
+func newE2ESession(t *testing.T) (*mcp.ClientSession, string) {
 	t.Helper()
 
 	const token = "e2e-test-token"
@@ -58,7 +60,10 @@ func newE2ESession(t *testing.T) *mcp.ClientSession {
 	}
 	t.Cleanup(func() { session.Close() })
 
-	return session
+	var ledgerOut tools.ManageLedgerOutput
+	call(t, session, "manage_ledger", tools.ManageLedgerInput{Operation: "create", Name: "Test Ledger"}, &ledgerOut)
+
+	return session, ledgerOut.Ledger.ID
 }
 
 // call invokes an MCP tool and unmarshals its structured output into out. It

@@ -26,40 +26,47 @@ func TestTransactionsReferenceSourceAndCategory(t *testing.T) {
 
 	now := time.Now().Unix()
 
+	ledger, err := q.CreateLedger(ctx, CreateLedgerParams{
+		Name: "Personal", CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("CreateLedger failed: %v", err)
+	}
+
 	source, err := q.CreateSource(ctx, CreateSourceParams{
-		Name: "Cash", CreatedAt: now, UpdatedAt: now,
+		LedgerID: ledger.ID, Name: "Cash", CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil {
 		t.Fatalf("CreateSource failed: %v", err)
 	}
 
 	category, err := q.CreateCategory(ctx, CreateCategoryParams{
-		Name: "Food", ParentID: 0, CreatedAt: now, UpdatedAt: now,
+		LedgerID: ledger.ID, Name: "Food", ParentID: 0, CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil {
 		t.Fatalf("CreateCategory failed: %v", err)
 	}
 	sub, err := q.CreateCategory(ctx, CreateCategoryParams{
-		Name: "Groceries", ParentID: category.ID, CreatedAt: now, UpdatedAt: now,
+		LedgerID: ledger.ID, Name: "Groceries", ParentID: category.ID, CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil {
 		t.Fatalf("CreateCategory (sub) failed: %v", err)
 	}
 
 	income, err := q.CreateTransaction(ctx, CreateTransactionParams{
-		Type: "income", SourceID: source.ID, CategoryID: category.ID, Currency: "CNY", Amount: 10000, Time: now, CreatedAt: now, UpdatedAt: now,
+		LedgerID: ledger.ID, Type: "income", SourceID: source.ID, CategoryID: category.ID, Currency: "CNY", Amount: 10000, Time: now, CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil {
 		t.Fatalf("CreateTransaction (income) failed: %v", err)
 	}
 	expense, err := q.CreateTransaction(ctx, CreateTransactionParams{
-		Type: "expense", SourceID: source.ID, CategoryID: sub.ID, Currency: "CNY", Amount: -2500, Time: now, CreatedAt: now, UpdatedAt: now,
+		LedgerID: ledger.ID, Type: "expense", SourceID: source.ID, CategoryID: sub.ID, Currency: "CNY", Amount: -2500, Time: now, CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil {
 		t.Fatalf("CreateTransaction (expense) failed: %v", err)
 	}
 
-	sources, err := q.ListSources(ctx)
+	sources, err := q.ListSources(ctx, ledger.ID)
 	if err != nil {
 		t.Fatalf("ListSources failed: %v", err)
 	}
@@ -75,7 +82,7 @@ func TestTransactionsReferenceSourceAndCategory(t *testing.T) {
 		t.Fatalf("CountTransactionsBySource = %d, want 2", count)
 	}
 
-	got, err := q.GetTransaction(ctx, income.ID)
+	got, err := q.GetTransaction(ctx, GetTransactionParams{ID: income.ID, LedgerID: ledger.ID})
 	if err != nil {
 		t.Fatalf("GetTransaction (income) failed: %v", err)
 	}
@@ -83,7 +90,7 @@ func TestTransactionsReferenceSourceAndCategory(t *testing.T) {
 		t.Fatalf("GetTransaction (income) = %+v, unexpected", got)
 	}
 
-	got, err = q.GetTransaction(ctx, expense.ID)
+	got, err = q.GetTransaction(ctx, GetTransactionParams{ID: expense.ID, LedgerID: ledger.ID})
 	if err != nil {
 		t.Fatalf("GetTransaction (expense) failed: %v", err)
 	}
