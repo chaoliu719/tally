@@ -274,6 +274,43 @@ func TestManageAccountDeleteBlockedByReferences(t *testing.T) {
 	}
 }
 
+func TestManageAccountDeleteTokenReplay(t *testing.T) {
+	session := newTestSession(t)
+	accountID := createTestAccount(t, session, 0)
+
+	var preview tools.ManageAccountOutput
+	callTool(t, session, "manage_account", tools.ManageAccountInput{
+		Operation: "delete",
+		ID:        accountID,
+	}, &preview)
+
+	var applied tools.ManageAccountOutput
+	callTool(t, session, "manage_account", tools.ManageAccountInput{
+		Operation:         "delete",
+		ID:                accountID,
+		ConfirmationToken: preview.ConfirmationToken,
+	}, &applied)
+	if applied.Status != "deleted" {
+		t.Fatalf("Status = %q, want %q", applied.Status, "deleted")
+	}
+
+	// Reusing the same token to confirm the same delete a second time must
+	// fail -- the account is already gone, so the live recheck at apply time
+	// rejects it even though the token itself is still validly signed and
+	// unexpired.
+	callToolExpectError(t, session, "manage_account", tools.ManageAccountInput{
+		Operation:         "delete",
+		ID:                accountID,
+		ConfirmationToken: preview.ConfirmationToken,
+	})
+
+	var list tools.ListAccountsOutput
+	callTool(t, session, "list_accounts", tools.ListAccountsInput{}, &list)
+	if len(list.Accounts) != 0 {
+		t.Fatalf("expected the account to remain deleted, got %d accounts", len(list.Accounts))
+	}
+}
+
 func TestManageAccountDeleteNotFound(t *testing.T) {
 	session := newTestSession(t)
 

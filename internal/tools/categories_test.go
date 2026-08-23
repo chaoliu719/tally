@@ -340,6 +340,43 @@ func TestManageCategoryDeleteBlockedByReferences(t *testing.T) {
 	}
 }
 
+func TestManageCategoryDeleteTokenReplay(t *testing.T) {
+	session := newTestSession(t)
+	id := createTestCategory(t, session, "Food", "")
+
+	var preview tools.ManageCategoryOutput
+	callTool(t, session, "manage_category", tools.ManageCategoryInput{
+		Operation: "delete",
+		ID:        id,
+	}, &preview)
+
+	var applied tools.ManageCategoryOutput
+	callTool(t, session, "manage_category", tools.ManageCategoryInput{
+		Operation:         "delete",
+		ID:                id,
+		ConfirmationToken: preview.ConfirmationToken,
+	}, &applied)
+	if applied.Status != "deleted" {
+		t.Fatalf("Status = %q, want %q", applied.Status, "deleted")
+	}
+
+	// Reusing the same token to confirm the same delete a second time must
+	// fail -- the category is already gone, so the live recheck at apply
+	// time rejects it even though the token itself is still validly signed
+	// and unexpired.
+	callToolExpectError(t, session, "manage_category", tools.ManageCategoryInput{
+		Operation:         "delete",
+		ID:                id,
+		ConfirmationToken: preview.ConfirmationToken,
+	})
+
+	var list tools.ListCategoriesOutput
+	callTool(t, session, "list_categories", tools.ListCategoriesInput{}, &list)
+	if len(list.Categories) != 0 {
+		t.Fatalf("expected the category to remain deleted, got %d categories", len(list.Categories))
+	}
+}
+
 func TestManageCategoryDeleteNotFound(t *testing.T) {
 	session := newTestSession(t)
 
