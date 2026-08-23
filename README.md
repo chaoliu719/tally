@@ -81,7 +81,7 @@ All configuration is via environment variables.
 | `TALLY_MCP_TOKEN` | Yes | — | Static bearer token clients must send as `Authorization: Bearer <token>`. The process refuses to start without it. |
 | `TALLY_CONFIRMATION_SECRET` | Yes | — | Secret used to sign/verify `confirmation_token`s for destructive operations (ledger/source/category/transaction delete). Independent of `TALLY_MCP_TOKEN`. The process refuses to start without it. |
 | `TALLY_DB_PATH` | No | `./tally.db` | Path to the SQLite file. Created (with tally's own schema) on first run if it doesn't exist. |
-| `TALLY_LISTEN_ADDR` | No | `:8080` | Address the HTTP server listens on. |
+| `TALLY_LISTEN_ADDR` | No | `:16355` | Address the HTTP server listens on. |
 
 On first startup the server creates the SQLite file (if needed) and applies tally's schema
 (`CREATE TABLE IF NOT EXISTS`, so it's safe to run on every startup) with zero ledgers — none are
@@ -134,7 +134,7 @@ The server exposes:
 ### Claude Code
 
 ```bash
-claude mcp add --transport http tally http://localhost:8080/mcp \
+claude mcp add --transport http tally http://localhost:16355/mcp \
   --header "Authorization: Bearer change-me"
 ```
 

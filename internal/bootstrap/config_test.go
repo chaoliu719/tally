@@ -56,7 +56,7 @@ func TestLoadConfigSucceedsWithBothRequiredVars(t *testing.T) {
 	if cfg.DBPath != "./tally.db" {
 		t.Errorf("DBPath = %q, want default", cfg.DBPath)
 	}
-	if cfg.ListenAddr != ":8080" {
+	if cfg.ListenAddr != ":16355" {
 		t.Errorf("ListenAddr = %q, want default", cfg.ListenAddr)
 	}
 }

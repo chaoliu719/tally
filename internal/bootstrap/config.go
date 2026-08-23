@@ -12,7 +12,7 @@ const (
 	envListenAddr         = "TALLY_LISTEN_ADDR"
 
 	defaultDBPath     = "./tally.db"
-	defaultListenAddr = ":8080"
+	defaultListenAddr = ":16355"
 )
 
 // Config holds the runtime configuration for the tally-mcp process, loaded
