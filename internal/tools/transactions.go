@@ -36,8 +36,10 @@ func registerTransactionTools(s *mcp.Server, deps Deps) {
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "search_transactions",
-		Description: "List transactions, optionally filtered by time range, account, and/or category. With no filters, returns every transaction in the ledger.",
+		Name: "search_transactions",
+		Description: "List transactions, optionally filtered by time range, account, and/or category, sorted oldest first. Results are paginated: " +
+			"each call returns at most limit transactions (default 50, max 200); if more match, the response includes next_cursor -- pass it back " +
+			"as cursor on the next call to keep paging until next_cursor is no longer returned. With no filters, pages through every transaction in the ledger.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in SearchTransactionsInput) (*mcp.CallToolResult, SearchTransactionsOutput, error) {
 		return searchTransactions(ctx, deps, in)
 	})
@@ -395,19 +397,28 @@ func deleteTransaction(ctx context.Context, deps Deps, in DeleteTransactionInput
 	return nil, DeleteTransactionOutput{Status: "deleted", Transaction: info}, nil
 }
 
+const (
+	searchTransactionsDefaultLimit = 50
+	searchTransactionsMaxLimit     = 200
+)
+
 type SearchTransactionsInput struct {
 	AccountID  string `json:"account_id,omitempty" jsonschema:"only include transactions on this account, as a decimal string"`
 	CategoryID string `json:"category_id,omitempty" jsonschema:"only include transactions in this category, as a decimal string"`
 	StartTime  int64  `json:"start_time,omitempty" jsonschema:"only include transactions at or after this unix time (seconds)"`
 	EndTime    int64  `json:"end_time,omitempty" jsonschema:"only include transactions at or before this unix time (seconds)"`
+	Limit      int64  `json:"limit,omitempty" jsonschema:"maximum number of transactions to return in this page; defaults to 50 when omitted, must be between 1 and 200 (requests over 200 are rejected, not truncated)"`
+	Cursor     string `json:"cursor,omitempty" jsonschema:"opaque pagination cursor from a previous response's next_cursor; omit to fetch the first page. Must be paired with the exact same account_id/category_id/start_time/end_time filters used to obtain it"`
 }
 
 type SearchTransactionsOutput struct {
-	Transactions []TransactionInfo `json:"transactions" jsonschema:"the matching transactions"`
+	Transactions []TransactionInfo `json:"transactions" jsonschema:"the matching transactions for this page"`
+	NextCursor   string            `json:"next_cursor,omitempty" jsonschema:"present when more results exist beyond this page; pass it back as cursor to fetch the next page. Absent when this is the last page"`
 }
 
 func searchTransactions(ctx context.Context, deps Deps, in SearchTransactionsInput) (*mcp.CallToolResult, SearchTransactionsOutput, error) {
 	params := store.SearchTransactionsParams{}
+	filter := searchTransactionsFilterFields{}
 
 	if in.AccountID != "" {
 		id, err := parseID(in.AccountID)
@@ -415,6 +426,7 @@ func searchTransactions(ctx context.Context, deps Deps, in SearchTransactionsInp
 			return nil, SearchTransactionsOutput{}, err
 		}
 		params.AccountID = id
+		filter.AccountID = sql.NullInt64{Int64: id, Valid: true}
 	}
 	if in.CategoryID != "" {
 		id, err := parseID(in.CategoryID)
@@ -422,17 +434,50 @@ func searchTransactions(ctx context.Context, deps Deps, in SearchTransactionsInp
 			return nil, SearchTransactionsOutput{}, err
 		}
 		params.CategoryID = id
+		filter.CategoryID = sql.NullInt64{Int64: id, Valid: true}
 	}
 	if in.StartTime > 0 {
 		params.StartTime = in.StartTime
+		filter.StartTime = sql.NullInt64{Int64: in.StartTime, Valid: true}
 	}
 	if in.EndTime > 0 {
 		params.EndTime = in.EndTime
+		filter.EndTime = sql.NullInt64{Int64: in.EndTime, Valid: true}
 	}
+
+	limit := int64(searchTransactionsDefaultLimit)
+	if in.Limit != 0 {
+		if in.Limit < 0 || in.Limit > searchTransactionsMaxLimit {
+			return nil, SearchTransactionsOutput{}, fmt.Errorf("limit must be between 1 and %d", searchTransactionsMaxLimit)
+		}
+		limit = in.Limit
+	}
+
+	if in.Cursor != "" {
+		afterTime, afterID, err := decodeSearchTransactionsCursor(in.Cursor, filter)
+		if err != nil {
+			return nil, SearchTransactionsOutput{}, err
+		}
+		params.AfterTime = afterTime
+		params.AfterID = sql.NullInt64{Int64: afterID, Valid: true}
+	}
+
+	// Ask for one extra row beyond the page size: if it comes back, there is
+	// a next page, and the (limit)th row (the last one we actually return)
+	// becomes the keyset position for next_cursor. This avoids a separate
+	// COUNT(*) query to determine whether more results remain.
+	params.Limit = limit + 1
 
 	transactions, err := deps.Q.SearchTransactions(ctx, params)
 	if err != nil {
 		return nil, SearchTransactionsOutput{}, err
+	}
+
+	var nextCursor string
+	if int64(len(transactions)) > limit {
+		last := transactions[limit-1]
+		nextCursor = encodeSearchTransactionsCursor(last.Time, last.ID, filter)
+		transactions = transactions[:limit]
 	}
 
 	infos, err := toTransactionInfos(ctx, deps, transactions)
@@ -440,7 +485,7 @@ func searchTransactions(ctx context.Context, deps Deps, in SearchTransactionsInp
 		return nil, SearchTransactionsOutput{}, err
 	}
 
-	return nil, SearchTransactionsOutput{Transactions: infos}, nil
+	return nil, SearchTransactionsOutput{Transactions: infos, NextCursor: nextCursor}, nil
 }
 
 // toTransactionInfos resolves currencies for a batch of transactions with one

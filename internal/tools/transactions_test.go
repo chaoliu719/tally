@@ -807,4 +807,286 @@ func TestSearchTransactionsEmptyResult(t *testing.T) {
 	if len(out.Transactions) != 0 {
 		t.Fatalf("expected 0 transactions, got %d", len(out.Transactions))
 	}
+	if out.NextCursor != "" {
+		t.Fatalf("expected no next_cursor for an empty result, got %q", out.NextCursor)
+	}
+}
+
+// createExpensesAtOffsets creates one expense transaction per offset in
+// offsets, at time base+offset, and returns their ids in the same order as
+// offsets. Offsets should be distinct and increasing so time alone
+// determines a deterministic order.
+func createExpensesAtOffsets(t *testing.T, session *mcp.ClientSession, accountID, categoryID string, base int64, offsets []int64) []string {
+	t.Helper()
+	ids := make([]string, 0, len(offsets))
+	for i, off := range offsets {
+		var created tools.CreateTransactionOutput
+		callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+			Type:       "expense",
+			AccountID:  accountID,
+			CategoryID: categoryID,
+			Amount:     int64(i + 1),
+			Time:       base + off,
+		}, &created)
+		ids = append(ids, created.Transaction.ID)
+	}
+	return ids
+}
+
+// createNExpenses creates n expense transactions at times baseTime+1,
+// baseTime+2, ..., baseTime+n (strictly increasing, so ordering by time
+// alone is deterministic) and returns their ids in creation order.
+func createNExpenses(t *testing.T, session *mcp.ClientSession, accountID, categoryID string, n int, baseTime int64) []string {
+	t.Helper()
+	offsets := make([]int64, n)
+	for i := range offsets {
+		offsets[i] = int64(i + 1)
+	}
+	return createExpensesAtOffsets(t, session, accountID, categoryID, baseTime, offsets)
+}
+
+// TestSearchTransactionsDefaultPageSize verifies the default page size is 50
+// (proposal.md / spec.md: "无筛选条件" scenario -- returns the oldest page,
+// not everything) by creating more than 50 matching transactions and calling
+// search_transactions with limit omitted.
+func TestSearchTransactionsDefaultPageSize(t *testing.T) {
+	session := newTestSession(t)
+	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
+	// setupAccountAndCategory already wrote 1 balance_adjustment transaction;
+	// add 54 more so the total (55) comfortably exceeds the default page
+	// size of 50.
+	createNExpenses(t, session, accountID, categoryID, 54, futureTime())
+
+	var out tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{}, &out)
+
+	if len(out.Transactions) != 50 {
+		t.Fatalf("expected the default page size of 50 transactions, got %d", len(out.Transactions))
+	}
+	if out.NextCursor == "" {
+		t.Fatal("expected next_cursor to be present since more than 50 transactions match")
+	}
+}
+
+// TestSearchTransactionsNextCursorOnlyWhenMoreResults covers both halves of
+// spec.md's "结果超过一页" scenario: next_cursor is present when there's
+// another page, and absent when the current page is the last one.
+func TestSearchTransactionsNextCursorOnlyWhenMoreResults(t *testing.T) {
+	session := newTestSession(t)
+	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
+	// 1 balance_adjustment + 4 expenses = 5 transactions total.
+	createNExpenses(t, session, accountID, categoryID, 4, futureTime())
+
+	var exactFit tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{Limit: 5}, &exactFit)
+	if len(exactFit.Transactions) != 5 {
+		t.Fatalf("expected 5 transactions, got %d", len(exactFit.Transactions))
+	}
+	if exactFit.NextCursor != "" {
+		t.Fatalf("expected no next_cursor when limit exactly fits all results, got %q", exactFit.NextCursor)
+	}
+
+	var shortOfFit tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{Limit: 4}, &shortOfFit)
+	if len(shortOfFit.Transactions) != 4 {
+		t.Fatalf("expected 4 transactions, got %d", len(shortOfFit.Transactions))
+	}
+	if shortOfFit.NextCursor == "" {
+		t.Fatal("expected next_cursor to be present when 5 results don't fit in a page of 4")
+	}
+}
+
+// TestSearchTransactionsCursorPaginationCoversAllResults covers spec.md's
+// "使用 cursor 翻页" scenario: paging through with a small limit until
+// next_cursor disappears yields exactly the same set (no duplicates, no
+// omissions, same order) as fetching everything in one page.
+func TestSearchTransactionsCursorPaginationCoversAllResults(t *testing.T) {
+	session := newTestSession(t)
+	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
+	createNExpenses(t, session, accountID, categoryID, 11, futureTime())
+
+	var full tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{Limit: 200}, &full)
+	if len(full.Transactions) != 12 { // 1 balance_adjustment + 11 expenses
+		t.Fatalf("expected 12 transactions unpaginated, got %d", len(full.Transactions))
+	}
+
+	var paged []tools.TransactionInfo
+	cursor := ""
+	for pages := 0; ; pages++ {
+		if pages > 20 {
+			t.Fatal("pagination did not terminate")
+		}
+		var page tools.SearchTransactionsOutput
+		callTool(t, session, "search_transactions", tools.SearchTransactionsInput{Limit: 5, Cursor: cursor}, &page)
+		paged = append(paged, page.Transactions...)
+		if page.NextCursor == "" {
+			break
+		}
+		cursor = page.NextCursor
+	}
+
+	if len(paged) != len(full.Transactions) {
+		t.Fatalf("paginated total = %d, want %d", len(paged), len(full.Transactions))
+	}
+	seen := map[string]bool{}
+	for i, txn := range paged {
+		if seen[txn.ID] {
+			t.Fatalf("transaction %q returned more than once across pages", txn.ID)
+		}
+		seen[txn.ID] = true
+		if txn.ID != full.Transactions[i].ID {
+			t.Fatalf("paged[%d].ID = %q, want %q (order must match the unpaginated result)", i, txn.ID, full.Transactions[i].ID)
+		}
+	}
+}
+
+// TestSearchTransactionsInvalidCursorRejected and
+// TestSearchTransactionsLimitOverMaxRejected cover spec.md's "cursor 无效或
+// 已不匹配当前筛选条件" and "limit 超过上限" scenarios.
+func TestSearchTransactionsInvalidCursorRejected(t *testing.T) {
+	session := newTestSession(t)
+	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
+	createNExpenses(t, session, accountID, categoryID, 3, futureTime())
+
+	callToolExpectError(t, session, "search_transactions", tools.SearchTransactionsInput{
+		Cursor: "this-is-not-a-valid-cursor",
+	})
+}
+
+func TestSearchTransactionsCursorRejectedWhenFiltersChange(t *testing.T) {
+	session := newTestSession(t)
+	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
+	createNExpenses(t, session, accountID, categoryID, 3, futureTime())
+
+	var otherAccount tools.ManageAccountOutput
+	callTool(t, session, "manage_account", tools.ManageAccountInput{
+		Operation: "create",
+		Name:      "Other Wallet",
+		Type:      "cash",
+		Currency:  "CNY",
+		Balance:   0,
+	}, &otherAccount)
+
+	var page tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{Limit: 1}, &page)
+	if page.NextCursor == "" {
+		t.Fatal("expected next_cursor from the first page to exercise the mismatch")
+	}
+
+	// Same cursor, but now scoped to a different account_id filter than the
+	// one it was issued under -- must be rejected, not silently reused.
+	callToolExpectError(t, session, "search_transactions", tools.SearchTransactionsInput{
+		Limit:     1,
+		AccountID: otherAccount.Account.ID,
+		Cursor:    page.NextCursor,
+	})
+}
+
+func TestSearchTransactionsLimitOverMaxRejected(t *testing.T) {
+	session := newTestSession(t)
+	setupAccountAndCategory(t, session, 10000)
+
+	callToolExpectError(t, session, "search_transactions", tools.SearchTransactionsInput{Limit: 201})
+}
+
+// TestSearchTransactionsPaginationSurvivesLedgerChanges covers spec.md's
+// "上一页返回后账本发生变化" scenario: keyset pagination continues correctly
+// from the cursor's recorded (time, id) position even after the ledger
+// changes between calls -- new transactions are inserted (one before the
+// cursor position, one after) and an already-returned transaction is
+// updated. Not-yet-returned transactions must all still show up exactly
+// once; the transaction inserted behind the cursor position is legitimately
+// excluded, since keyset pagination cannot retroactively insert rows before
+// a position already paged past.
+func TestSearchTransactionsPaginationSurvivesLedgerChanges(t *testing.T) {
+	session := newTestSession(t)
+	accountID, categoryID := setupAccountAndCategory(t, session, 10000)
+	base := futureTime()
+
+	// T1..T4 at base+10, +20, +30, +40. setupAccountAndCategory's
+	// balance_adjustment (T0) has an earlier real time than any of these.
+	ids := createExpensesAtOffsets(t, session, accountID, categoryID, base, []int64{10, 20, 30, 40})
+
+	var page1 tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{Limit: 2}, &page1)
+	if len(page1.Transactions) != 2 {
+		t.Fatalf("page1: expected 2 transactions, got %d", len(page1.Transactions))
+	}
+	if page1.NextCursor == "" {
+		t.Fatal("page1: expected a next_cursor")
+	}
+	// page1 should be [T0 (balance_adjustment), T1].
+	if page1.Transactions[1].ID != ids[0] {
+		t.Fatalf("page1[1].ID = %q, want T1 %q", page1.Transactions[1].ID, ids[0])
+	}
+
+	// Ledger changes between page1 and page2:
+	// - a new transaction inserted before the cursor position (base+5,
+	//   earlier than T1's base+10, which page1's cursor already points
+	//   past) -- legitimately excluded from all future pages, since keyset
+	//   pagination can't retroactively insert rows before a position
+	//   already paged past.
+	var before tools.CreateTransactionOutput
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		Type: "expense", AccountID: accountID, CategoryID: categoryID, Amount: 999, Time: base + 5,
+	}, &before)
+	// - a new transaction inserted after everything so far -- must appear.
+	var after tools.CreateTransactionOutput
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		Type: "expense", AccountID: accountID, CategoryID: categoryID, Amount: 998, Time: base + 50,
+	}, &after)
+	// - T1 (already returned in page1) is updated -- must not reappear or
+	//   otherwise disturb pagination. Time is left unchanged so its keyset
+	//   position is stable.
+	callTool(t, session, "update_transaction", tools.UpdateTransactionInput{
+		ID:         ids[0],
+		Type:       "expense",
+		AccountID:  accountID,
+		CategoryID: categoryID,
+		Amount:     12345,
+		Time:       base + 10,
+		Comment:    "edited after page1",
+	}, &tools.UpdateTransactionOutput{})
+
+	var rest []tools.TransactionInfo
+	cursor := page1.NextCursor
+	for pages := 0; ; pages++ {
+		if pages > 20 {
+			t.Fatal("pagination did not terminate")
+		}
+		var page tools.SearchTransactionsOutput
+		callTool(t, session, "search_transactions", tools.SearchTransactionsInput{Limit: 2, Cursor: cursor}, &page)
+		rest = append(rest, page.Transactions...)
+		if page.NextCursor == "" {
+			break
+		}
+		cursor = page.NextCursor
+	}
+
+	wantIDs := []string{ids[1], ids[2], ids[3], after.Transaction.ID} // T2, T3, T4, "after"
+	if len(rest) != len(wantIDs) {
+		t.Fatalf("remaining pages returned %d transactions, want %d (%v got %v)", len(rest), len(wantIDs), idsOf(rest), wantIDs)
+	}
+	for i, txn := range rest {
+		if txn.ID != wantIDs[i] {
+			t.Fatalf("rest[%d].ID = %q, want %q (full sequence: %v)", i, txn.ID, wantIDs[i], idsOf(rest))
+		}
+	}
+	for _, txn := range rest {
+		if txn.ID == ids[0] {
+			t.Fatal("T1 (already returned in page1) reappeared after being updated")
+		}
+		if txn.ID == before.Transaction.ID {
+			t.Fatal("the transaction inserted behind the cursor position unexpectedly appeared")
+		}
+	}
+}
+
+func idsOf(txns []tools.TransactionInfo) []string {
+	ids := make([]string, len(txns))
+	for i, txn := range txns {
+		ids[i] = txn.ID
+	}
+	return ids
 }

@@ -98,7 +98,13 @@ WHERE (sqlc.narg('account_id')  IS NULL OR account_id = sqlc.narg('account_id'))
   AND (sqlc.narg('category_id') IS NULL OR category_id = sqlc.narg('category_id'))
   AND (sqlc.narg('start_time')  IS NULL OR time >= sqlc.narg('start_time'))
   AND (sqlc.narg('end_time')    IS NULL OR time <= sqlc.narg('end_time'))
-ORDER BY time, id;
+  AND (
+    sqlc.narg('after_time') IS NULL
+    OR time > sqlc.narg('after_time')
+    OR (time = sqlc.narg('after_time') AND id > sqlc.narg('after_id'))
+  )
+ORDER BY time, id
+LIMIT sqlc.arg('limit');
 
 -- name: UpdateTransaction :one
 UPDATE transactions
