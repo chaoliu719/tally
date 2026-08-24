@@ -61,3 +61,60 @@ func TestSearchTransactionsCursorRejectsMismatchedFilter(t *testing.T) {
 		t.Fatal("expected an error when the cursor was issued under a filter and the current request has none")
 	}
 }
+
+// These cover add-transaction-keyword-search's design.md decision that
+// Keyword (trimmed to its canonical value) participates in
+// searchTransactionsFilterFingerprint exactly like the other filter fields:
+// same keyword -> same fingerprint, different keyword (including switching
+// to/from "no keyword") -> different fingerprint, and a cursor issued under
+// one keyword is rejected when decoded under another.
+
+func TestSearchTransactionsFilterFingerprintSameKeywordSameFingerprint(t *testing.T) {
+	a := searchTransactionsFilterFields{LedgerID: 1, SourceID: sql.NullInt64{Int64: 7, Valid: true}, Keyword: "starbucks"}
+	b := searchTransactionsFilterFields{LedgerID: 1, SourceID: sql.NullInt64{Int64: 7, Valid: true}, Keyword: "starbucks"}
+
+	if searchTransactionsFilterFingerprint(a) != searchTransactionsFilterFingerprint(b) {
+		t.Fatal("expected identical filters (including keyword) to produce the same fingerprint")
+	}
+}
+
+func TestSearchTransactionsFilterFingerprintDiffersByKeyword(t *testing.T) {
+	base := searchTransactionsFilterFields{LedgerID: 1}
+	withKeywordA := searchTransactionsFilterFields{LedgerID: 1, Keyword: "coffee"}
+	withKeywordB := searchTransactionsFilterFields{LedgerID: 1, Keyword: "tea"}
+
+	if searchTransactionsFilterFingerprint(base) == searchTransactionsFilterFingerprint(withKeywordA) {
+		t.Fatal("expected switching from no keyword to a keyword to change the fingerprint")
+	}
+	if searchTransactionsFilterFingerprint(withKeywordA) == searchTransactionsFilterFingerprint(base) {
+		t.Fatal("expected switching from a keyword to no keyword to change the fingerprint")
+	}
+	if searchTransactionsFilterFingerprint(withKeywordA) == searchTransactionsFilterFingerprint(withKeywordB) {
+		t.Fatal("expected two different keywords to produce different fingerprints")
+	}
+}
+
+func TestSearchTransactionsCursorRejectsMismatchedKeyword(t *testing.T) {
+	issuedWithKeyword := searchTransactionsFilterFields{LedgerID: 1, Keyword: "starbucks"}
+	cursor := encodeSearchTransactionsCursor(100, 1, issuedWithKeyword)
+
+	// Decoding under no keyword at all must be rejected.
+	noKeyword := searchTransactionsFilterFields{LedgerID: 1}
+	if _, _, err := decodeSearchTransactionsCursor(cursor, noKeyword); err == nil {
+		t.Fatal("expected an error decoding a keyword-issued cursor with no keyword in the current request")
+	}
+
+	// Decoding under a different keyword must also be rejected.
+	differentKeyword := searchTransactionsFilterFields{LedgerID: 1, Keyword: "walmart"}
+	if _, _, err := decodeSearchTransactionsCursor(cursor, differentKeyword); err == nil {
+		t.Fatal("expected an error decoding a cursor issued under a different keyword")
+	}
+
+	// And the reverse: a cursor issued with no keyword must be rejected when
+	// replayed with one.
+	issuedWithoutKeyword := searchTransactionsFilterFields{LedgerID: 1}
+	cursorNoKeyword := encodeSearchTransactionsCursor(100, 1, issuedWithoutKeyword)
+	if _, _, err := decodeSearchTransactionsCursor(cursorNoKeyword, searchTransactionsFilterFields{LedgerID: 1, Keyword: "starbucks"}); err == nil {
+		t.Fatal("expected an error decoding a no-keyword-issued cursor with a keyword in the current request")
+	}
+}

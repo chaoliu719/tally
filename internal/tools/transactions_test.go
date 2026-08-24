@@ -1133,3 +1133,293 @@ func TestSearchTransactionsCursorRejectedAcrossLedgers(t *testing.T) {
 	// the filter fingerprint includes ledger_id.
 	callToolExpectError(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerB, Cursor: page.NextCursor})
 }
+
+// TestSearchTransactionsKeywordMatchesCommentCaseInsensitively covers
+// spec.md's "按关键词筛选" scenario: keyword matches comment as a
+// case-insensitive substring.
+func TestSearchTransactionsKeywordMatchesCommentCaseInsensitively(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+
+	var starbucks tools.CreateTransactionOutput
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		Comment: "STARBUCKS #4821",
+	}, &starbucks)
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 200, Currency: "CNY", Time: futureTime() + 10,
+		Comment: "walmart grocery",
+	}, &tools.CreateTransactionOutput{})
+
+	var out tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Keyword: "starbucks"}, &out)
+
+	if len(out.Transactions) != 1 {
+		t.Fatalf("expected 1 transaction matching keyword, got %d", len(out.Transactions))
+	}
+	if out.Transactions[0].ID != starbucks.Transaction.ID {
+		t.Fatalf("matched transaction id = %q, want %q", out.Transactions[0].ID, starbucks.Transaction.ID)
+	}
+}
+
+// TestSearchTransactionsKeywordCombinedWithOtherFilters covers spec.md's
+// "关键词与其他筛选条件组合" scenario: keyword AND-combines with source_id/
+// category_id/start_time/end_time, so only transactions matching every
+// provided filter come back.
+func TestSearchTransactionsKeywordCombinedWithOtherFilters(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+
+	var otherSource tools.ManageSourceOutput
+	callTool(t, session, "manage_source", tools.ManageSourceInput{LedgerID: ledgerID, Operation: "create", Name: "Credit Card"}, &otherSource)
+
+	base := futureTime()
+
+	// Matches every filter -- the only one that should be returned.
+	var want tools.CreateTransactionOutput
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: base,
+		Comment: "starbucks coffee",
+	}, &want)
+
+	// Matches keyword and time, but the wrong source.
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: otherSource.Source.ID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: base,
+		Comment: "starbucks coffee",
+	}, &tools.CreateTransactionOutput{})
+
+	// Matches source/category/time, but not the keyword.
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: base,
+		Comment: "walmart grocery",
+	}, &tools.CreateTransactionOutput{})
+
+	// Matches keyword/source/category, but falls outside the time range.
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: base + 100000,
+		Comment: "starbucks coffee",
+	}, &tools.CreateTransactionOutput{})
+
+	var out tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{
+		LedgerID:   ledgerID,
+		SourceID:   sourceID,
+		CategoryID: categoryID,
+		StartTime:  base - 10,
+		EndTime:    base + 10,
+		Keyword:    "starbucks",
+	}, &out)
+
+	if len(out.Transactions) != 1 {
+		t.Fatalf("expected 1 transaction matching every filter, got %d", len(out.Transactions))
+	}
+	if out.Transactions[0].ID != want.Transaction.ID {
+		t.Fatalf("matched transaction id = %q, want %q", out.Transactions[0].ID, want.Transaction.ID)
+	}
+}
+
+// TestSearchTransactionsKeywordWildcardCharactersMatchedLiterally covers
+// spec.md's "关键词包含 LIKE 通配符字符" scenario: % and _ in keyword must be
+// matched as literal characters, not interpreted as SQL LIKE wildcards.
+func TestSearchTransactionsKeywordWildcardCharactersMatchedLiterally(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+
+	var literalMatch tools.CreateTransactionOutput
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		Comment: "50%_off invoice",
+	}, &literalMatch)
+
+	// If % and _ were interpreted as SQL LIKE wildcards instead of literal
+	// characters, the pattern %50%_off% would also match this comment
+	// (% absorbs "X", _ absorbs the space before "off") -- it must NOT be
+	// returned.
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 200, Currency: "CNY", Time: futureTime() + 10,
+		Comment: "50X off invoiceZ",
+	}, &tools.CreateTransactionOutput{})
+
+	var out tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Keyword: "50%_off"}, &out)
+
+	if len(out.Transactions) != 1 {
+		t.Fatalf("expected 1 transaction matching the literal keyword, got %d", len(out.Transactions))
+	}
+	if out.Transactions[0].ID != literalMatch.Transaction.ID {
+		t.Fatalf("matched transaction id = %q, want %q", out.Transactions[0].ID, literalMatch.Transaction.ID)
+	}
+}
+
+// TestSearchTransactionsBlankKeywordTreatedAsNotProvided covers spec.md's
+// "关键词为空白" scenario: an empty or whitespace-only keyword behaves
+// exactly like keyword wasn't provided at all.
+func TestSearchTransactionsBlankKeywordTreatedAsNotProvided(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		Comment: "groceries",
+	}, &tools.CreateTransactionOutput{})
+
+	for _, keyword := range []string{"", "   ", "\t\n "} {
+		var out tools.SearchTransactionsOutput
+		callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Keyword: keyword}, &out)
+		if len(out.Transactions) != 1 {
+			t.Fatalf("keyword %q: expected 1 transaction (blank keyword must behave as not provided), got %d", keyword, len(out.Transactions))
+		}
+	}
+}
+
+// TestSearchTransactionsKeywordNoMatchReturnsEmpty covers spec.md's "关键词
+// 未命中任何交易" scenario.
+func TestSearchTransactionsKeywordNoMatchReturnsEmpty(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		Comment: "groceries",
+	}, &tools.CreateTransactionOutput{})
+
+	var out tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Keyword: "nonexistent-merchant"}, &out)
+
+	if out.Transactions == nil {
+		t.Fatal("expected an empty slice, got nil")
+	}
+	if len(out.Transactions) != 0 {
+		t.Fatalf("expected 0 transactions, got %d", len(out.Transactions))
+	}
+	if out.NextCursor != "" {
+		t.Fatalf("expected no next_cursor when keyword matches nothing, got %q", out.NextCursor)
+	}
+}
+
+// TestSearchTransactionsKeywordPaginationCoversAllMatches covers spec.md's
+// "使用 cursor 翻页" scenario under a keyword filter: paging through with a
+// small limit until next_cursor disappears yields exactly the matching set
+// (no duplicates, no omissions, same order) as fetching everything in one
+// page, even with non-matching transactions interleaved between them.
+func TestSearchTransactionsKeywordPaginationCoversAllMatches(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+	base := futureTime()
+
+	var matchingIDs []string
+	for i := range 12 {
+		var created tools.CreateTransactionOutput
+		callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+			LedgerID: ledgerID,
+			Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: int64(i + 1), Currency: "CNY", Time: base + int64(i)*2,
+			Comment: "starbucks coffee",
+		}, &created)
+		matchingIDs = append(matchingIDs, created.Transaction.ID)
+
+		// Interleave a non-matching transaction so keyword filtering must
+		// skip it without breaking keyset pagination.
+		callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+			LedgerID: ledgerID,
+			Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 999, Currency: "CNY", Time: base + int64(i)*2 + 1,
+			Comment: "walmart grocery",
+		}, &tools.CreateTransactionOutput{})
+	}
+
+	var full tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Keyword: "starbucks", Limit: 200}, &full)
+	if len(full.Transactions) != 12 {
+		t.Fatalf("expected 12 matching transactions unpaginated, got %d", len(full.Transactions))
+	}
+
+	var paged []tools.TransactionInfo
+	cursor := ""
+	for pages := 0; ; pages++ {
+		if pages > 20 {
+			t.Fatal("pagination did not terminate")
+		}
+		var page tools.SearchTransactionsOutput
+		callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Keyword: "starbucks", Limit: 5, Cursor: cursor}, &page)
+		paged = append(paged, page.Transactions...)
+		if page.NextCursor == "" {
+			break
+		}
+		cursor = page.NextCursor
+	}
+
+	if len(paged) != len(matchingIDs) {
+		t.Fatalf("paginated total = %d, want %d", len(paged), len(matchingIDs))
+	}
+	seen := map[string]bool{}
+	for i, txn := range paged {
+		if seen[txn.ID] {
+			t.Fatalf("transaction %q returned more than once across pages", txn.ID)
+		}
+		seen[txn.ID] = true
+		if txn.ID != matchingIDs[i] {
+			t.Fatalf("paged[%d].ID = %q, want %q", i, txn.ID, matchingIDs[i])
+		}
+	}
+}
+
+// TestSearchTransactionsCursorRejectedWhenKeywordChanges covers spec.md's
+// "cursor 无效或已不匹配当前筛选条件" scenario for keyword: a cursor issued
+// under one keyword (including "no keyword") must be rejected when replayed
+// under a different one.
+func TestSearchTransactionsCursorRejectedWhenKeywordChanges(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+
+	for i := range 3 {
+		callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+			LedgerID: ledgerID,
+			Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: int64(i + 1), Currency: "CNY", Time: futureTime() + int64(i),
+			Comment: "starbucks coffee",
+		}, &tools.CreateTransactionOutput{})
+	}
+
+	var page tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Keyword: "starbucks", Limit: 1}, &page)
+	if page.NextCursor == "" {
+		t.Fatal("expected a next_cursor to exercise the keyword mismatch")
+	}
+
+	// A different keyword than the one the cursor was issued under.
+	callToolExpectError(t, session, "search_transactions", tools.SearchTransactionsInput{
+		LedgerID: ledgerID,
+		Keyword:  "walmart",
+		Limit:    1,
+		Cursor:   page.NextCursor,
+	})
+
+	// No keyword at all.
+	callToolExpectError(t, session, "search_transactions", tools.SearchTransactionsInput{
+		LedgerID: ledgerID,
+		Limit:    1,
+		Cursor:   page.NextCursor,
+	})
+
+	// The reverse: a cursor issued without a keyword must be rejected when
+	// replayed with one.
+	var noKeywordPage tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Limit: 1}, &noKeywordPage)
+	if noKeywordPage.NextCursor == "" {
+		t.Fatal("expected a next_cursor from the no-keyword page")
+	}
+	callToolExpectError(t, session, "search_transactions", tools.SearchTransactionsInput{
+		LedgerID: ledgerID,
+		Keyword:  "starbucks",
+		Limit:    1,
+		Cursor:   noKeywordPage.NextCursor,
+	})
+}

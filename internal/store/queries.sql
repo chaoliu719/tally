@@ -132,6 +132,7 @@ WHERE ledger_id = sqlc.arg('ledger_id')
   AND (sqlc.narg('category_id') IS NULL OR category_id = sqlc.narg('category_id'))
   AND (sqlc.narg('start_time')  IS NULL OR time >= sqlc.narg('start_time'))
   AND (sqlc.narg('end_time')    IS NULL OR time <= sqlc.narg('end_time'))
+  AND (sqlc.narg('keyword')     IS NULL OR (LOWER(comment) LIKE '%' || LOWER(sqlc.narg('keyword')) || '%' ESCAPE '\'))
   AND (
     sqlc.narg('after_time') IS NULL
     OR time > sqlc.narg('after_time')

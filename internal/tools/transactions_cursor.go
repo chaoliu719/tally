@@ -13,15 +13,19 @@ import (
 // embedded in a search_transactions cursor (see design.md's "cursor 编码:
 // base64url(JSON)"). It captures exactly the filter parameters that affect
 // which rows are eligible for keyset pagination -- ledger_id/source_id/
-// category_id/start_time/end_time -- so a cursor issued under one set of
-// filters is rejected if replayed against a different set (see the spec's
-// "cursor 无效或已不匹配当前筛选条件" scenario).
+// category_id/start_time/end_time/keyword -- so a cursor issued under one
+// set of filters is rejected if replayed against a different set (see the
+// spec's "cursor 无效或已不匹配当前筛选条件" scenario). Keyword stores the
+// trimmed, canonical keyword value; empty means "not provided", matching how
+// searchTransactions treats a blank keyword (see add-transaction-keyword-
+// search's design.md).
 type searchTransactionsFilterFields struct {
 	LedgerID   int64
 	SourceID   sql.NullInt64
 	CategoryID sql.NullInt64
 	StartTime  sql.NullInt64
 	EndTime    sql.NullInt64
+	Keyword    string
 }
 
 func searchTransactionsFilterFingerprint(f searchTransactionsFilterFields) string {

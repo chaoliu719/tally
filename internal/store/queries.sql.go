@@ -520,13 +520,14 @@ WHERE ledger_id = ?1
   AND (?3 IS NULL OR category_id = ?3)
   AND (?4  IS NULL OR time >= ?4)
   AND (?5    IS NULL OR time <= ?5)
+  AND (?6     IS NULL OR (LOWER(comment) LIKE '%' || LOWER(?6) || '%' ESCAPE '\'))
   AND (
-    ?6 IS NULL
-    OR time > ?6
-    OR (time = ?6 AND id > ?7)
+    ?7 IS NULL
+    OR time > ?7
+    OR (time = ?7 AND id > ?8)
   )
 ORDER BY time, id
-LIMIT ?8
+LIMIT ?9
 `
 
 type SearchTransactionsParams struct {
@@ -535,6 +536,7 @@ type SearchTransactionsParams struct {
 	CategoryID interface{}
 	StartTime  interface{}
 	EndTime    interface{}
+	Keyword    interface{}
 	AfterTime  interface{}
 	AfterID    sql.NullInt64
 	Limit      int64
@@ -547,6 +549,7 @@ func (q *Queries) SearchTransactions(ctx context.Context, arg SearchTransactions
 		arg.CategoryID,
 		arg.StartTime,
 		arg.EndTime,
+		arg.Keyword,
 		arg.AfterTime,
 		arg.AfterID,
 		arg.Limit,
