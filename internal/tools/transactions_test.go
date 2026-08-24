@@ -1164,6 +1164,47 @@ func TestSearchTransactionsKeywordMatchesCommentCaseInsensitively(t *testing.T) 
 	}
 }
 
+// TestSearchTransactionsKeywordMatchesChineseComment exercises keyword
+// matching over multi-byte UTF-8 text -- the product's real-world case: per
+// the comment discipline, comment holds the raw (typically Chinese) bill
+// text verbatim, and precedent retrieval searches it by a Chinese merchant
+// substring.
+func TestSearchTransactionsKeywordMatchesChineseComment(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+
+	var starbucks tools.CreateTransactionOutput
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 3200, Currency: "CNY", Time: futureTime(),
+		Comment: "星巴克咖啡(南京西路店) 美团支付-支付宝",
+	}, &starbucks)
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 8800, Currency: "CNY", Time: futureTime() + 10,
+		Comment: "沃尔玛购物",
+	}, &tools.CreateTransactionOutput{})
+
+	for _, keyword := range []string{"星巴克", "南京西路", "星巴克咖啡(南京西路店)"} {
+		var out tools.SearchTransactionsOutput
+		callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Keyword: keyword}, &out)
+		if len(out.Transactions) != 1 {
+			t.Fatalf("keyword %q: expected 1 transaction, got %d", keyword, len(out.Transactions))
+		}
+		if out.Transactions[0].ID != starbucks.Transaction.ID {
+			t.Fatalf("keyword %q: matched transaction id = %q, want %q", keyword, out.Transactions[0].ID, starbucks.Transaction.ID)
+		}
+	}
+
+	// A keyword that is not a contiguous substring of any comment must not
+	// match, even though every individual character appears.
+	var out tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Keyword: "星巴克 咖啡"}, &out)
+	if len(out.Transactions) != 0 {
+		t.Fatalf("non-contiguous keyword: expected 0 transactions, got %d", len(out.Transactions))
+	}
+}
+
 // TestSearchTransactionsKeywordCombinedWithOtherFilters covers spec.md's
 // "关键词与其他筛选条件组合" scenario: keyword AND-combines with source_id/
 // category_id/start_time/end_time, so only transactions matching every
