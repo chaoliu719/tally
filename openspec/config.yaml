@@ -76,8 +76,6 @@ context: |
   - 外部记忆基础设施(Memory MCP 等——习惯层归 Agent,见上)
 
   延后(方向已定,但现在不做,也不要 propose):
-  - keyword 过滤:search_transactions 按 comment 子串过滤(`LIKE` 即可,个人账本量级
-    不需要 FTS)。基础特性,先例检索依赖它,时机到了再 propose。
   - 批量导入/导出:自用阶段不需要;若将来推向多用户则必做。形态已定:mcp 侧一个
     app 无关的 batch_create_transactions(preview → apply),plugin 侧每 APP 一个解析
     脚本,解析走代码不走 Agent 上下文,Agent 只看摘要与异常清单。
