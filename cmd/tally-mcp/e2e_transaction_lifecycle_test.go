@@ -13,7 +13,8 @@ import (
 // that reference. This test drives a source and a category into exactly
 // that blocked state, then uses delete_transaction to clear the referencing
 // transaction and confirms manage_source/manage_category's own preview ->
-// apply delete now completes successfully.
+// apply delete now completes successfully. It also drives update_transaction
+// through the same real wiring, since no other e2e journey touches it.
 func TestE2ETransactionLifecycleUnblocksSourceAndCategoryDeletion(t *testing.T) {
 	session, ledgerID := newE2ESession(t)
 
@@ -38,6 +39,24 @@ func TestE2ETransactionLifecycleUnblocksSourceAndCategoryDeletion(t *testing.T) 
 		Currency:   "CNY",
 		Time:       futureTime(),
 	}, &expense)
+
+	// update_transaction: full-field replacement (a different amount and
+	// comment), still referencing the same source/category. This is the only
+	// e2e journey that drives update_transaction through the real wiring.
+	var updated tools.UpdateTransactionOutput
+	call(t, session, "update_transaction", tools.UpdateTransactionInput{LedgerID: ledgerID,
+		ID:         expense.Transaction.ID,
+		Type:       "expense",
+		SourceID:   source.Source.ID,
+		CategoryID: category.Category.ID,
+		Amount:     1500,
+		Currency:   "CNY",
+		Time:       futureTime(),
+		Comment:    "updated amount",
+	}, &updated)
+	if updated.Transaction.Amount != 1500 {
+		t.Fatalf("updated amount = %d, want 1500", updated.Transaction.Amount)
+	}
 
 	// Both are referenced by the expense right now, so both deletes must be
 	// rejected -- this is the deadlock this change fixes.

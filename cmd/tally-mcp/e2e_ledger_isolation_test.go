@@ -10,7 +10,9 @@ import (
 // category, and transaction, all through main()'s real buildMux wiring, and
 // verifies they never leak into each other's listings, searches, or
 // summaries -- and that a transaction in one ledger cannot reference a
-// source/category from the other.
+// source/category from the other. It also drives list_ledgers, since it has
+// no per-ledger scope of its own and this is the test with more than one
+// ledger to list.
 func TestE2ELedgerIsolation(t *testing.T) {
 	session, ledgerA := newE2ESession(t)
 
@@ -20,6 +22,20 @@ func TestE2ELedgerIsolation(t *testing.T) {
 		Name:      "Company",
 	}, &ledgerBOut)
 	ledgerB := ledgerBOut.Ledger.ID
+
+	// list_ledgers: unlike every other list_* tool, this one isn't scoped to
+	// a single ledger, so its journey coverage lives here alongside the
+	// other cross-ledger assertions -- both ledgers must show up.
+	var ledgers tools.ListLedgersOutput
+	call(t, session, "list_ledgers", tools.ListLedgersInput{}, &ledgers)
+	var foundA, foundB bool
+	for _, l := range ledgers.Ledgers {
+		foundA = foundA || l.ID == ledgerA
+		foundB = foundB || l.ID == ledgerB
+	}
+	if !foundA || !foundB {
+		t.Fatalf("list_ledgers = %+v, want both ledgerA (%q) and ledgerB (%q)", ledgers.Ledgers, ledgerA, ledgerB)
+	}
 
 	// Same-named source, category, and transaction amount in both ledgers.
 	var sourceA, sourceB tools.ManageSourceOutput
