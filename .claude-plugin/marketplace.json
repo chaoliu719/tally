@@ -1,0 +1,9 @@
+{
+  "name": "tally",
+  "plugins": [
+    {
+      "name": "tally",
+      "source": "./plugin"
+    }
+  ]
+}

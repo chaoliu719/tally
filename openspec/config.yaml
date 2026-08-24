@@ -4,9 +4,10 @@ schema: spec-driven
 context: |
   产品愿景:tally 是一个装进 Agent 的个人记账能力包,最终形态是一个 plugin =
   tally-mcp + skill + command + agent + hook。tally-mcp 只是其中的"事实内核"——一个纯 MCP
-  server,提供个人记账业务逻辑,不做 REST API、不做前端 UI;对话就是唯一的 UI。本仓库当前
-  只包含 tally-mcp 这一部分。一句话边界:tally 管"你的钱记成了什么",不管"你这个人是
-  什么样"。定位语:你的钱是一个你能拿走的文件(单文件 SQLite)。
+  server,提供个人记账业务逻辑,不做 REST API、不做前端 UI;对话就是唯一的 UI。仓库结构是产品
+  等式的物理形态:`mcp/` 是事实内核,`plugin/` 是实践层(骨架已搭,内容随需求长出)。一句话
+  边界:tally 管"你的钱记成了什么",不管"你这个人是什么样"。定位语:你的钱是一个你能拿走的
+  文件(单文件 SQLite)。
 
   三层结构(每层归属不同,互不越界):
   - 事实层 → tally-mcp(SQLite):交易、来源、分类、账本。永远算得对;能从事实推导的
@@ -44,7 +45,7 @@ context: |
   时代"的认证),不挪用 ledger。
 
   集成方式:存储与业务逻辑层完全自建,不依赖 ezbookkeeping(或任何其他记账库)作为 Go module。
-  `internal/store` 下手写 SQL(`schema.sql`/`queries.sql`),用 sqlc 在构建期生成类型安全的查询代码,
+  `mcp/internal/store` 下手写 SQL(`schema.sql`/`queries.sql`),用 sqlc 在构建期生成类型安全的查询代码,
   不引入 ORM;SQLite 驱动用纯 Go 的 modernc.org/sqlite,不需要 cgo。没有独立的迁移框架——只有一个
   schema 版本,靠 `CREATE TABLE IF NOT EXISTS` 一次性建好。MCP 协议层(JSON-RPC 解析、工具注册、传输)
   同样完全自研,不依赖任何记账库的协议实现。

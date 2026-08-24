@@ -1,18 +1,11 @@
-# Reference clones — read-only research material, not part of this project
-references/
-
 # Common
-node_modules/
-dist/
-build/
 *.log
 .DS_Store
 .env
 
 # Go build output and local SQLite data
-/tally-mcp
+/mcp/tally-mcp
 *.db
 
 # Claude Code local state (per-machine, not shared)
 .claude/settings.local.json
-.mcp.json

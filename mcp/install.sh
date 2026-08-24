@@ -2,12 +2,12 @@
 # Fetches docker-compose.yml and generates a .env with random secrets, for
 # deploying tally-mcp without cloning the repo:
 #
-#   curl -fsSL https://raw.githubusercontent.com/chaoliu719/tally-mcp/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/chaoliu719/tally/main/mcp/install.sh | bash
 set -euo pipefail
 
-REPO="chaoliu719/tally-mcp"
+REPO="chaoliu719/tally"
 BRANCH="main"
-RAW_BASE="https://raw.githubusercontent.com/${REPO}/${BRANCH}"
+RAW_BASE="https://raw.githubusercontent.com/${REPO}/${BRANCH}/mcp"
 DEST_DIR="${1:-tally-mcp}"
 
 command -v curl >/dev/null || { echo "error: curl is required" >&2; exit 1; }
