@@ -87,7 +87,7 @@ func TestE2ESourceLifecycle(t *testing.T) {
 		Type:       "expense",
 		SourceID:   sourceB.Source.ID,
 		CategoryID: category.Category.ID,
-		Amount:     500,
+		Amount:     cnyAmount(500),
 		Currency:   "CNY",
 		Time:       futureTime(),
 		Comment:    "keeps source B referenced",

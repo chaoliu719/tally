@@ -49,11 +49,11 @@ func TestE2ELedgerIsolation(t *testing.T) {
 	var txnA, txnB tools.CreateTransactionOutput
 	call(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerA, Type: "expense", SourceID: sourceA.Source.ID, CategoryID: categoryA.Category.ID,
-		Amount: 100, Currency: "CNY", Time: futureTime(),
+		Amount: cnyAmount(100), Currency: "CNY", Time: futureTime(),
 	}, &txnA)
 	call(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerB, Type: "expense", SourceID: sourceB.Source.ID, CategoryID: categoryB.Category.ID,
-		Amount: 999, Currency: "CNY", Time: futureTime(),
+		Amount: cnyAmount(999), Currency: "CNY", Time: futureTime(),
 	}, &txnB)
 
 	// list_sources/list_categories: each ledger sees only its own row, even
@@ -82,10 +82,10 @@ func TestE2ELedgerIsolation(t *testing.T) {
 	var txnsA, txnsB tools.SearchTransactionsOutput
 	call(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerA}, &txnsA)
 	call(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerB}, &txnsB)
-	if len(txnsA.Transactions) != 1 || txnsA.Transactions[0].Amount != 100 {
+	if len(txnsA.Transactions) != 1 || txnsA.Transactions[0].Amount != cnyAmount(100) {
 		t.Fatalf("ledgerA transactions = %+v, want a single 100-amount transaction", txnsA.Transactions)
 	}
-	if len(txnsB.Transactions) != 1 || txnsB.Transactions[0].Amount != 999 {
+	if len(txnsB.Transactions) != 1 || txnsB.Transactions[0].Amount != cnyAmount(999) {
 		t.Fatalf("ledgerB transactions = %+v, want a single 999-amount transaction", txnsB.Transactions)
 	}
 
@@ -100,11 +100,11 @@ func TestE2ELedgerIsolation(t *testing.T) {
 	// A transaction in ledgerA cannot reference ledgerB's source or category.
 	callExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerA, Type: "expense", SourceID: sourceB.Source.ID, CategoryID: categoryA.Category.ID,
-		Amount: 50, Currency: "CNY", Time: futureTime(),
+		Amount: cnyAmount(50), Currency: "CNY", Time: futureTime(),
 	})
 	callExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerA, Type: "expense", SourceID: sourceA.Source.ID, CategoryID: categoryB.Category.ID,
-		Amount: 50, Currency: "CNY", Time: futureTime(),
+		Amount: cnyAmount(50), Currency: "CNY", Time: futureTime(),
 	})
 
 	// get_transaction under the wrong ledger behaves like "not found".

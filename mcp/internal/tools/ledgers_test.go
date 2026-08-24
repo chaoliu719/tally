@@ -216,7 +216,7 @@ func TestManageLedgerDeleteBlockedByTransactions(t *testing.T) {
 		Type:       "expense",
 		SourceID:   sourceID,
 		CategoryID: categoryID,
-		Amount:     100,
+		Amount:     cnyAmount(100),
 		Currency:   "CNY",
 		Time:       futureTime(),
 	}, &tools.CreateTransactionOutput{})

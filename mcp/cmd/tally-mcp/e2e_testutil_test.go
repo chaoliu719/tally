@@ -12,11 +12,24 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"tally/internal/bootstrap"
+	"tally/internal/currency"
 	"tally/internal/tools"
 )
 
 func futureTime() int64 {
 	return time.Now().Add(time.Hour).Unix()
+}
+
+// cnyAmount formats minorUnits (fen) as the CNY decimal-string amount the
+// wire format now uses, so existing test cases keep exercising the same
+// underlying minor-unit values they always did (e.g. cnyAmount(1000) ==
+// "10.00").
+func cnyAmount(minorUnits int64) string {
+	s, err := currency.FormatMajor("CNY", minorUnits)
+	if err != nil {
+		panic(err)
+	}
+	return s
 }
 
 // newE2ESession spins up a fresh SQLite-backed server (in a temp dir) using

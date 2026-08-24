@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -31,6 +32,16 @@ const testConfirmSecret = "test-confirmation-secret"
 // scoped to. Each call gets its own empty ledger.
 func newTestSession(t *testing.T) (*mcp.ClientSession, string) {
 	t.Helper()
+	session, ledgerID, _ := newTestSessionWithStore(t)
+	return session, ledgerID
+}
+
+// newTestSessionWithStore is like newTestSession, but also returns the
+// store.Queries backing the same database, for tests that need to verify the
+// underlying minor-units integer directly (via storedAmount) rather than
+// only the wire-format amount string.
+func newTestSessionWithStore(t *testing.T) (*mcp.ClientSession, string, *store.Queries) {
+	t.Helper()
 
 	dbPath := filepath.Join(t.TempDir(), "tally-test.db")
 	cfg := &bootstrap.Config{
@@ -45,8 +56,9 @@ func newTestSession(t *testing.T) (*mcp.ClientSession, string) {
 	}
 	t.Cleanup(func() { db.Close() })
 
+	q := store.New(db)
 	server := mcpserver.New("tally-mcp-test", "0.0.0")
-	tools.RegisterAll(server, tools.Deps{DB: db, Q: store.New(db), ConfirmSecret: cfg.ConfirmationSecret})
+	tools.RegisterAll(server, tools.Deps{DB: db, Q: q, ConfirmSecret: cfg.ConfirmationSecret})
 
 	httpServer := httptest.NewServer(mcpserver.HTTPHandler(server))
 	t.Cleanup(httpServer.Close)
@@ -63,7 +75,31 @@ func newTestSession(t *testing.T) (*mcp.ClientSession, string) {
 	var ledgerOut tools.ManageLedgerOutput
 	callTool(t, session, "manage_ledger", tools.ManageLedgerInput{Operation: "create", Name: "Test Ledger"}, &ledgerOut)
 
-	return session, ledgerOut.Ledger.ID
+	return session, ledgerOut.Ledger.ID, q
+}
+
+// storedAmount looks up txnID directly through q (bypassing the MCP wire
+// format entirely) and returns its stored amount in the currency's smallest
+// unit -- positive for income, negative for expense, exactly as the SUM(amount)
+// balance query sees it. Tests use this alongside the wire-format amount
+// string to verify both layers agree on the same underlying value.
+func storedAmount(t *testing.T, q *store.Queries, ledgerIDStr, txnIDStr string) int64 {
+	t.Helper()
+
+	ledgerID, err := strconv.ParseInt(ledgerIDStr, 10, 64)
+	if err != nil {
+		t.Fatalf("storedAmount: invalid ledger id %q: %v", ledgerIDStr, err)
+	}
+	txnID, err := strconv.ParseInt(txnIDStr, 10, 64)
+	if err != nil {
+		t.Fatalf("storedAmount: invalid transaction id %q: %v", txnIDStr, err)
+	}
+
+	txn, err := q.GetTransaction(context.Background(), store.GetTransactionParams{ID: txnID, LedgerID: ledgerID})
+	if err != nil {
+		t.Fatalf("storedAmount: GetTransaction(%s): %v", txnIDStr, err)
+	}
+	return txn.Amount
 }
 
 // callTool invokes a tool and unmarshals its structured output into out. It

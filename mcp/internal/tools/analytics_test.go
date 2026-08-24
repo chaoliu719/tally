@@ -54,11 +54,11 @@ func TestGetFinancialSummaryTimeRange(t *testing.T) {
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: earlyTime,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: earlyTime,
 	}, &tools.CreateTransactionOutput{})
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 200, Currency: "CNY", Time: lateTime,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(200), Currency: "CNY", Time: lateTime,
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.GetFinancialSummaryOutput
@@ -93,11 +93,11 @@ func TestGetFinancialSummaryNoTimeRange(t *testing.T) {
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "income", SourceID: sourceID, CategoryID: categoryID, Amount: 500, Currency: "CNY", Time: futureTime(),
+		Type:     "income", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(500), Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 200, Currency: "CNY", Time: futureTime(),
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(200), Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.GetFinancialSummaryOutput
@@ -125,7 +125,7 @@ func TestGetFinancialSummaryEmptyRange(t *testing.T) {
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.GetFinancialSummaryOutput
@@ -163,11 +163,11 @@ func TestGetFinancialSummaryMultiCurrency(t *testing.T) {
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "income", SourceID: source.Source.ID, CategoryID: category.Category.ID, Amount: 1000, Currency: "CNY", Time: futureTime(),
+		Type:     "income", SourceID: source.Source.ID, CategoryID: category.Category.ID, Amount: cnyAmount(1000), Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: source.Source.ID, CategoryID: category.Category.ID, Amount: 300, Currency: "USD", Time: futureTime(),
+		Type:     "expense", SourceID: source.Source.ID, CategoryID: category.Category.ID, Amount: cnyAmount(300), Currency: "USD", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.GetFinancialSummaryOutput
@@ -207,11 +207,11 @@ func TestGetFinancialSummaryByCategory(t *testing.T) {
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryA, Amount: 100, Currency: "CNY", Time: futureTime(),
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryA, Amount: cnyAmount(100), Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryB.Category.ID, Amount: 250, Currency: "CNY", Time: futureTime(),
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryB.Category.ID, Amount: cnyAmount(250), Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.GetFinancialSummaryOutput
@@ -256,11 +256,11 @@ func TestGetFinancialSummaryBySource(t *testing.T) {
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceA, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		Type:     "expense", SourceID: sourceA, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceB.Source.ID, CategoryID: categoryID, Amount: 250, Currency: "CNY", Time: futureTime(),
+		Type:     "expense", SourceID: sourceB.Source.ID, CategoryID: categoryID, Amount: cnyAmount(250), Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.GetFinancialSummaryOutput
@@ -300,7 +300,7 @@ func TestGetFinancialSummaryIsolatedByLedger(t *testing.T) {
 	sourceA, categoryA := setupSourceAndCategory(t, session, ledgerA)
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerA,
-		Type:     "expense", SourceID: sourceA, CategoryID: categoryA, Amount: 100, Currency: "CNY", Time: futureTime(),
+		Type:     "expense", SourceID: sourceA, CategoryID: categoryA, Amount: cnyAmount(100), Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 
 	var ledgerBOut tools.ManageLedgerOutput
@@ -309,7 +309,7 @@ func TestGetFinancialSummaryIsolatedByLedger(t *testing.T) {
 	sourceB, categoryB := setupSourceAndCategory(t, session, ledgerB)
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerB,
-		Type:     "expense", SourceID: sourceB, CategoryID: categoryB, Amount: 999, Currency: "CNY", Time: futureTime(),
+		Type:     "expense", SourceID: sourceB, CategoryID: categoryB, Amount: cnyAmount(999), Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.GetFinancialSummaryOutput

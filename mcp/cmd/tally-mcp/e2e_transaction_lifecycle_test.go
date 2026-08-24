@@ -35,7 +35,7 @@ func TestE2ETransactionLifecycleUnblocksSourceAndCategoryDeletion(t *testing.T) 
 		Type:       "expense",
 		SourceID:   source.Source.ID,
 		CategoryID: category.Category.ID,
-		Amount:     1000,
+		Amount:     cnyAmount(1000),
 		Currency:   "CNY",
 		Time:       futureTime(),
 	}, &expense)
@@ -49,13 +49,13 @@ func TestE2ETransactionLifecycleUnblocksSourceAndCategoryDeletion(t *testing.T) 
 		Type:       "expense",
 		SourceID:   source.Source.ID,
 		CategoryID: category.Category.ID,
-		Amount:     1500,
+		Amount:     cnyAmount(1500),
 		Currency:   "CNY",
 		Time:       futureTime(),
 		Comment:    "updated amount",
 	}, &updated)
-	if updated.Transaction.Amount != 1500 {
-		t.Fatalf("updated amount = %d, want 1500", updated.Transaction.Amount)
+	if updated.Transaction.Amount != cnyAmount(1500) {
+		t.Fatalf("updated amount = %q, want %q", updated.Transaction.Amount, cnyAmount(1500))
 	}
 
 	// Both are referenced by the expense right now, so both deletes must be

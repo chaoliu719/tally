@@ -6,11 +6,24 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"tally/internal/currency"
 	"tally/internal/tools"
 )
 
 func futureTime() int64 {
 	return time.Now().Add(time.Hour).Unix()
+}
+
+// cnyAmount formats minorUnits (fen) as the CNY decimal-string amount the
+// wire format now uses, so existing test cases keep exercising the same
+// underlying minor-unit values they always did (e.g. cnyAmount(2500) ==
+// "25.00").
+func cnyAmount(minorUnits int64) string {
+	s, err := currency.FormatMajor("CNY", minorUnits)
+	if err != nil {
+		panic(err)
+	}
+	return s
 }
 
 // setupSourceAndCategory creates a source and a usable category, returning
@@ -37,7 +50,7 @@ func setupSourceAndCategory(t *testing.T, session *mcp.ClientSession, ledgerID s
 }
 
 func TestCreateTransactionExpense(t *testing.T) {
-	session, ledgerID := newTestSession(t)
+	session, ledgerID, q := newTestSessionWithStore(t)
 	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
 
 	var created tools.CreateTransactionOutput
@@ -46,20 +59,26 @@ func TestCreateTransactionExpense(t *testing.T) {
 		Type:       "expense",
 		SourceID:   sourceID,
 		CategoryID: categoryID,
-		Amount:     2500,
+		Amount:     cnyAmount(2500),
 		Currency:   "CNY",
 		Time:       futureTime(),
 		Comment:    "groceries run",
 	}, &created)
 
-	if created.Transaction.Amount != 2500 {
-		t.Errorf("Amount = %d, want 2500", created.Transaction.Amount)
+	if created.Transaction.Amount != cnyAmount(2500) {
+		t.Errorf("Amount = %q, want %q", created.Transaction.Amount, cnyAmount(2500))
 	}
 	if created.Transaction.Currency != "CNY" {
 		t.Errorf("Currency = %q, want CNY", created.Transaction.Currency)
 	}
 	if created.Transaction.SourceID != sourceID {
 		t.Errorf("SourceID = %q, want %q", created.Transaction.SourceID, sourceID)
+	}
+	// Expense must be stored as a negative minor-units integer, so
+	// SUM(amount) directly yields the net balance -- verified independently
+	// of the (always-positive) wire-format amount string.
+	if got := storedAmount(t, q, ledgerID, created.Transaction.ID); got != -2500 {
+		t.Errorf("stored amount = %d, want -2500", got)
 	}
 
 	var got tools.GetTransactionOutput
@@ -70,7 +89,7 @@ func TestCreateTransactionExpense(t *testing.T) {
 }
 
 func TestCreateTransactionIncome(t *testing.T) {
-	session, ledgerID := newTestSession(t)
+	session, ledgerID, q := newTestSessionWithStore(t)
 	sourceID, _ := setupSourceAndCategory(t, session, ledgerID)
 
 	var incomeCategory tools.ManageCategoryOutput
@@ -86,13 +105,17 @@ func TestCreateTransactionIncome(t *testing.T) {
 		Type:       "income",
 		SourceID:   sourceID,
 		CategoryID: incomeCategory.Category.ID,
-		Amount:     5000,
+		Amount:     cnyAmount(5000),
 		Currency:   "CNY",
 		Time:       futureTime(),
 	}, &created)
 
-	if created.Transaction.Amount != 5000 {
-		t.Errorf("Amount = %d, want 5000", created.Transaction.Amount)
+	if created.Transaction.Amount != cnyAmount(5000) {
+		t.Errorf("Amount = %q, want %q", created.Transaction.Amount, cnyAmount(5000))
+	}
+	// Income must be stored as a positive minor-units integer.
+	if got := storedAmount(t, q, ledgerID, created.Transaction.ID); got != 5000 {
+		t.Errorf("stored amount = %d, want 5000", got)
 	}
 }
 
@@ -105,7 +128,7 @@ func TestCreateTransactionRejectsNonexistentSource(t *testing.T) {
 		Type:       "expense",
 		SourceID:   "999999",
 		CategoryID: categoryID,
-		Amount:     100,
+		Amount:     cnyAmount(100),
 		Currency:   "CNY",
 		Time:       futureTime(),
 	})
@@ -126,7 +149,7 @@ func TestCreateTransactionRejectsNonexistentCategory(t *testing.T) {
 		Type:       "expense",
 		SourceID:   sourceID,
 		CategoryID: "999999",
-		Amount:     100,
+		Amount:     cnyAmount(100),
 		Currency:   "CNY",
 		Time:       futureTime(),
 	})
@@ -157,7 +180,7 @@ func TestCreateTransactionAllowsTopLevelCategory(t *testing.T) {
 		Type:       "expense",
 		SourceID:   sourceID,
 		CategoryID: topLevel.Category.ID,
-		Amount:     100,
+		Amount:     cnyAmount(100),
 		Currency:   "CNY",
 		Time:       futureTime(),
 	}, &tools.CreateTransactionOutput{})
@@ -172,7 +195,7 @@ func TestCreateTransactionMissingRequiredField(t *testing.T) {
 		Type:     "expense",
 		SourceID: sourceID,
 		// CategoryID omitted
-		Amount:   100,
+		Amount:   cnyAmount(100),
 		Currency: "CNY",
 		Time:     futureTime(),
 	})
@@ -193,7 +216,7 @@ func TestCreateTransactionMissingCurrency(t *testing.T) {
 		Type:       "expense",
 		SourceID:   sourceID,
 		CategoryID: categoryID,
-		Amount:     100,
+		Amount:     cnyAmount(100),
 		// Currency omitted
 		Time: futureTime(),
 	})
@@ -214,7 +237,7 @@ func TestCreateTransactionUnsupportedCurrency(t *testing.T) {
 		Type:       "expense",
 		SourceID:   sourceID,
 		CategoryID: categoryID,
-		Amount:     100,
+		Amount:     cnyAmount(100),
 		Currency:   "NOTACURRENCY",
 		Time:       futureTime(),
 	})
@@ -223,6 +246,144 @@ func TestCreateTransactionUnsupportedCurrency(t *testing.T) {
 	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID}, &list)
 	if len(list.Transactions) != 0 {
 		t.Fatalf("expected no transaction recorded, got %d", len(list.Transactions))
+	}
+}
+
+// TestCreateTransactionRejectsInvalidAmountFormat covers spec.md's "金额格式
+// 非法" scenario: an amount string that isn't a valid decimal number is
+// rejected, not silently coerced.
+func TestCreateTransactionRejectsInvalidAmountFormat(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+
+	for _, amount := range []string{"fifty", "50.0.0", "", "50,00"} {
+		callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
+			LedgerID:   ledgerID,
+			Type:       "expense",
+			SourceID:   sourceID,
+			CategoryID: categoryID,
+			Amount:     amount,
+			Currency:   "CNY",
+			Time:       futureTime(),
+		})
+	}
+
+	var list tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID}, &list)
+	if len(list.Transactions) != 0 {
+		t.Fatalf("expected no transaction recorded, got %d", len(list.Transactions))
+	}
+}
+
+// TestCreateTransactionRejectsAmountPrecisionExceedingCurrency covers
+// spec.md's "金额小数位数超出币种精度" scenario: CNY allows at most 2
+// fractional digits, so "50.001" must be rejected.
+func TestCreateTransactionRejectsAmountPrecisionExceedingCurrency(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+
+	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID:   ledgerID,
+		Type:       "expense",
+		SourceID:   sourceID,
+		CategoryID: categoryID,
+		Amount:     "50.001",
+		Currency:   "CNY",
+		Time:       futureTime(),
+	})
+
+	var list tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID}, &list)
+	if len(list.Transactions) != 0 {
+		t.Fatalf("expected no transaction recorded, got %d", len(list.Transactions))
+	}
+}
+
+// TestCreateTransactionRejectsZeroOrNegativeAmount covers spec.md's "金额为
+// 零或负值" scenario.
+func TestCreateTransactionRejectsZeroOrNegativeAmount(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+
+	for _, amount := range []string{"0.00", "-10.00"} {
+		callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
+			LedgerID:   ledgerID,
+			Type:       "expense",
+			SourceID:   sourceID,
+			CategoryID: categoryID,
+			Amount:     amount,
+			Currency:   "CNY",
+			Time:       futureTime(),
+		})
+	}
+
+	var list tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID}, &list)
+	if len(list.Transactions) != 0 {
+		t.Fatalf("expected no transaction recorded, got %d", len(list.Transactions))
+	}
+}
+
+// TestCreateTransactionNonCNYCurrencyPrecision covers spec.md's amount
+// precision guarantee end to end for non-CNY currencies: create_transaction
+// -> get_transaction -> search_transactions must all agree on the exact
+// amount string, at that currency's own standard precision -- not silently
+// degraded to two decimal places the way a hardcoded "%.2f" formatter would.
+func TestCreateTransactionNonCNYCurrencyPrecision(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+
+	cases := []struct {
+		name     string
+		currency string
+		amount   string
+	}{
+		{"JPY zero-decimal", "JPY", "5000"},
+		{"BHD three-decimal", "BHD", "5.000"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var created tools.CreateTransactionOutput
+			callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+				LedgerID:   ledgerID,
+				Type:       "expense",
+				SourceID:   sourceID,
+				CategoryID: categoryID,
+				Amount:     c.amount,
+				Currency:   c.currency,
+				Time:       futureTime(),
+			}, &created)
+
+			if created.Transaction.Amount != c.amount {
+				t.Fatalf("create_transaction Amount = %q, want %q", created.Transaction.Amount, c.amount)
+			}
+			if created.Transaction.Currency != c.currency {
+				t.Fatalf("create_transaction Currency = %q, want %q", created.Transaction.Currency, c.currency)
+			}
+
+			var got tools.GetTransactionOutput
+			callTool(t, session, "get_transaction", tools.GetTransactionInput{LedgerID: ledgerID, ID: created.Transaction.ID}, &got)
+			if got.Transaction.Amount != c.amount {
+				t.Fatalf("get_transaction Amount = %q, want %q", got.Transaction.Amount, c.amount)
+			}
+
+			var searched tools.SearchTransactionsOutput
+			callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, CategoryID: categoryID}, &searched)
+			var found bool
+			for _, txn := range searched.Transactions {
+				if txn.ID != created.Transaction.ID {
+					continue
+				}
+				found = true
+				if txn.Amount != c.amount {
+					t.Fatalf("search_transactions Amount = %q, want %q", txn.Amount, c.amount)
+				}
+			}
+			if !found {
+				t.Fatalf("search_transactions did not return the created transaction %q", created.Transaction.ID)
+			}
+		})
 	}
 }
 
@@ -238,11 +399,11 @@ func TestSearchTransactionsNoFilter(t *testing.T) {
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 200, Currency: "CNY", Time: futureTime() + 3600,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(200), Currency: "CNY", Time: futureTime() + 3600,
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.SearchTransactionsOutput
@@ -261,11 +422,11 @@ func TestSearchTransactionsTimeRange(t *testing.T) {
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: earlyTime,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: earlyTime,
 	}, &tools.CreateTransactionOutput{})
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 200, Currency: "CNY", Time: lateTime,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(200), Currency: "CNY", Time: lateTime,
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.SearchTransactionsOutput
@@ -278,13 +439,13 @@ func TestSearchTransactionsTimeRange(t *testing.T) {
 	if len(out.Transactions) != 1 {
 		t.Fatalf("expected 1 transaction in range, got %d", len(out.Transactions))
 	}
-	if out.Transactions[0].Amount != 100 {
-		t.Errorf("Amount = %d, want 100", out.Transactions[0].Amount)
+	if out.Transactions[0].Amount != cnyAmount(100) {
+		t.Errorf("Amount = %q, want %q", out.Transactions[0].Amount, cnyAmount(100))
 	}
 }
 
 func TestUpdateTransactionHappyPath(t *testing.T) {
-	session, ledgerID := newTestSession(t)
+	session, ledgerID, q := newTestSessionWithStore(t)
 	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
 
 	var created tools.CreateTransactionOutput
@@ -293,7 +454,7 @@ func TestUpdateTransactionHappyPath(t *testing.T) {
 		Type:       "expense",
 		SourceID:   sourceID,
 		CategoryID: categoryID,
-		Amount:     2500,
+		Amount:     cnyAmount(2500),
 		Currency:   "CNY",
 		Time:       futureTime(),
 		Comment:    "original",
@@ -313,14 +474,14 @@ func TestUpdateTransactionHappyPath(t *testing.T) {
 		Type:       "expense",
 		SourceID:   sourceID,
 		CategoryID: otherCategory.Category.ID,
-		Amount:     4000,
+		Amount:     cnyAmount(4000),
 		Currency:   "CNY",
 		Time:       futureTime(),
 		Comment:    "revised",
 	}, &updated)
 
-	if updated.Transaction.Amount != 4000 {
-		t.Errorf("Amount = %d, want 4000", updated.Transaction.Amount)
+	if updated.Transaction.Amount != cnyAmount(4000) {
+		t.Errorf("Amount = %q, want %q", updated.Transaction.Amount, cnyAmount(4000))
 	}
 	if updated.Transaction.CategoryID != otherCategory.Category.ID {
 		t.Errorf("CategoryID = %q, want %q", updated.Transaction.CategoryID, otherCategory.Category.ID)
@@ -331,8 +492,11 @@ func TestUpdateTransactionHappyPath(t *testing.T) {
 
 	var got tools.GetTransactionOutput
 	callTool(t, session, "get_transaction", tools.GetTransactionInput{LedgerID: ledgerID, ID: created.Transaction.ID}, &got)
-	if got.Transaction.Amount != 4000 {
-		t.Errorf("get_transaction Amount = %d, want 4000", got.Transaction.Amount)
+	if got.Transaction.Amount != cnyAmount(4000) {
+		t.Errorf("get_transaction Amount = %q, want %q", got.Transaction.Amount, cnyAmount(4000))
+	}
+	if gotStored := storedAmount(t, q, ledgerID, created.Transaction.ID); gotStored != -4000 {
+		t.Errorf("stored amount = %d, want -4000", gotStored)
 	}
 }
 
@@ -353,7 +517,7 @@ func TestUpdateTransactionChangesSource(t *testing.T) {
 		Type:       "expense",
 		SourceID:   sourceA,
 		CategoryID: categoryID,
-		Amount:     2000,
+		Amount:     cnyAmount(2000),
 		Currency:   "CNY",
 		Time:       futureTime(),
 	}, &created)
@@ -365,7 +529,7 @@ func TestUpdateTransactionChangesSource(t *testing.T) {
 		Type:       "expense",
 		SourceID:   sourceB.Source.ID,
 		CategoryID: categoryID,
-		Amount:     2000,
+		Amount:     cnyAmount(2000),
 		Currency:   "CNY",
 		Time:       futureTime(),
 	}, &updated)
@@ -382,7 +546,7 @@ func TestUpdateTransactionMissingRequiredField(t *testing.T) {
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: futureTime(),
 	}, &created)
 
 	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
@@ -391,15 +555,15 @@ func TestUpdateTransactionMissingRequiredField(t *testing.T) {
 		Type:     "expense",
 		// SourceID omitted
 		CategoryID: categoryID,
-		Amount:     100,
+		Amount:     cnyAmount(100),
 		Currency:   "CNY",
 		Time:       futureTime(),
 	})
 
 	var got tools.GetTransactionOutput
 	callTool(t, session, "get_transaction", tools.GetTransactionInput{LedgerID: ledgerID, ID: created.Transaction.ID}, &got)
-	if got.Transaction.Amount != 100 {
-		t.Fatalf("transaction changed after rejected update: Amount = %d, want 100", got.Transaction.Amount)
+	if got.Transaction.Amount != cnyAmount(100) {
+		t.Fatalf("transaction changed after rejected update: Amount = %q, want %q", got.Transaction.Amount, cnyAmount(100))
 	}
 }
 
@@ -410,7 +574,7 @@ func TestUpdateTransactionRejectsNonexistentSource(t *testing.T) {
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: futureTime(),
 	}, &created)
 
 	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
@@ -419,7 +583,7 @@ func TestUpdateTransactionRejectsNonexistentSource(t *testing.T) {
 		Type:       "expense",
 		SourceID:   "999999",
 		CategoryID: categoryID,
-		Amount:     100,
+		Amount:     cnyAmount(100),
 		Currency:   "CNY",
 		Time:       futureTime(),
 	})
@@ -432,7 +596,7 @@ func TestUpdateTransactionRejectsNonexistentCategory(t *testing.T) {
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: futureTime(),
 	}, &created)
 
 	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
@@ -441,7 +605,7 @@ func TestUpdateTransactionRejectsNonexistentCategory(t *testing.T) {
 		Type:       "expense",
 		SourceID:   sourceID,
 		CategoryID: "999999",
-		Amount:     100,
+		Amount:     cnyAmount(100),
 		Currency:   "CNY",
 		Time:       futureTime(),
 	})
@@ -454,7 +618,7 @@ func TestUpdateTransactionRejectsUnsupportedCurrency(t *testing.T) {
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: futureTime(),
 	}, &created)
 
 	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
@@ -463,7 +627,7 @@ func TestUpdateTransactionRejectsUnsupportedCurrency(t *testing.T) {
 		Type:       "expense",
 		SourceID:   sourceID,
 		CategoryID: categoryID,
-		Amount:     100,
+		Amount:     cnyAmount(100),
 		Currency:   "NOTACURRENCY",
 		Time:       futureTime(),
 	})
@@ -476,7 +640,7 @@ func TestUpdateTransactionIncomeExpenseRejectsNonPositiveAmount(t *testing.T) {
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: futureTime(),
 	}, &created)
 
 	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
@@ -485,10 +649,88 @@ func TestUpdateTransactionIncomeExpenseRejectsNonPositiveAmount(t *testing.T) {
 		Type:       "expense",
 		SourceID:   sourceID,
 		CategoryID: categoryID,
-		Amount:     0,
+		Amount:     cnyAmount(0),
 		Currency:   "CNY",
 		Time:       futureTime(),
 	})
+
+	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
+		LedgerID:   ledgerID,
+		ID:         created.Transaction.ID,
+		Type:       "expense",
+		SourceID:   sourceID,
+		CategoryID: categoryID,
+		Amount:     "-10.00",
+		Currency:   "CNY",
+		Time:       futureTime(),
+	})
+
+	// The rejected updates above must not have changed the transaction.
+	var got tools.GetTransactionOutput
+	callTool(t, session, "get_transaction", tools.GetTransactionInput{LedgerID: ledgerID, ID: created.Transaction.ID}, &got)
+	if got.Transaction.Amount != cnyAmount(100) {
+		t.Fatalf("transaction changed after rejected updates: Amount = %q, want %q", got.Transaction.Amount, cnyAmount(100))
+	}
+}
+
+// TestUpdateTransactionRejectsInvalidAmountFormat covers spec.md's "金额格式
+// 非法" scenario for update_transaction, mirroring create_transaction's rule.
+func TestUpdateTransactionRejectsInvalidAmountFormat(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+
+	var created tools.CreateTransactionOutput
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: futureTime(),
+	}, &created)
+
+	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
+		LedgerID:   ledgerID,
+		ID:         created.Transaction.ID,
+		Type:       "expense",
+		SourceID:   sourceID,
+		CategoryID: categoryID,
+		Amount:     "fifty",
+		Currency:   "CNY",
+		Time:       futureTime(),
+	})
+
+	var got tools.GetTransactionOutput
+	callTool(t, session, "get_transaction", tools.GetTransactionInput{LedgerID: ledgerID, ID: created.Transaction.ID}, &got)
+	if got.Transaction.Amount != cnyAmount(100) {
+		t.Fatalf("transaction changed after rejected update: Amount = %q, want %q", got.Transaction.Amount, cnyAmount(100))
+	}
+}
+
+// TestUpdateTransactionRejectsAmountPrecisionExceedingCurrency covers
+// spec.md's "金额小数位数超出币种精度" scenario for update_transaction.
+func TestUpdateTransactionRejectsAmountPrecisionExceedingCurrency(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+
+	var created tools.CreateTransactionOutput
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: futureTime(),
+	}, &created)
+
+	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
+		LedgerID:   ledgerID,
+		ID:         created.Transaction.ID,
+		Type:       "expense",
+		SourceID:   sourceID,
+		CategoryID: categoryID,
+		Amount:     "50.001",
+		Currency:   "CNY",
+		Time:       futureTime(),
+	})
+
+	var got tools.GetTransactionOutput
+	callTool(t, session, "get_transaction", tools.GetTransactionInput{LedgerID: ledgerID, ID: created.Transaction.ID}, &got)
+	if got.Transaction.Amount != cnyAmount(100) {
+		t.Fatalf("transaction changed after rejected update: Amount = %q, want %q", got.Transaction.Amount, cnyAmount(100))
+	}
 }
 
 func TestUpdateTransactionNotFound(t *testing.T) {
@@ -502,7 +744,7 @@ func TestUpdateTransactionNotFound(t *testing.T) {
 		Type:       "expense",
 		SourceID:   sourceID,
 		CategoryID: categoryID,
-		Amount:     100,
+		Amount:     cnyAmount(100),
 		Currency:   "CNY",
 		Time:       futureTime(),
 	})
@@ -515,7 +757,7 @@ func TestDeleteTransactionHappyPath(t *testing.T) {
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 2500, Currency: "CNY", Time: futureTime(),
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(2500), Currency: "CNY", Time: futureTime(),
 	}, &created)
 
 	var preview tools.DeleteTransactionOutput
@@ -566,7 +808,7 @@ func TestDeleteTransactionExpiredToken(t *testing.T) {
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: futureTime(),
 	}, &created)
 
 	expired := craftConfirmationToken(t, testConfirmSecret, "delete_transaction", created.Transaction.ID, "irrelevant-revision", time.Now().Add(-time.Minute).Unix())
@@ -588,7 +830,7 @@ func TestDeleteTransactionDriftedRevisionAfterUpdate(t *testing.T) {
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: futureTime(),
 	}, &created)
 
 	var preview tools.DeleteTransactionOutput
@@ -603,7 +845,7 @@ func TestDeleteTransactionDriftedRevisionAfterUpdate(t *testing.T) {
 		Type:       "expense",
 		SourceID:   sourceID,
 		CategoryID: categoryID,
-		Amount:     200,
+		Amount:     cnyAmount(200),
 		Currency:   "CNY",
 		Time:       futureTime(),
 	}, &tools.UpdateTransactionOutput{})
@@ -624,7 +866,7 @@ func TestDeleteTransactionTokenReplay(t *testing.T) {
 	var created tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: futureTime(),
 	}, &created)
 
 	var preview tools.DeleteTransactionOutput
@@ -651,7 +893,7 @@ func TestSearchTransactionsEmptyResult(t *testing.T) {
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: futureTime(),
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.SearchTransactionsOutput
@@ -686,7 +928,7 @@ func createExpensesAtOffsets(t *testing.T, session *mcp.ClientSession, ledgerID,
 			Type:       "expense",
 			SourceID:   sourceID,
 			CategoryID: categoryID,
-			Amount:     int64(i + 1),
+			Amount:     cnyAmount(int64(i + 1)),
 			Currency:   "CNY",
 			Time:       base + off,
 		}, &created)
@@ -887,13 +1129,13 @@ func TestSearchTransactionsPaginationSurvivesLedgerChanges(t *testing.T) {
 	var before tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 999, Currency: "CNY", Time: base + 5,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(999), Currency: "CNY", Time: base + 5,
 	}, &before)
 	// - a new transaction inserted after everything so far -- must appear.
 	var after tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 998, Currency: "CNY", Time: base + 50,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(998), Currency: "CNY", Time: base + 50,
 	}, &after)
 	// - T1 (already returned in page1) is updated -- must not reappear or
 	//   otherwise disturb pagination. Time is left unchanged so its keyset
@@ -904,7 +1146,7 @@ func TestSearchTransactionsPaginationSurvivesLedgerChanges(t *testing.T) {
 		Type:       "expense",
 		SourceID:   sourceID,
 		CategoryID: categoryID,
-		Amount:     12345,
+		Amount:     cnyAmount(12345),
 		Currency:   "CNY",
 		Time:       base + 10,
 		Comment:    "edited after page1",
@@ -961,7 +1203,7 @@ func TestCreateTransactionRejectsNonexistentLedger(t *testing.T) {
 		Type:       "expense",
 		SourceID:   sourceID,
 		CategoryID: categoryID,
-		Amount:     100,
+		Amount:     cnyAmount(100),
 		Currency:   "CNY",
 		Time:       futureTime(),
 	})
@@ -983,7 +1225,7 @@ func TestCreateTransactionRejectsSourceFromAnotherLedger(t *testing.T) {
 		Type:       "expense",
 		SourceID:   sourceB,
 		CategoryID: categoryA,
-		Amount:     100,
+		Amount:     cnyAmount(100),
 		Currency:   "CNY",
 		Time:       futureTime(),
 	})
@@ -1003,7 +1245,7 @@ func TestCreateTransactionRejectsCategoryFromAnotherLedger(t *testing.T) {
 		Type:       "expense",
 		SourceID:   sourceA,
 		CategoryID: categoryB,
-		Amount:     100,
+		Amount:     cnyAmount(100),
 		Currency:   "CNY",
 		Time:       futureTime(),
 	})
@@ -1019,7 +1261,7 @@ func TestGetTransactionCrossLedgerNotFound(t *testing.T) {
 		Type:       "expense",
 		SourceID:   sourceA,
 		CategoryID: categoryA,
-		Amount:     100,
+		Amount:     cnyAmount(100),
 		Currency:   "CNY",
 		Time:       futureTime(),
 	}, &created)
@@ -1046,7 +1288,7 @@ func TestUpdateTransactionRejectsSourceFromAnotherLedger(t *testing.T) {
 		Type:       "expense",
 		SourceID:   sourceA,
 		CategoryID: categoryA,
-		Amount:     100,
+		Amount:     cnyAmount(100),
 		Currency:   "CNY",
 		Time:       futureTime(),
 	}, &created)
@@ -1061,7 +1303,7 @@ func TestUpdateTransactionRejectsSourceFromAnotherLedger(t *testing.T) {
 		Type:       "expense",
 		SourceID:   sourceB,
 		CategoryID: categoryA,
-		Amount:     100,
+		Amount:     cnyAmount(100),
 		Currency:   "CNY",
 		Time:       futureTime(),
 	})
@@ -1075,7 +1317,7 @@ func TestSearchTransactionsIsolatedByLedger(t *testing.T) {
 		Type:       "expense",
 		SourceID:   sourceA,
 		CategoryID: categoryA,
-		Amount:     100,
+		Amount:     cnyAmount(100),
 		Currency:   "CNY",
 		Time:       futureTime(),
 	}, &tools.CreateTransactionOutput{})
@@ -1089,7 +1331,7 @@ func TestSearchTransactionsIsolatedByLedger(t *testing.T) {
 		Type:       "expense",
 		SourceID:   sourceB,
 		CategoryID: categoryB,
-		Amount:     200,
+		Amount:     cnyAmount(200),
 		Currency:   "CNY",
 		Time:       futureTime(),
 	}, &tools.CreateTransactionOutput{})
@@ -1099,8 +1341,8 @@ func TestSearchTransactionsIsolatedByLedger(t *testing.T) {
 	if len(resultsB.Transactions) != 1 {
 		t.Fatalf("expected 1 transaction in ledgerB, got %d", len(resultsB.Transactions))
 	}
-	if resultsB.Transactions[0].Amount != 200 {
-		t.Errorf("ledgerB transaction amount = %d, want 200 (ledgerA's transaction leaked in)", resultsB.Transactions[0].Amount)
+	if resultsB.Transactions[0].Amount != cnyAmount(200) {
+		t.Errorf("ledgerB transaction amount = %q, want %q (ledgerA's transaction leaked in)", resultsB.Transactions[0].Amount, cnyAmount(200))
 	}
 }
 
@@ -1113,7 +1355,7 @@ func TestSearchTransactionsCursorRejectedAcrossLedgers(t *testing.T) {
 			Type:       "expense",
 			SourceID:   sourceA,
 			CategoryID: categoryA,
-			Amount:     100,
+			Amount:     cnyAmount(100),
 			Currency:   "CNY",
 			Time:       futureTime(),
 		}, &tools.CreateTransactionOutput{})
@@ -1144,12 +1386,12 @@ func TestSearchTransactionsKeywordMatchesCommentCaseInsensitively(t *testing.T) 
 	var starbucks tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: futureTime(),
 		Comment: "STARBUCKS #4821",
 	}, &starbucks)
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 200, Currency: "CNY", Time: futureTime() + 10,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(200), Currency: "CNY", Time: futureTime() + 10,
 		Comment: "walmart grocery",
 	}, &tools.CreateTransactionOutput{})
 
@@ -1176,12 +1418,12 @@ func TestSearchTransactionsKeywordMatchesChineseComment(t *testing.T) {
 	var starbucks tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 3200, Currency: "CNY", Time: futureTime(),
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(3200), Currency: "CNY", Time: futureTime(),
 		Comment: "星巴克咖啡(南京西路店) 美团支付-支付宝",
 	}, &starbucks)
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 8800, Currency: "CNY", Time: futureTime() + 10,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(8800), Currency: "CNY", Time: futureTime() + 10,
 		Comment: "沃尔玛购物",
 	}, &tools.CreateTransactionOutput{})
 
@@ -1222,28 +1464,28 @@ func TestSearchTransactionsKeywordCombinedWithOtherFilters(t *testing.T) {
 	var want tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: base,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: base,
 		Comment: "starbucks coffee",
 	}, &want)
 
 	// Matches keyword and time, but the wrong source.
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: otherSource.Source.ID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: base,
+		Type:     "expense", SourceID: otherSource.Source.ID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: base,
 		Comment: "starbucks coffee",
 	}, &tools.CreateTransactionOutput{})
 
 	// Matches source/category/time, but not the keyword.
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: base,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: base,
 		Comment: "walmart grocery",
 	}, &tools.CreateTransactionOutput{})
 
 	// Matches keyword/source/category, but falls outside the time range.
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: base + 100000,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: base + 100000,
 		Comment: "starbucks coffee",
 	}, &tools.CreateTransactionOutput{})
 
@@ -1275,7 +1517,7 @@ func TestSearchTransactionsKeywordWildcardCharactersMatchedLiterally(t *testing.
 	var literalMatch tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: futureTime(),
 		Comment: "50%_off invoice",
 	}, &literalMatch)
 
@@ -1285,7 +1527,7 @@ func TestSearchTransactionsKeywordWildcardCharactersMatchedLiterally(t *testing.
 	// returned.
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 200, Currency: "CNY", Time: futureTime() + 10,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(200), Currency: "CNY", Time: futureTime() + 10,
 		Comment: "50X off invoiceZ",
 	}, &tools.CreateTransactionOutput{})
 
@@ -1309,7 +1551,7 @@ func TestSearchTransactionsBlankKeywordTreatedAsNotProvided(t *testing.T) {
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: futureTime(),
 		Comment: "groceries",
 	}, &tools.CreateTransactionOutput{})
 
@@ -1330,7 +1572,7 @@ func TestSearchTransactionsKeywordNoMatchReturnsEmpty(t *testing.T) {
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 100, Currency: "CNY", Time: futureTime(),
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: futureTime(),
 		Comment: "groceries",
 	}, &tools.CreateTransactionOutput{})
 
@@ -1363,7 +1605,7 @@ func TestSearchTransactionsKeywordPaginationCoversAllMatches(t *testing.T) {
 		var created tools.CreateTransactionOutput
 		callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 			LedgerID: ledgerID,
-			Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: int64(i + 1), Currency: "CNY", Time: base + int64(i)*2,
+			Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(int64(i + 1)), Currency: "CNY", Time: base + int64(i)*2,
 			Comment: "starbucks coffee",
 		}, &created)
 		matchingIDs = append(matchingIDs, created.Transaction.ID)
@@ -1372,7 +1614,7 @@ func TestSearchTransactionsKeywordPaginationCoversAllMatches(t *testing.T) {
 		// skip it without breaking keyset pagination.
 		callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 			LedgerID: ledgerID,
-			Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: 999, Currency: "CNY", Time: base + int64(i)*2 + 1,
+			Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(999), Currency: "CNY", Time: base + int64(i)*2 + 1,
 			Comment: "walmart grocery",
 		}, &tools.CreateTransactionOutput{})
 	}
@@ -1424,7 +1666,7 @@ func TestSearchTransactionsCursorRejectedWhenKeywordChanges(t *testing.T) {
 	for i := range 3 {
 		callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 			LedgerID: ledgerID,
-			Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: int64(i + 1), Currency: "CNY", Time: futureTime() + int64(i),
+			Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(int64(i + 1)), Currency: "CNY", Time: futureTime() + int64(i),
 			Comment: "starbucks coffee",
 		}, &tools.CreateTransactionOutput{})
 	}

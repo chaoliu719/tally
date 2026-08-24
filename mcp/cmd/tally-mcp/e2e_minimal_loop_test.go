@@ -44,7 +44,7 @@ func TestE2EMinimalLoop(t *testing.T) {
 		Type:       "expense",
 		SourceID:   source.Source.ID,
 		CategoryID: category.Category.ID,
-		Amount:     3000,
+		Amount:     cnyAmount(3000),
 		Currency:   "CNY",
 		Time:       futureTime(),
 		Comment:    "weekly groceries",
@@ -63,8 +63,8 @@ func TestE2EMinimalLoop(t *testing.T) {
 	// 5. get_transaction: fetch it by id.
 	var fetched tools.GetTransactionOutput
 	call(t, session, "get_transaction", tools.GetTransactionInput{LedgerID: ledgerID, ID: transaction.Transaction.ID}, &fetched)
-	if fetched.Transaction.Amount != 3000 {
-		t.Fatalf("fetched amount = %d, want 3000", fetched.Transaction.Amount)
+	if fetched.Transaction.Amount != cnyAmount(3000) {
+		t.Fatalf("fetched amount = %q, want %q", fetched.Transaction.Amount, cnyAmount(3000))
 	}
 
 	var sources tools.ListSourcesOutput

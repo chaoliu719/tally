@@ -75,7 +75,7 @@ type TransactionInfo struct {
 	Type       string `json:"type" jsonschema:"the transaction's type: income or expense"`
 	SourceID   string `json:"source_id" jsonschema:"the id of the source this transaction is from/to, as a decimal string"`
 	CategoryID string `json:"category_id" jsonschema:"the id of the transaction's category, as a decimal string"`
-	Amount     int64  `json:"amount" jsonschema:"the transaction amount, in the currency's smallest unit; how many decimal places that represents varies by currency (e.g. 2 for USD/CNY, 0 for JPY, 3 for BHD). Positive for both income and expense"`
+	Amount     string `json:"amount" jsonschema:"the transaction amount, as a decimal string in the currency's major unit; how many fractional digits that allows varies by currency (e.g. \"50.00\" for CNY, \"5000\" for JPY, \"5.000\" for BHD). Positive for both income and expense"`
 	Currency   string `json:"currency" jsonschema:"the transaction's currency, as an ISO 4217 code"`
 	Time       int64  `json:"time" jsonschema:"when the transaction occurred, as unix seconds"`
 	Comment    string `json:"comment,omitempty" jsonschema:"an optional note about the transaction"`
@@ -86,7 +86,7 @@ type CreateTransactionInput struct {
 	Type       string `json:"type" jsonschema:"the transaction's type: income or expense"`
 	SourceID   string `json:"source_id" jsonschema:"the id of the source this transaction is from/to, as a decimal string; must belong to the same ledger"`
 	CategoryID string `json:"category_id" jsonschema:"the id of the transaction's category, as a decimal string; any existing category in the same ledger"`
-	Amount     int64  `json:"amount" jsonschema:"the transaction amount, in the currency's smallest unit; how many decimal places that represents varies by currency (e.g. 2 for USD/CNY, 0 for JPY, 3 for BHD); must be positive"`
+	Amount     string `json:"amount" jsonschema:"the transaction amount, as a decimal string in the currency's major unit; how many fractional digits that allows varies by currency (e.g. \"50.00\" for CNY, \"5000\" for JPY, \"5.000\" for BHD); must be positive"`
 	Currency   string `json:"currency" jsonschema:"the transaction's currency, as an ISO 4217 code, e.g. CNY, USD"`
 	Time       int64  `json:"time" jsonschema:"when the transaction occurred, as unix seconds"`
 	Comment    string `json:"comment,omitempty" jsonschema:"an optional note about the transaction"`
@@ -113,8 +113,11 @@ type validatedTransactionFields struct {
 // source_id/category_id/amount/currency/time rules shared by
 // create_transaction and update_transaction: income/expense require an
 // existing ledger, a source_id and category_id both belonging to that
-// ledger, a positive amount, and a supported currency code.
-func validateTransactionInput(ctx context.Context, deps Deps, ledgerIDStr, txType, sourceIDStr, categoryIDStr string, amount int64, currencyCode string, txTime int64) (validatedTransactionFields, error) {
+// ledger, a supported currency code, and an amount string that is a valid,
+// positive decimal number at or under that currency's standard precision.
+// currency must be validated before amount can be parsed, since amount's
+// allowed decimal precision depends on which currency it's in.
+func validateTransactionInput(ctx context.Context, deps Deps, ledgerIDStr, txType, sourceIDStr, categoryIDStr, amountStr, currencyCode string, txTime int64) (validatedTransactionFields, error) {
 	if !createableTransactionTypes[txType] {
 		return validatedTransactionFields{}, fmt.Errorf("missing or unsupported transaction type: %q", txType)
 	}
@@ -166,15 +169,19 @@ func validateTransactionInput(ctx context.Context, deps Deps, ledgerIDStr, txTyp
 		return validatedTransactionFields{}, err
 	}
 
-	if amount <= 0 {
-		return validatedTransactionFields{}, fmt.Errorf("missing required field: amount (must be positive)")
-	}
-
 	if currencyCode == "" {
 		return validatedTransactionFields{}, fmt.Errorf("missing required field: currency")
 	}
 	if !currency.Supported(currencyCode) {
 		return validatedTransactionFields{}, fmt.Errorf("unsupported currency: %q", currencyCode)
+	}
+
+	if amountStr == "" {
+		return validatedTransactionFields{}, fmt.Errorf("missing required field: amount")
+	}
+	amount, err := currency.ParseMajor(currencyCode, amountStr)
+	if err != nil {
+		return validatedTransactionFields{}, err
 	}
 
 	signedAmount := amount
@@ -208,7 +215,11 @@ func createTransaction(ctx context.Context, deps Deps, in CreateTransactionInput
 		return nil, CreateTransactionOutput{}, err
 	}
 
-	return nil, CreateTransactionOutput{Transaction: toTransactionInfo(transaction)}, nil
+	info, err := toTransactionInfo(transaction)
+	if err != nil {
+		return nil, CreateTransactionOutput{}, err
+	}
+	return nil, CreateTransactionOutput{Transaction: info}, nil
 }
 
 type GetTransactionInput struct {
@@ -244,7 +255,11 @@ func getTransaction(ctx context.Context, deps Deps, in GetTransactionInput) (*mc
 		return nil, GetTransactionOutput{}, err
 	}
 
-	return nil, GetTransactionOutput{Transaction: toTransactionInfo(transaction)}, nil
+	info, err := toTransactionInfo(transaction)
+	if err != nil {
+		return nil, GetTransactionOutput{}, err
+	}
+	return nil, GetTransactionOutput{Transaction: info}, nil
 }
 
 type UpdateTransactionInput struct {
@@ -253,7 +268,7 @@ type UpdateTransactionInput struct {
 	Type       string `json:"type" jsonschema:"the transaction's type: income or expense"`
 	SourceID   string `json:"source_id" jsonschema:"the id of the source this transaction is from/to, as a decimal string; may differ from the transaction's current source_id to move it to another source in the same ledger"`
 	CategoryID string `json:"category_id" jsonschema:"the id of the transaction's category, as a decimal string; any existing category in the same ledger"`
-	Amount     int64  `json:"amount" jsonschema:"the transaction amount, in the currency's smallest unit; how many decimal places that represents varies by currency (e.g. 2 for USD/CNY, 0 for JPY, 3 for BHD); must be positive"`
+	Amount     string `json:"amount" jsonschema:"the transaction amount, as a decimal string in the currency's major unit; how many fractional digits that allows varies by currency (e.g. \"50.00\" for CNY, \"5000\" for JPY, \"5.000\" for BHD); must be positive"`
 	Currency   string `json:"currency" jsonschema:"the transaction's currency, as an ISO 4217 code, e.g. CNY, USD"`
 	Time       int64  `json:"time" jsonschema:"when the transaction occurred, as unix seconds"`
 	Comment    string `json:"comment,omitempty" jsonschema:"an optional note about the transaction"`
@@ -312,7 +327,11 @@ func updateTransaction(ctx context.Context, deps Deps, in UpdateTransactionInput
 		return nil, UpdateTransactionOutput{}, err
 	}
 
-	return nil, UpdateTransactionOutput{Transaction: toTransactionInfo(updated)}, nil
+	info, err := toTransactionInfo(updated)
+	if err != nil {
+		return nil, UpdateTransactionOutput{}, err
+	}
+	return nil, UpdateTransactionOutput{Transaction: info}, nil
 }
 
 // transactionDeletionRevisionFields is hashed to produce the revision
@@ -386,7 +405,10 @@ func deleteTransaction(ctx context.Context, deps Deps, in DeleteTransactionInput
 		return nil, DeleteTransactionOutput{}, err
 	}
 
-	info := toTransactionInfo(transaction)
+	info, err := toTransactionInfo(transaction)
+	if err != nil {
+		return nil, DeleteTransactionOutput{}, err
+	}
 	revision := transactionDeletionRevision(transaction)
 
 	if in.ConfirmationToken == "" {
@@ -534,23 +556,31 @@ func searchTransactions(ctx context.Context, deps Deps, in SearchTransactionsInp
 
 	infos := make([]TransactionInfo, 0, len(transactions))
 	for _, t := range transactions {
-		infos = append(infos, toTransactionInfo(t))
+		info, err := toTransactionInfo(t)
+		if err != nil {
+			return nil, SearchTransactionsOutput{}, err
+		}
+		infos = append(infos, info)
 	}
 
 	return nil, SearchTransactionsOutput{Transactions: infos, NextCursor: nextCursor}, nil
 }
 
-func toTransactionInfo(t store.Transaction) TransactionInfo {
+func toTransactionInfo(t store.Transaction) (TransactionInfo, error) {
+	amount, err := currency.FormatMajor(t.Currency, abs64(t.Amount))
+	if err != nil {
+		return TransactionInfo{}, err
+	}
 	return TransactionInfo{
 		ID:         formatID(t.ID),
 		Type:       t.Type,
 		SourceID:   formatID(t.SourceID),
 		CategoryID: formatID(t.CategoryID),
-		Amount:     abs64(t.Amount),
+		Amount:     amount,
 		Currency:   t.Currency,
 		Time:       t.Time,
 		Comment:    t.Comment,
-	}
+	}, nil
 }
 
 func abs64(n int64) int64 {
