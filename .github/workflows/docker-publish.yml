@@ -39,6 +39,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: ./mcp
@@ -48,3 +49,9 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Print image digest
+        run: |
+          echo "Digest: ${{ steps.build.outputs.digest }}"
+          echo "### Published image" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`ghcr.io/chaoliu719/tally-mcp@${{ steps.build.outputs.digest }}\`" >> "$GITHUB_STEP_SUMMARY"
