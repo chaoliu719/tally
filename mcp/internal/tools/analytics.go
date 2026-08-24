@@ -8,6 +8,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"tally/internal/currency"
 	"tally/internal/store"
 )
 
@@ -36,9 +37,9 @@ type GetFinancialSummaryInput struct {
 // the requested time range. Net is income minus expense.
 type CurrencyTotals struct {
 	Currency string `json:"currency" jsonschema:"the ISO 4217 currency code this total is denominated in"`
-	Income   int64  `json:"income" jsonschema:"total income in this currency's smallest unit, over the requested time range"`
-	Expense  int64  `json:"expense" jsonschema:"total expense (as a positive number) in this currency's smallest unit, over the requested time range"`
-	Net      int64  `json:"net" jsonschema:"income minus expense, in this currency's smallest unit"`
+	Income   string `json:"income" jsonschema:"total income, as a decimal string in this currency's major unit, over the requested time range"`
+	Expense  string `json:"expense" jsonschema:"total expense (as a positive decimal string), in this currency's major unit, over the requested time range"`
+	Net      string `json:"net" jsonschema:"income minus expense, as a decimal string in this currency's major unit; negative (net expense) values are prefixed with a minus sign, e.g. \"-50.00\""`
 }
 
 // CategorySummary is the income/expense subtotal for one category in one
@@ -47,8 +48,8 @@ type CurrencyTotals struct {
 type CategorySummary struct {
 	CategoryID string `json:"category_id" jsonschema:"the category's unique id, as a decimal string"`
 	Currency   string `json:"currency" jsonschema:"the ISO 4217 currency code this subtotal is denominated in"`
-	Income     int64  `json:"income" jsonschema:"total income in this category and currency, over the requested time range"`
-	Expense    int64  `json:"expense" jsonschema:"total expense (as a positive number) in this category and currency, over the requested time range"`
+	Income     string `json:"income" jsonschema:"total income in this category and currency, as a decimal string in the currency's major unit"`
+	Expense    string `json:"expense" jsonschema:"total expense (as a positive decimal string) in this category and currency, in the currency's major unit"`
 }
 
 // SourceSummary is the income/expense subtotal for one source in one
@@ -57,8 +58,8 @@ type CategorySummary struct {
 type SourceSummary struct {
 	SourceID string `json:"source_id" jsonschema:"the source's unique id, as a decimal string"`
 	Currency string `json:"currency" jsonschema:"the ISO 4217 currency code this subtotal is denominated in"`
-	Income   int64  `json:"income" jsonschema:"total income on this source and currency, over the requested time range"`
-	Expense  int64  `json:"expense" jsonschema:"total expense on this source and currency (as a positive number), over the requested time range"`
+	Income   string `json:"income" jsonschema:"total income on this source and currency, as a decimal string in the currency's major unit"`
+	Expense  string `json:"expense" jsonschema:"total expense on this source and currency (as a positive decimal string), in the currency's major unit"`
 }
 
 type GetFinancialSummaryOutput struct {
@@ -115,32 +116,60 @@ func getFinancialSummary(ctx context.Context, deps Deps, in GetFinancialSummaryI
 	totals := make([]CurrencyTotals, 0, len(currencyRows))
 	for _, r := range currencyRows {
 		if r.Income != 0 || r.Expense != 0 {
+			income, err := currency.FormatMajor(r.Currency, r.Income)
+			if err != nil {
+				return nil, GetFinancialSummaryOutput{}, err
+			}
+			expense, err := currency.FormatMajor(r.Currency, r.Expense)
+			if err != nil {
+				return nil, GetFinancialSummaryOutput{}, err
+			}
+			net, err := currency.FormatMajor(r.Currency, r.Income-r.Expense)
+			if err != nil {
+				return nil, GetFinancialSummaryOutput{}, err
+			}
 			totals = append(totals, CurrencyTotals{
 				Currency: r.Currency,
-				Income:   r.Income,
-				Expense:  r.Expense,
-				Net:      r.Income - r.Expense,
+				Income:   income,
+				Expense:  expense,
+				Net:      net,
 			})
 		}
 	}
 
 	byCategory := make([]CategorySummary, 0, len(categoryRows))
 	for _, r := range categoryRows {
+		income, err := currency.FormatMajor(r.Currency, r.Income)
+		if err != nil {
+			return nil, GetFinancialSummaryOutput{}, err
+		}
+		expense, err := currency.FormatMajor(r.Currency, r.Expense)
+		if err != nil {
+			return nil, GetFinancialSummaryOutput{}, err
+		}
 		byCategory = append(byCategory, CategorySummary{
 			CategoryID: formatID(r.CategoryID),
 			Currency:   r.Currency,
-			Income:     r.Income,
-			Expense:    r.Expense,
+			Income:     income,
+			Expense:    expense,
 		})
 	}
 
 	bySource := make([]SourceSummary, 0, len(sourceRows))
 	for _, r := range sourceRows {
+		income, err := currency.FormatMajor(r.Currency, r.Income)
+		if err != nil {
+			return nil, GetFinancialSummaryOutput{}, err
+		}
+		expense, err := currency.FormatMajor(r.Currency, r.Expense)
+		if err != nil {
+			return nil, GetFinancialSummaryOutput{}, err
+		}
 		bySource = append(bySource, SourceSummary{
 			SourceID: formatID(r.SourceID),
 			Currency: r.Currency,
-			Income:   r.Income,
-			Expense:  r.Expense,
+			Income:   income,
+			Expense:  expense,
 		})
 	}
 

@@ -93,8 +93,8 @@ func TestE2ELedgerIsolation(t *testing.T) {
 	// activity, despite both being in CNY over the same time window.
 	var summaryA tools.GetFinancialSummaryOutput
 	call(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{LedgerID: ledgerA}, &summaryA)
-	if len(summaryA.TotalsByCurrency) != 1 || summaryA.TotalsByCurrency[0].Expense != 100 {
-		t.Fatalf("ledgerA summary = %+v, want expense=100 only", summaryA.TotalsByCurrency)
+	if len(summaryA.TotalsByCurrency) != 1 || summaryA.TotalsByCurrency[0].Expense != cnyAmount(100) {
+		t.Fatalf("ledgerA summary = %+v, want expense=%q only", summaryA.TotalsByCurrency, cnyAmount(100))
 	}
 
 	// A transaction in ledgerA cannot reference ledgerB's source or category.

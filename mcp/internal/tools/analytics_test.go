@@ -3,8 +3,22 @@ package tools_test
 import (
 	"testing"
 
+	"tally/internal/currency"
 	"tally/internal/tools"
 )
+
+// majorAmount formats minorUnits as the decimal-string amount the
+// get_financial_summary wire format now uses, so existing test cases keep
+// exercising the same underlying minor-unit values they always did (e.g.
+// majorAmount(t, "CNY", 100) == "1.00").
+func majorAmount(t *testing.T, code string, minorUnits int64) string {
+	t.Helper()
+	s, err := currency.FormatMajor(code, minorUnits)
+	if err != nil {
+		t.Fatalf("FormatMajor(%q, %d): %v", code, minorUnits, err)
+	}
+	return s
+}
 
 // findCurrencyTotals returns the CurrencyTotals entry for currency, failing
 // the test if it's not present.
@@ -72,18 +86,18 @@ func TestGetFinancialSummaryTimeRange(t *testing.T) {
 		t.Fatalf("expected 1 currency total, got %d: %+v", len(out.TotalsByCurrency), out.TotalsByCurrency)
 	}
 	ct := out.TotalsByCurrency[0]
-	if ct.Currency != "CNY" || ct.Income != 0 || ct.Expense != 100 || ct.Net != -100 {
-		t.Errorf("TotalsByCurrency[0] = %+v, want {CNY 0 100 -100}", ct)
+	if ct.Currency != "CNY" || ct.Income != majorAmount(t, "CNY", 0) || ct.Expense != majorAmount(t, "CNY", 100) || ct.Net != majorAmount(t, "CNY", -100) {
+		t.Errorf("TotalsByCurrency[0] = %+v, want {CNY %q %q %q}", ct, majorAmount(t, "CNY", 0), majorAmount(t, "CNY", 100), majorAmount(t, "CNY", -100))
 	}
 
 	cs := findCategorySummary(t, out.ByCategory, categoryID)
-	if cs.Expense != 100 || cs.Income != 0 {
-		t.Errorf("ByCategory summary = %+v, want income=0 expense=100", cs)
+	if cs.Expense != majorAmount(t, "CNY", 100) || cs.Income != majorAmount(t, "CNY", 0) {
+		t.Errorf("ByCategory summary = %+v, want income=%q expense=%q", cs, majorAmount(t, "CNY", 0), majorAmount(t, "CNY", 100))
 	}
 
 	ss := findSourceSummary(t, out.BySource, sourceID)
-	if ss.Expense != 100 || ss.Income != 0 {
-		t.Errorf("BySource summary = %+v, want income=0 expense=100", ss)
+	if ss.Expense != majorAmount(t, "CNY", 100) || ss.Income != majorAmount(t, "CNY", 0) {
+		t.Errorf("BySource summary = %+v, want income=%q expense=%q", ss, majorAmount(t, "CNY", 0), majorAmount(t, "CNY", 100))
 	}
 }
 
@@ -104,18 +118,18 @@ func TestGetFinancialSummaryNoTimeRange(t *testing.T) {
 	callTool(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{LedgerID: ledgerID}, &out)
 
 	ct := findCurrencyTotals(t, out.TotalsByCurrency, "CNY")
-	if ct.Income != 500 || ct.Expense != 200 || ct.Net != 300 {
-		t.Errorf("TotalsByCurrency = %+v, want income=500 expense=200 net=300", ct)
+	if ct.Income != majorAmount(t, "CNY", 500) || ct.Expense != majorAmount(t, "CNY", 200) || ct.Net != majorAmount(t, "CNY", 300) {
+		t.Errorf("TotalsByCurrency = %+v, want income=%q expense=%q net=%q", ct, majorAmount(t, "CNY", 500), majorAmount(t, "CNY", 200), majorAmount(t, "CNY", 300))
 	}
 
 	cs := findCategorySummary(t, out.ByCategory, categoryID)
-	if cs.Income != 500 || cs.Expense != 200 {
-		t.Errorf("ByCategory summary = %+v, want income=500 expense=200", cs)
+	if cs.Income != majorAmount(t, "CNY", 500) || cs.Expense != majorAmount(t, "CNY", 200) {
+		t.Errorf("ByCategory summary = %+v, want income=%q expense=%q", cs, majorAmount(t, "CNY", 500), majorAmount(t, "CNY", 200))
 	}
 
 	ss := findSourceSummary(t, out.BySource, sourceID)
-	if ss.Income != 500 || ss.Expense != 200 {
-		t.Errorf("BySource summary = %+v, want income=500 expense=200", ss)
+	if ss.Income != majorAmount(t, "CNY", 500) || ss.Expense != majorAmount(t, "CNY", 200) {
+		t.Errorf("BySource summary = %+v, want income=%q expense=%q", ss, majorAmount(t, "CNY", 500), majorAmount(t, "CNY", 200))
 	}
 }
 
@@ -178,13 +192,13 @@ func TestGetFinancialSummaryMultiCurrency(t *testing.T) {
 	}
 
 	cny := findCurrencyTotals(t, out.TotalsByCurrency, "CNY")
-	if cny.Income != 1000 || cny.Expense != 0 || cny.Net != 1000 {
-		t.Errorf("CNY totals = %+v, want income=1000 expense=0 net=1000", cny)
+	if cny.Income != majorAmount(t, "CNY", 1000) || cny.Expense != majorAmount(t, "CNY", 0) || cny.Net != majorAmount(t, "CNY", 1000) {
+		t.Errorf("CNY totals = %+v, want income=%q expense=%q net=%q", cny, majorAmount(t, "CNY", 1000), majorAmount(t, "CNY", 0), majorAmount(t, "CNY", 1000))
 	}
 
 	usd := findCurrencyTotals(t, out.TotalsByCurrency, "USD")
-	if usd.Income != 0 || usd.Expense != 300 || usd.Net != -300 {
-		t.Errorf("USD totals = %+v, want income=0 expense=300 net=-300", usd)
+	if usd.Income != majorAmount(t, "USD", 0) || usd.Expense != majorAmount(t, "USD", 300) || usd.Net != majorAmount(t, "USD", -300) {
+		t.Errorf("USD totals = %+v, want income=%q expense=%q net=%q", usd, majorAmount(t, "USD", 0), majorAmount(t, "USD", 300), majorAmount(t, "USD", -300))
 	}
 }
 
@@ -222,12 +236,12 @@ func TestGetFinancialSummaryByCategory(t *testing.T) {
 	}
 
 	csA := findCategorySummary(t, out.ByCategory, categoryA)
-	if csA.Expense != 100 {
-		t.Errorf("categoryA expense = %d, want 100", csA.Expense)
+	if csA.Expense != majorAmount(t, "CNY", 100) {
+		t.Errorf("categoryA expense = %q, want %q", csA.Expense, majorAmount(t, "CNY", 100))
 	}
 	csB := findCategorySummary(t, out.ByCategory, categoryB.Category.ID)
-	if csB.Expense != 250 {
-		t.Errorf("categoryB expense = %d, want 250", csB.Expense)
+	if csB.Expense != majorAmount(t, "CNY", 250) {
+		t.Errorf("categoryB expense = %q, want %q", csB.Expense, majorAmount(t, "CNY", 250))
 	}
 
 	for _, cs := range out.ByCategory {
@@ -271,12 +285,12 @@ func TestGetFinancialSummaryBySource(t *testing.T) {
 	}
 
 	ssA := findSourceSummary(t, out.BySource, sourceA)
-	if ssA.Expense != 100 {
-		t.Errorf("sourceA expense = %d, want 100", ssA.Expense)
+	if ssA.Expense != majorAmount(t, "CNY", 100) {
+		t.Errorf("sourceA expense = %q, want %q", ssA.Expense, majorAmount(t, "CNY", 100))
 	}
 	ssB := findSourceSummary(t, out.BySource, sourceB.Source.ID)
-	if ssB.Expense != 250 {
-		t.Errorf("sourceB expense = %d, want 250", ssB.Expense)
+	if ssB.Expense != majorAmount(t, "CNY", 250) {
+		t.Errorf("sourceB expense = %q, want %q", ssB.Expense, majorAmount(t, "CNY", 250))
 	}
 
 	for _, ss := range out.BySource {
@@ -316,10 +330,95 @@ func TestGetFinancialSummaryIsolatedByLedger(t *testing.T) {
 	callTool(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{LedgerID: ledgerA}, &out)
 
 	ct := findCurrencyTotals(t, out.TotalsByCurrency, "CNY")
-	if ct.Expense != 100 {
-		t.Errorf("TotalsByCurrency expense = %d, want 100 (ledgerB's 999 must not be included)", ct.Expense)
+	if ct.Expense != majorAmount(t, "CNY", 100) {
+		t.Errorf("TotalsByCurrency expense = %q, want %q (ledgerB's 999 must not be included)", ct.Expense, majorAmount(t, "CNY", 100))
 	}
 	if len(out.BySource) != 1 || len(out.ByCategory) != 1 {
 		t.Fatalf("expected exactly ledgerA's source/category in the breakdown, got BySource=%+v ByCategory=%+v", out.BySource, out.ByCategory)
+	}
+}
+
+// TestGetFinancialSummaryNetExpenseIsNegative covers spec.md's "净支出场景
+// 净额带负号" scenario: when expense exceeds income, net is a decimal string
+// carrying a leading minus sign, while income/expense themselves stay
+// non-negative.
+func TestGetFinancialSummaryNetExpenseIsNegative(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID,
+		Type:     "income", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(3000), Currency: "CNY", Time: futureTime(),
+	}, &tools.CreateTransactionOutput{})
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(5000), Currency: "CNY", Time: futureTime(),
+	}, &tools.CreateTransactionOutput{})
+
+	var out tools.GetFinancialSummaryOutput
+	callTool(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{LedgerID: ledgerID}, &out)
+
+	ct := findCurrencyTotals(t, out.TotalsByCurrency, "CNY")
+	if ct.Income != majorAmount(t, "CNY", 3000) {
+		t.Errorf("Income = %q, want %q", ct.Income, majorAmount(t, "CNY", 3000))
+	}
+	if ct.Expense != majorAmount(t, "CNY", 5000) {
+		t.Errorf("Expense = %q, want %q", ct.Expense, majorAmount(t, "CNY", 5000))
+	}
+	if ct.Net != "-20.00" {
+		t.Errorf("Net = %q, want %q (net expense must carry a minus sign)", ct.Net, "-20.00")
+	}
+}
+
+// TestGetFinancialSummaryNonCNYCurrencyPrecision covers spec.md's precision
+// guarantee for get_financial_summary's income/expense/net fields on
+// non-CNY currencies -- they must reflect that currency's own standard
+// precision, not silently degrade to two decimal places.
+func TestGetFinancialSummaryNonCNYCurrencyPrecision(t *testing.T) {
+	session, _ := newTestSession(t)
+
+	cases := []struct {
+		name          string
+		currency      string
+		incomeAmount  string
+		expenseAmount string
+		wantIncome    string
+		wantExpense   string
+		wantNet       string
+	}{
+		{"JPY zero-decimal", "JPY", "8000", "5000", "8000", "5000", "3000"},
+		{"BHD three-decimal", "BHD", "3.000", "5.000", "3.000", "5.000", "-2.000"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var ledgerOut tools.ManageLedgerOutput
+			callTool(t, session, "manage_ledger", tools.ManageLedgerInput{Operation: "create", Name: "Precision " + c.name}, &ledgerOut)
+			ledgerID := ledgerOut.Ledger.ID
+			sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+
+			callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+				LedgerID: ledgerID,
+				Type:     "income", SourceID: sourceID, CategoryID: categoryID, Amount: c.incomeAmount, Currency: c.currency, Time: futureTime(),
+			}, &tools.CreateTransactionOutput{})
+			callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+				LedgerID: ledgerID,
+				Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: c.expenseAmount, Currency: c.currency, Time: futureTime(),
+			}, &tools.CreateTransactionOutput{})
+
+			var out tools.GetFinancialSummaryOutput
+			callTool(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{LedgerID: ledgerID}, &out)
+
+			ct := findCurrencyTotals(t, out.TotalsByCurrency, c.currency)
+			if ct.Income != c.wantIncome {
+				t.Errorf("Income = %q, want %q", ct.Income, c.wantIncome)
+			}
+			if ct.Expense != c.wantExpense {
+				t.Errorf("Expense = %q, want %q", ct.Expense, c.wantExpense)
+			}
+			if ct.Net != c.wantNet {
+				t.Errorf("Net = %q, want %q", ct.Net, c.wantNet)
+			}
+		})
 	}
 }
