@@ -78,15 +78,15 @@ plugin.json"这个布局本来就是为将来仓库里能放多个 plugin 留的
   README 已把这一步写成确定性的安装说明,并给出用 `openclaw config patch --stdin`
   替换 `agents.list[].skills` 数组的具体做法(patch 数组是整体替换,需要连同已有的
   skill 名一起写全)。
-- [完整的实时对话往返(agent 真的在一次真实对话里调用 `tally` MCP 工具)尚未验证——
-  验证时遇到了模型 provider(nvidia 的 deepseek 模型)的 rate limit,`openclaw agent`
-  CLI 直接返回 `FailoverError: API rate limit reached`,和本次改动本身无关] → 缓解:
-  已确认的部分(插件能装上、skill 能被发现并启用、`✓ Ready`/`Visible to model: yes`)
-  已经足以说明装配链路是通的;剩下"model 真的会在对话里触发这个 skill 并成功调用
-  MCP 工具"这一环,建议用户在 rate limit 消退后自己在 feishu 里跟 tally agent 对话
-  一次确认,或者之后换一个可用的 model provider 再跑一次 `openclaw agent --agent
-  tally --message ... --session-key agent:tally:verify-openclaw-compat`(不加
-  `--deliver` 就不会真的发到 feishu)。
+- ~~完整的实时对话往返(agent 真的在一次真实对话里调用 `tally` MCP 工具)尚未验证~~
+  ——**已解决**:默认模型(nvidia 的 deepseek 模型)撞了 rate limit,改用
+  `--model nvidia/minimaxai/minimax-m3` 重跑 `openclaw agent --agent tally
+  --message "这个月一共花了多少钱？" --session-key
+  agent:tally:verify-openclaw-compat`(不加 `--deliver`,不会真发到 feishu)后
+  完整跑通:`systemPromptReport.skills.entries` 确认三个 skill 都进了 system
+  prompt,`toolSummary` 确认调用了 `tally__get_financial_summary` 且 0 次失败,
+  拿到了真实账本数据。整条装配链路(插件安装 → skill 发现 → agent allowlist
+  → 模型看到 skill → 调用真实 MCP 工具)全部实测打通。
 - [验证步骤需要对用户正在用的生产 openclaw 实例执行 `plugins install`,是有状态改动
   的操作] → 缓解:tasks.md 把这一步单独列出,明确标注需要用户在执行前再次确认,不在
   本次 change 的常规实施流程里自动跑。

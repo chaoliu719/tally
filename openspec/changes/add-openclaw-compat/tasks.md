@@ -45,13 +45,16 @@
       里未出现独立条目,是通过 `openclaw config patch --stdin` 把三个 skill 名加进
       `agents.list[id=tally].skills` 数组做到的;`openclaw skills info record
       --agent tally` 确认变成 `✓ Ready` / `Visible to model: yes`
-- [ ] 3.4 重载 openclaw 后在 feishu 里跟 tally agent 实际对话一次,触发一次记账
-      场景,确认能读到 SKILL.md 内容并正常调用 `tally` MCP 工具——**未完成**:用
-      `openclaw agent --agent tally --message ... --session-key
-      agent:tally:verify-openclaw-compat`(不加 `--deliver`,不会真发到 feishu)
-      触发时遇到模型 provider(nvidia 的 deepseek 模型)rate limit,两次重试均返回
-      `FailoverError: API rate limit reached`,和本次改动无关。留给用户在 provider
-      恢复后自行验证(见 design.md Risks 一节)
+- [x] 3.4 重载 openclaw 后在 feishu 里跟 tally agent 实际对话一次,触发一次记账
+      场景,确认能读到 SKILL.md 内容并正常调用 `tally` MCP 工具——默认模型
+      (nvidia 的 deepseek 模型)撞了两次 rate limit 后,改用 `--model
+      nvidia/minimaxai/minimax-m3` 重试成功:`openclaw agent --agent tally
+      --message "这个月一共花了多少钱？" --session-key
+      agent:tally:verify-openclaw-compat --model nvidia/minimaxai/minimax-m3`
+      返回的 `systemPromptReport.skills.entries` 确认 `analysis`/`optimize`/
+      `record` 三个 skill 都被注入进了 system prompt,`toolSummary` 确认真的调用了
+      `tally__get_financial_summary`(0 次失败),拿到真实账本数据("本月一共花了
+      ¥75.90...")。只读查询,没有写入/修改任何账本数据
 - [x] 3.5 根据 3.2-3.4 的实测结果,把 `plugin/README.md` 里"未经验证"的措辞改成
       确定性结论(要么写"会自动生效",要么写"需要手动配置",不再用推测性语言);
       design.md 的 Risks 一节如有需要一并更新——两处均已更新为实测结论,3.4 的

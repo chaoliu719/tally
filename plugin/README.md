@@ -36,11 +36,10 @@ repo restructuring needed:
 openclaw plugins install tally --marketplace chaoliu719/tally
 ```
 
-Verified against a real OpenClaw 2026.7.1 instance: `plugins install` correctly resolves and
-installs the plugin from this repo's marketplace, and after the two manual steps below,
-`openclaw skills info record --agent <id>` reports the skill as `✓ Ready` and visible to the
-model. A full live-conversation round trip (agent actually calling the `tally` MCP tools) is the
-one piece still pending verification.
+Verified end to end against a real OpenClaw 2026.7.1 instance: `plugins install` correctly
+resolves and installs the plugin from this repo's marketplace, and after the two manual steps
+below, the tally agent picked up the `analysis` skill in a real conversation and successfully
+called the `tally` MCP server to answer a spending question.
 
 ### The `tally` MCP server needs to be added by hand
 
