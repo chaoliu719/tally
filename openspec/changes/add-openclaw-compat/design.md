@@ -63,16 +63,30 @@ plugin.json"这个布局本来就是为将来仓库里能放多个 plugin 留的
 
 ## Risks / Trade-offs
 
-- [`.mcp.json` 的 HTTP server 是否被 openclaw 插件导入器自动翻译成原生 schema,
-  目前没有实测坐实,只是"不影响可用性"的合理推断] → 缓解:README 里明确写"未验证自动
-  导入是否生效",附字段对照表作为手动兜底,不写成确定性的"会自动生效"。真正跑一次
-  `plugins install` 之后应该把这处措辞更新为已验证的结论(见 tasks.md 的验证步骤,
-  需要用户确认后再对生产实例执行)。
-- [装了插件后,openclaw 侧新出现的 `record`/`analysis`/`optimize` skill entries 默认
-  可能是禁用状态,需要额外手动启用并加进目标 agent 的 `skills` 数组——这是从这台机器
-  上其他已装插件(如 feishu-doc、canvas)的真实配置结构观察到的规律,不是 openclaw
-  文档写明的行为] → 缓解:README 把这两步启用操作写成安装说明的一部分,不假设装完
-  插件就自动可用。
+**已在用户的生产 openclaw 实例(2026.7.1)上实测坐实,不再是推断:**
+
+- `.mcp.json` 的 HTTP server **确认不会**被插件导入器自动翻译:`plugins install tally
+  --marketplace chaoliu719/tally` 装完后,`plugins inspect tally --json` 的
+  `diagnostics` 里明确报告"bundle MCP servers use unsupported transports or incomplete
+  configs (stdio only today): tally"——openclaw 的 bundle 导入目前只支持 stdio。缓解:
+  README 已改成确定性表述,附字段对照表 + `config patch` 示例作为手动配置步骤(不再
+  是"如果没生效"的推测句式)。用户机器上原本手工配置的 `mcp.servers.tally` 条目在
+  装插件前后都完好、未被覆盖或冲突,所以这条风险在这台机器上没有造成实际中断。
+- 装了插件后,`record`/`analysis`/`optimize` 三个 skill **确认**默认对已有 agent 是
+  "Excluded by agent allowlist"状态(`openclaw skills info <skill> --agent <id>` 实测
+  证实),需要把三个 skill 名加进目标 agent 的 `skills` 数组才会变成 `✓ Ready`。缓解:
+  README 已把这一步写成确定性的安装说明,并给出用 `openclaw config patch --stdin`
+  替换 `agents.list[].skills` 数组的具体做法(patch 数组是整体替换,需要连同已有的
+  skill 名一起写全)。
+- [完整的实时对话往返(agent 真的在一次真实对话里调用 `tally` MCP 工具)尚未验证——
+  验证时遇到了模型 provider(nvidia 的 deepseek 模型)的 rate limit,`openclaw agent`
+  CLI 直接返回 `FailoverError: API rate limit reached`,和本次改动本身无关] → 缓解:
+  已确认的部分(插件能装上、skill 能被发现并启用、`✓ Ready`/`Visible to model: yes`)
+  已经足以说明装配链路是通的;剩下"model 真的会在对话里触发这个 skill 并成功调用
+  MCP 工具"这一环,建议用户在 rate limit 消退后自己在 feishu 里跟 tally agent 对话
+  一次确认,或者之后换一个可用的 model provider 再跑一次 `openclaw agent --agent
+  tally --message ... --session-key agent:tally:verify-openclaw-compat`(不加
+  `--deliver` 就不会真的发到 feishu)。
 - [验证步骤需要对用户正在用的生产 openclaw 实例执行 `plugins install`,是有状态改动
   的操作] → 缓解:tasks.md 把这一步单独列出,明确标注需要用户在执行前再次确认,不在
   本次 change 的常规实施流程里自动跑。

@@ -28,26 +28,39 @@
 
 ## 3. 在用户的 openclaw 实例上验证(需要用户确认后再执行)
 
-- [ ] 3.1 **执行前向用户确认**:接下来要在 mac-mini 上对用户正在用的生产 openclaw
+- [x] 3.1 **执行前向用户确认**:接下来要在 mac-mini 上对用户正在用的生产 openclaw
       实例运行 `docker exec openclaw-openclaw-gateway-1 node dist/index.js plugins
       install tally --marketplace chaoliu719/tally`,这会修改该实例的插件注册表,
-      需要用户明确同意后才执行
-- [ ] 3.2 确认同意后执行安装,用 `plugins inspect tally --json` 或 `plugins doctor`
+      需要用户明确同意后才执行——用户已确认同意,已执行(先装了一次未推送的旧内容,
+      推送后用 `--force` 重装取到了最新内容)
+- [x] 3.2 确认同意后执行安装,用 `plugins inspect tally --json` 或 `plugins doctor`
       检查三个 skill 是否被正确发现,以及 `.mcp.json` 里的 `tally` server 有没有被
       翻译进 `mcp.servers`(对照已有的手工配置条目,确认没有产生冲突;如果没有自动
-      导入,保留手工那条即可,不依赖自动导入)
-- [ ] 3.3 按第 2.4 步的说明,在 `skills.entries` 里启用三个 skill,并加进
-      `agents.list` 里 `id: "tally"` 那条记录的 `skills` 数组
+      导入,保留手工那条即可,不依赖自动导入)——实测确认:三个 skill 被发现
+      (`openclaw-extra` 来源);`.mcp.json` 的 HTTP server **没有**被自动翻译
+      (`plugins inspect` 的 diagnostics 明确报告"stdio only today"),但手工配置的
+      `mcp.servers.tally` 条目完好、无冲突
+- [x] 3.3 按第 2.4 步的说明,在 `skills.entries` 里启用三个 skill,并加进
+      `agents.list` 里 `id: "tally"` 那条记录的 `skills` 数组——`skills.entries`
+      里未出现独立条目,是通过 `openclaw config patch --stdin` 把三个 skill 名加进
+      `agents.list[id=tally].skills` 数组做到的;`openclaw skills info record
+      --agent tally` 确认变成 `✓ Ready` / `Visible to model: yes`
 - [ ] 3.4 重载 openclaw 后在 feishu 里跟 tally agent 实际对话一次,触发一次记账
-      场景,确认能读到 SKILL.md 内容并正常调用 `tally` MCP 工具
-- [ ] 3.5 根据 3.2-3.4 的实测结果,把 `plugin/README.md` 里"未经验证"的措辞改成
+      场景,确认能读到 SKILL.md 内容并正常调用 `tally` MCP 工具——**未完成**:用
+      `openclaw agent --agent tally --message ... --session-key
+      agent:tally:verify-openclaw-compat`(不加 `--deliver`,不会真发到 feishu)
+      触发时遇到模型 provider(nvidia 的 deepseek 模型)rate limit,两次重试均返回
+      `FailoverError: API rate limit reached`,和本次改动无关。留给用户在 provider
+      恢复后自行验证(见 design.md Risks 一节)
+- [x] 3.5 根据 3.2-3.4 的实测结果,把 `plugin/README.md` 里"未经验证"的措辞改成
       确定性结论(要么写"会自动生效",要么写"需要手动配置",不再用推测性语言);
-      design.md 的 Risks 一节如有需要一并更新
+      design.md 的 Risks 一节如有需要一并更新——两处均已更新为实测结论,3.4 的
+      rate-limit 阻塞也如实记录在 design.md 里,没有假装已验证
 
 ## 4. 收尾
 
-- [ ] 4.1 运行 `openspec validate --change add-openclaw-compat --strict`,确认
+- [x] 4.1 运行 `openspec validate --change add-openclaw-compat --strict`,确认
       proposal/design/tasks 通过校验、无格式问题(本次 `skip_specs: true`,不生成
       spec delta)
-- [ ] 4.2 通读 `plugin/README.md` 两条安装路径的每一条命令,确认变量名和
+- [x] 4.2 通读 `plugin/README.md` 两条安装路径的每一条命令,确认变量名和
       `mcp/README.md`/`plugin/.mcp.json` 里实际用的变量名完全一致,没有笔误

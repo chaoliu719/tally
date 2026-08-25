@@ -36,17 +36,19 @@ repo restructuring needed:
 openclaw plugins install tally --marketplace chaoliu719/tally
 ```
 
-This has been verified to correctly resolve the `tally` plugin (`openclaw plugins marketplace list
-chaoliu719/tally --json` reports it at `./plugin`) against a real OpenClaw 2026.7.1 instance.
-Whether `plugins install` itself, and the skill/MCP wiring below, come up clean end to end has not
-yet been verified — treat the rest of this section as the best current understanding, not a
-confirmed result.
+Verified against a real OpenClaw 2026.7.1 instance: `plugins install` correctly resolves and
+installs the plugin from this repo's marketplace, and after the two manual steps below,
+`openclaw skills info record --agent <id>` reports the skill as `✓ Ready` and visible to the
+model. A full live-conversation round trip (agent actually calling the `tally` MCP tools) is the
+one piece still pending verification.
 
-### If the `tally` MCP server isn't picked up automatically
+### The `tally` MCP server needs to be added by hand
 
-`plugin/.mcp.json` uses Claude Code's schema. OpenClaw's native `mcp.servers` config uses different
-field names for the same thing. If installing the plugin doesn't wire up a working `tally` entry
-under `mcp.servers`, add one by hand using this mapping:
+`plugin/.mcp.json` uses Claude Code's schema. OpenClaw's bundle importer only supports stdio MCP
+servers today — `plugins inspect tally --json` reports a diagnostic (`bundle MCP servers use
+unsupported transports or incomplete configs (stdio only today): tally`) confirming the `tally`
+server, which is HTTP, is **not** wired up automatically. Add it by hand to OpenClaw's native
+`mcp.servers` config, translating the field names:
 
 | `plugin/.mcp.json` field | OpenClaw `mcp.servers.tally` field | Value |
 | --- | --- | --- |
@@ -54,13 +56,25 @@ under `mcp.servers`, add one by hand using this mapping:
 | `url` | `url` | unchanged — your `TALLY_MCP_URL` |
 | `headers` | `headers` | unchanged — `Authorization: Bearer <TALLY_MCP_TOKEN>` |
 
-### Enabling the skills
+For example, via `openclaw config patch --stdin`:
 
-A freshly installed plugin's skills may land disabled by default. If `record`/`analysis`/
-`optimize` don't show up for your agent after installing:
+```json
+{ "mcp": { "servers": { "tally": {
+  "enabled": true,
+  "transport": "streamable-http",
+  "url": "<TALLY_MCP_URL>",
+  "headers": { "Authorization": "Bearer <TALLY_MCP_TOKEN>" }
+} } } }
+```
 
-1. Enable each one under `skills.entries` in OpenClaw's config (`enabled: true`).
-2. Add `record`, `analysis`, and `optimize` to the target agent's `skills` list.
+### The three skills need to be added to your agent's allowlist
+
+An agent's `skills` list is an explicit allowlist — a freshly installed plugin's skills aren't on
+it, so `openclaw skills info record --agent <id>` reports `Excluded by agent allowlist` even
+though the plugin itself installed fine. Add `record`, `analysis`, and `optimize` to the target
+agent's `skills` array (`agents.list[].skills` in `openclaw.json`, e.g. via `openclaw config
+patch --stdin` with the agent's full `skills` array including the three new entries — patching an
+array replaces it wholesale, so include the existing entries too).
 
 ## Verifying the connection
 
