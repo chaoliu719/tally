@@ -70,6 +70,9 @@ context: |
   preview → apply 两步确认;单条记录的增/改直接执行,不强制二次确认(MCP 客户端自身的
   调用确认已经够用于单条操作)。
 
+  plugin 化落地(command):import 等批量导入提案就绪,review 等可视化研究结论
+  就绪——两者都还没做。comment 纪律暂时由 skill 负责,不由 hook 强制。
+
   明确排除、不在本项目实现的能力(Agent 侧即可完成,或与极简方向冲突):
   - AI 图片识别记账(拍照自动识别金额/商家——Claude 自己读图即可,不需要服务端再调一次外部 LLM)
   - 图片附件存储(小票照片)
@@ -82,7 +85,6 @@ context: |
     脚本,解析走代码不走 Agent 上下文,Agent 只看摘要与异常清单。
   - 可视化:skill + templates 动态生成 artifacts;何种可视化适合本项目尚未研究。此后
     设计分析类工具时,返回结构以"能直接喂给模板"为准。
-  - plugin 化落地(skill/command/agent/hook):等推广时机。
 
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.
