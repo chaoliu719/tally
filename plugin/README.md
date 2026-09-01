@@ -16,8 +16,12 @@ A running `tally-mcp` instance reachable over HTTP, and its bearer token — see
 [`mcp/README.md`](../mcp/README.md) for how to deploy one. You'll need two values before
 installing the plugin anywhere:
 
-- `TALLY_MCP_URL` — the server's `/mcp` endpoint, e.g. `http://localhost:16355/mcp`.
+- `TALLY_MCP_URL` — the server's `/mcp` endpoint, e.g. `https://tally.example.com/mcp` (or
+  `http://localhost:16355/mcp` when the plugin and server share a machine).
 - `TALLY_MCP_TOKEN` — the same value as the server's `TALLY_MCP_TOKEN`.
+
+Claude Code and Claude Desktop authenticate with the static token directly. claude.ai's web
+connector uses the server's built-in OAuth instead — see [`mcp/README.md`](../mcp/README.md).
 
 Both are read by [`plugin/.mcp.json`](.mcp.json), which every install path below relies on to wire
 up the `tally` MCP server.

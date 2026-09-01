@@ -10,6 +10,7 @@ import (
 	"tally/internal/authn"
 	"tally/internal/bootstrap"
 	"tally/internal/mcpserver"
+	"tally/internal/oauth"
 	"tally/internal/store"
 	"tally/internal/tools"
 )
@@ -50,8 +51,15 @@ func buildMux(cfg *bootstrap.Config, db *sql.DB) *http.ServeMux {
 		ConfirmSecret: cfg.ConfirmationSecret,
 	})
 
+	oauthSrv := oauth.New(oauth.Config{
+		SigningSecret: cfg.OAuthSigningSecret,
+		BaseURL:       cfg.PublicBaseURL,
+		StaticToken:   cfg.MCPToken,
+	})
+
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", authn.Middleware(cfg.MCPToken, mcpserver.HTTPHandler(server)))
+	oauthSrv.Routes(mux)
+	mux.Handle("/mcp", authn.Middleware(cfg.MCPToken, oauthSrv, mcpserver.HTTPHandler(server)))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})

@@ -26,9 +26,15 @@ else
   cat > .env <<EOF
 TALLY_MCP_TOKEN=$(openssl rand -hex 32)
 TALLY_CONFIRMATION_SECRET=$(openssl rand -hex 32)
+TALLY_OAUTH_SIGNING_SECRET=$(openssl rand -hex 32)
+# Set this to the URL clients will actually use to reach the server, e.g.
+# https://tally.example.com (no trailing slash, no /mcp).
+TALLY_PUBLIC_BASE_URL=https://tally.example.com
 TALLY_HOST_PORT=16355
 EOF
   chmod 600 .env
+  echo "NOTE: edit TALLY_PUBLIC_BASE_URL in .env before starting — it must be"
+  echo "      the real external origin of this server."
 fi
 
 cat <<EOF

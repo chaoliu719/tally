@@ -78,8 +78,10 @@ All configuration is via environment variables.
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `TALLY_MCP_TOKEN` | Yes | — | Static bearer token clients must send as `Authorization: Bearer <token>`. The process refuses to start without it. |
+| `TALLY_MCP_TOKEN` | Yes | — | Static bearer token clients may send as `Authorization: Bearer <token>`. Also the login gate for the OAuth `/authorize` step. The process refuses to start without it. |
 | `TALLY_CONFIRMATION_SECRET` | Yes | — | Secret used to sign/verify `confirmation_token`s for destructive operations (ledger/source/category/transaction delete). Independent of `TALLY_MCP_TOKEN`. The process refuses to start without it. |
+| `TALLY_OAUTH_SIGNING_SECRET` | Yes | — | Secret that signs/verifies the OAuth authorization codes, access tokens, and client IDs. Independent of the two secrets above. Rotating it invalidates every issued access token at once. The process refuses to start without it. |
+| `TALLY_PUBLIC_BASE_URL` | Yes | — | The externally reachable origin, no trailing slash (e.g. `https://tally.liuchao.life`). Anchors the OAuth issuer, the well-known metadata URLs, and the canonical resource URI (`<base>/mcp`) that access tokens are bound to. The process refuses to start without it. |
 | `TALLY_DB_PATH` | No | `./tally.db` | Path to the SQLite file. Created (with tally's own schema) on first run if it doesn't exist. |
 | `TALLY_LISTEN_ADDR` | No | `:16355` | Address the HTTP server listens on. |
 
@@ -99,8 +101,9 @@ curl -fsSL https://raw.githubusercontent.com/chaoliu719/tally/main/mcp/install.s
 ```
 
 This fetches `docker-compose.yml` and writes a `./tally-mcp/.env` with freshly generated
-`TALLY_MCP_TOKEN`/`TALLY_CONFIRMATION_SECRET` values (re-running it leaves an existing `.env`
-untouched). Then:
+`TALLY_MCP_TOKEN`/`TALLY_CONFIRMATION_SECRET`/`TALLY_OAUTH_SIGNING_SECRET` values (re-running it
+leaves an existing `.env` untouched). **Then edit `TALLY_PUBLIC_BASE_URL` in `.env`** to the URL
+clients will actually use (e.g. `https://tally.example.com`), and:
 
 ```bash
 cd tally-mcp
@@ -120,14 +123,32 @@ go build -o tally-mcp ./cmd/tally-mcp
 
 TALLY_MCP_TOKEN=change-me \
 TALLY_CONFIRMATION_SECRET=change-me-too \
+TALLY_OAUTH_SIGNING_SECRET=change-me-three \
+TALLY_PUBLIC_BASE_URL=http://localhost:16355 \
 TALLY_DB_PATH=./tally.db \
 ./tally-mcp
 ```
 
 The server exposes:
 
-- `POST /mcp` — the MCP endpoint (JSON-RPC over streamable HTTP), requires the bearer token.
+- `POST /mcp` — the MCP endpoint (JSON-RPC over streamable HTTP). Requires either the static
+  bearer token or an OAuth access token this server issued; an unauthenticated request gets a
+  `401` whose `WWW-Authenticate` header points at the protected-resource metadata.
 - `GET /healthz` — unauthenticated health check, returns `200 OK`.
+- `GET /.well-known/oauth-protected-resource`, `GET /.well-known/oauth-authorization-server` —
+  unauthenticated OAuth discovery documents (RFC 9728 / RFC 8414).
+- `GET|POST /authorize`, `POST /token`, `POST /register` — the built-in OAuth 2.1 authorization
+  server. `/authorize` presents a one-field form asking for the static token as the login gate;
+  everything is stateless (HMAC-signed codes and tokens, no store). See
+  `openspec/specs/mcp-oauth-authorization/spec.md`.
+
+### Authentication: static token vs OAuth
+
+The static `TALLY_MCP_TOKEN` works directly as a bearer token — the simplest path for Claude Code
+and Claude Desktop. claude.ai's web custom-connector flow only speaks OAuth, so the server also
+runs a minimal single-user OAuth 2.1 authorization server (authorization code + PKCE, dynamic
+client registration, ~1h access tokens, no refresh token, no scopes, no per-token revocation).
+The one credential in both cases is the static token.
 
 ## Connecting a client
 
@@ -142,13 +163,20 @@ Replace `change-me` with the same value as `TALLY_MCP_TOKEN`, and the host/port 
 server is actually reachable (`localhost` only works if Claude Code runs on the same machine as
 the server).
 
-### Claude Desktop / claude.ai
+### Claude Desktop
 
-Header-based auth for custom remote MCP connectors is a Claude.ai/Desktop feature: open
-**Settings → Connectors → Add custom connector**, enter the server URL
-(`http://<host>:<port>/mcp`), and add a request header named `Authorization` with the value
+Open **Settings → Connectors → Add custom connector**, enter the server URL
+(`https://<host>/mcp`), and add a request header named `Authorization` with the value
 `Bearer change-me` (the `Bearer ` prefix must be typed in — Claude sends the header value exactly
 as entered).
+
+### claude.ai (web)
+
+The web connector only speaks OAuth, so use the built-in authorization server: open
+**Settings → Connectors → Add custom connector**, enter the server URL (`https://<host>/mcp`),
+leave the OAuth fields blank, and click **Add**. Claude discovers the authorization server,
+registers itself, and opens `/authorize` — paste the `TALLY_MCP_TOKEN` value into the one-field
+form to authorize. The server must be reachable over HTTPS at exactly `TALLY_PUBLIC_BASE_URL`.
 
 ### Verifying the connection
 

@@ -7,13 +7,33 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"tally/internal/bootstrap"
+	"tally/internal/oauth"
 )
+
+const (
+	testOAuthSecret = "test-oauth-signing-secret"
+	testBaseURL     = "https://tally.test"
+)
+
+// newTestConfig builds a Config with every required field set, including the
+// OAuth ones, so buildMux wires up the full resource-server + AS surface.
+func newTestConfig(t *testing.T) *bootstrap.Config {
+	t.Helper()
+	return &bootstrap.Config{
+		MCPToken:           "test-token",
+		ConfirmationSecret: "test-confirm-secret",
+		OAuthSigningSecret: testOAuthSecret,
+		PublicBaseURL:      testBaseURL,
+		DBPath:             filepath.Join(t.TempDir(), "tally.db"),
+	}
+}
 
 type bearerRoundTripper struct {
 	token string
@@ -138,4 +158,91 @@ func getStatus(t *testing.T, url string) int {
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode
+}
+
+// TestMCPAcceptsOAuthAccessToken proves the mux wiring: an access token
+// minted by this server's OAuth signing secret, bound to its resource URI,
+// authenticates an MCP session just like the static token does.
+func TestMCPAcceptsOAuthAccessToken(t *testing.T) {
+	cfg := newTestConfig(t)
+	db, err := bootstrap.InitDataStore(cfg)
+	if err != nil {
+		t.Fatalf("InitDataStore failed: %v", err)
+	}
+	defer db.Close()
+
+	httpServer := httptest.NewServer(buildMux(cfg, db))
+	defer httpServer.Close()
+
+	accessToken := oauth.IssueAccessToken(testOAuthSecret, testBaseURL+"/mcp")
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1.0.0"}, nil)
+	transport := &mcp.StreamableClientTransport{
+		Endpoint: httpServer.URL + "/mcp",
+		HTTPClient: &http.Client{
+			Transport: &bearerRoundTripper{token: accessToken, base: http.DefaultTransport},
+		},
+	}
+
+	session, err := client.Connect(context.Background(), transport, nil)
+	if err != nil {
+		t.Fatalf("MCP handshake with an OAuth access token failed: %v", err)
+	}
+	defer session.Close()
+
+	if _, err := session.ListTools(context.Background(), nil); err != nil {
+		t.Fatalf("tools/list with an OAuth access token failed: %v", err)
+	}
+}
+
+// TestMCPUnauthorizedAdvertisesOAuth verifies an unauthenticated /mcp request
+// gets a 401 whose WWW-Authenticate header points at the protected-resource
+// metadata document.
+func TestMCPUnauthorizedAdvertisesOAuth(t *testing.T) {
+	cfg := newTestConfig(t)
+	db, err := bootstrap.InitDataStore(cfg)
+	if err != nil {
+		t.Fatalf("InitDataStore failed: %v", err)
+	}
+	defer db.Close()
+
+	httpServer := httptest.NewServer(buildMux(cfg, db))
+	defer httpServer.Close()
+
+	resp, err := http.Post(httpServer.URL+"/mcp", "application/json", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	}
+	wa := resp.Header.Get("WWW-Authenticate")
+	if !strings.Contains(wa, "/.well-known/oauth-protected-resource") {
+		t.Errorf("WWW-Authenticate = %q, want the protected-resource metadata URL", wa)
+	}
+}
+
+// TestWellKnownEndpointsAreServedUnauthenticated checks both discovery
+// documents are reachable without credentials.
+func TestWellKnownEndpointsAreServedUnauthenticated(t *testing.T) {
+	cfg := newTestConfig(t)
+	db, err := bootstrap.InitDataStore(cfg)
+	if err != nil {
+		t.Fatalf("InitDataStore failed: %v", err)
+	}
+	defer db.Close()
+
+	httpServer := httptest.NewServer(buildMux(cfg, db))
+	defer httpServer.Close()
+
+	for _, path := range []string{
+		"/.well-known/oauth-protected-resource",
+		"/.well-known/oauth-authorization-server",
+	} {
+		if code := getStatus(t, httpServer.URL+path); code != http.StatusOK {
+			t.Errorf("GET %s = %d, want 200", path, code)
+		}
+	}
 }

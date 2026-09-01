@@ -61,7 +61,13 @@ context: |
   密码重置、2FA、多会话管理)。为未来可能的多用户重新设计留扩展空间,但那将采用"Agent 时代"的
   认证方式,不是现在这套传统 web 认证。
 
-  传输与认证:HTTP 传输;认证用单个静态 bearer token,不做 JWT/OAuth,不做签发/过期/撤销机制。
+  传输与认证:HTTP 传输。凭据是一个静态 bearer token(Claude Code / Desktop 直接用),
+  server 另内建一个最小 OAuth 2.1 授权服务器(授权码 + PKCE + 动态客户端注册 + 无状态
+  HMAC 签名 access token),让 tally-mcp 能作为 claude.ai 网页版自定义连接器接入——这套
+  就是上一段说的「Agent 时代」的认证方式,不是传统 web 认证。边界:仍是单用户,静态 token
+  是 OAuth 流程唯一的登录门禁;无账户、无 scope、无 per-token 撤销、无 refresh token,
+  轮换签名密钥即作废全部 token。(取代原「不做 JWT/OAuth」的决定,见 archive/
+  add-mcp-oauth-authorization。)
 
   结构性配置数据(账本、来源、分类)的增删改,全部通过 MCP 工具暴露,不做独立的 CLI
   管理通道——因为没有前端,MCP 工具是这些数据唯一的管理入口。
