@@ -113,6 +113,15 @@ Authorization: Bearer <cred>
 验证」处理;首次连接若发现 Claude 强制 refresh token 或 DCR 行为不符,回到 design 修订
 D5/D6 并可能改 `mcp-oauth-authorization` spec。
 
+**验证结果(2026-09-01,真实 claude.ai 网页版):** 服务端日志显示 Claude 的实际流程
+完全符合假设 —— `GET /.well-known/oauth-authorization-server` →
+`POST /register`(DCR,`redirect_uris=https://claude.ai/api/mcp/auth_callback`,幂等,
+调了两次都由无状态 client_id 处理)→ `GET /authorize`(带 `code_challenge` +
+`code_challenge_method` + `resource` + `state`)→ `POST /authorize`(粘贴静态 token)→
+`POST /token`(带 `code` + `code_verifier`)→ 用 access token 调 `list_ledgers` 成功。
+D5 成立,D6 首次连接无阻碍(access token 过期后的重连体验未观察,低风险,后续留意)。
+未改代码、未改 spec。
+
 ## Risks / Trade-offs
 
 - **[Claude 网页版实际 OAuth 行为无文档]** 走不走 DCR、redirect_uri 具体值、能否接受

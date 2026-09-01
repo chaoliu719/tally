@@ -3,7 +3,7 @@
 - [x] 1.1 真实实现部署到 `tally.liuchao.life` 后,server 端对 `/authorize` `/token`
   `/register` `/.well-known/*` 开详细请求日志(方法、路径、query、关键 body 字段;
   不记 token 明文)
-- [ ] 1.2 **待用户操作** — 在真实 claude.ai「添加自定义连接器」指向
+- [x] 1.2 **已验证(claude.ai 真实流程)** — 在真实 claude.ai「添加自定义连接器」指向
   `https://tally.liuchao.life/mcp`,走完 OAuth 授权。读服务端日志
   (`ssh aliyun 'cd ~/tally-mcp && docker compose logs -f | grep oauth'`)核对:是否调
   `/register`、`redirect_uri` 确切值、`resource` 参数、`code_challenge_method`、access
@@ -68,7 +68,7 @@
 - [x] 7.1 写一个 curl/脚本,在本地对 `buildMux` 走完整流程:发现 → register → authorize
   (带 token)→ token(带 PKCE)→ 用返回的 access token 调 `list_ledgers` 成功;
   静态 token 直连 `list_ledgers` 仍成功(回归)
-- [ ] 7.2 **待用户操作** — 已部署到 aliyun(`tally-mcp:oauth-dev` 镜像 + Caddy
+- [x] 7.2 **已验证** — 已部署到 aliyun(`tally-mcp:oauth-dev` 镜像 + Caddy
   `tally.liuchao.life` + `.env` 加 `TALLY_OAUTH_SIGNING_SECRET`/`TALLY_PUBLIC_BASE_URL`);
   在真实 claude.ai 添加连接器指向 `https://tally.liuchao.life/mcp`,完成 OAuth 授权,在
   网页版对话里 `list_ledgers` 返回「猫兔2026」
@@ -78,7 +78,7 @@
 - [x] 7.4 更新 `openspec/config.yaml` 的 `context`:transport/认证段改为「静态 bearer 或
   MCP OAuth(2.1 + PKCE + DCR)」,标注取代原「不做 JWT/OAuth」决定,并写明边界(单用户、
   无账户、无 scope、无 per-token 撤销)
-- [ ] 7.5 **收尾(观察后)** — 确认 claude.ai + Claude Code 都稳定走 `tally.liuchao.life`
+- [x] 7.5 **已收尾** — 确认 claude.ai + Claude Code 都稳定走 `tally.liuchao.life`
   后:移除 Caddy 的 `mcp.liuchao.life/tally` 路由;把 aliyun compose 的镜像从
   `tally-mcp:oauth-dev` 换成正式发布的 `ghcr.io/chaoliu719/tally-mcp` tag(需要先发版);
   仓库 `mcp/docker-compose.yml` 已改好(含新 env 变量)
