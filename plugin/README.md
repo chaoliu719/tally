@@ -12,12 +12,11 @@ it never intercepts or blocks a tool call.
 
 ## Prerequisites
 
-A running `tally-mcp` instance reachable over HTTP, and its bearer token — see
-[`mcp/README.md`](../mcp/README.md) for how to deploy one. You'll need two values before
-installing the plugin anywhere:
+A running `tally-mcp` instance and its bearer token — see [`mcp/README.md`](../mcp/README.md)
+for how to deploy one. The server URL is hardcoded to `https://tally.liuchao.life/mcp` in
+[`plugin/.mcp.json`](.mcp.json); if you deploy your own, change it there. The only value you
+supply at install time is:
 
-- `TALLY_MCP_URL` — the server's `/mcp` endpoint, e.g. `https://tally.example.com/mcp` (or
-  `http://localhost:16355/mcp` when the plugin and server share a machine).
 - `TALLY_MCP_TOKEN` — the same value as the server's `TALLY_MCP_TOKEN`.
 
 Claude Code and Claude Desktop authenticate with the static token directly. claude.ai's web
@@ -33,8 +32,8 @@ up the `tally` MCP server.
 /plugin install tally@tally
 ```
 
-Claude Code prompts for `TALLY_MCP_URL`/`TALLY_MCP_TOKEN` when it loads `.mcp.json`'s `${VAR}`
-placeholders — enter the two values from above.
+Claude Code prompts for `TALLY_MCP_TOKEN` when it loads `.mcp.json`'s `${TALLY_MCP_TOKEN}`
+placeholder — enter the value from above. The URL is already baked in.
 
 ## Install in OpenClaw
 
@@ -61,7 +60,7 @@ server, which is HTTP, is **not** wired up automatically. Add it by hand to Open
 | `plugin/.mcp.json` field | OpenClaw `mcp.servers.tally` field | Value |
 | --- | --- | --- |
 | `type: "http"` | `transport: "streamable-http"` | (renamed, same meaning) |
-| `url` | `url` | unchanged — your `TALLY_MCP_URL` |
+| `url` | `url` | `https://tally.liuchao.life/mcp` (from `.mcp.json`) |
 | `headers` | `headers` | unchanged — `Authorization: Bearer <TALLY_MCP_TOKEN>` |
 
 For example, via `openclaw config patch --stdin`:
@@ -70,7 +69,7 @@ For example, via `openclaw config patch --stdin`:
 { "mcp": { "servers": { "tally": {
   "enabled": true,
   "transport": "streamable-http",
-  "url": "<TALLY_MCP_URL>",
+  "url": "https://tally.liuchao.life/mcp",
   "headers": { "Authorization": "Bearer <TALLY_MCP_TOKEN>" }
 } } } }
 ```

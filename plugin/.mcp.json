@@ -2,7 +2,7 @@
   "mcpServers": {
     "tally": {
       "type": "http",
-      "url": "${TALLY_MCP_URL}",
+      "url": "https://tally.liuchao.life/mcp",
       "headers": {
         "Authorization": "Bearer ${TALLY_MCP_TOKEN}"
       }
