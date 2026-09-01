@@ -1,6 +1,5 @@
 {
   "name": "tally",
-  "version": "0.1.2",
   "description": "Personal bookkeeping for your agent — tally-mcp plus the skills, commands, agents, and hooks that make it useful in conversation.",
   "author": {
     "name": "chaoliu719"
