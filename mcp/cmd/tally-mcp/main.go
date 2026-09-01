@@ -17,7 +17,7 @@ import (
 
 const (
 	serverName    = "tally-mcp"
-	serverVersion = "0.2.0"
+	serverVersion = "0.1.1"
 )
 
 func main() {
