@@ -587,6 +587,85 @@ func (q *Queries) SearchTransactions(ctx context.Context, arg SearchTransactions
 	return items, nil
 }
 
+const searchTransactionsDesc = `-- name: SearchTransactionsDesc :many
+SELECT id, ledger_id, type, source_id, category_id, currency, amount, time, comment, created_at, updated_at
+FROM transactions
+WHERE ledger_id = ?1
+  AND (?2   IS NULL OR source_id = ?2)
+  AND (?3 IS NULL OR category_id = ?3)
+  AND (?4  IS NULL OR time >= ?4)
+  AND (?5    IS NULL OR time <= ?5)
+  AND (?6     IS NULL OR (LOWER(comment) LIKE '%' || LOWER(?6) || '%' ESCAPE '\'))
+  AND (
+    ?7 IS NULL
+    OR time < ?7
+    OR (time = ?7 AND id < ?8)
+  )
+ORDER BY time DESC, id DESC
+LIMIT ?9
+`
+
+type SearchTransactionsDescParams struct {
+	LedgerID   int64
+	SourceID   interface{}
+	CategoryID interface{}
+	StartTime  interface{}
+	EndTime    interface{}
+	Keyword    interface{}
+	AfterTime  interface{}
+	AfterID    sql.NullInt64
+	Limit      int64
+}
+
+// Same filters as SearchTransactions, but ordered newest-first and with the
+// keyset comparison flipped so next_cursor pages toward earlier transactions.
+// Used by search_transactions when newest_first is set (see
+// add-transaction-timeline-widget).
+func (q *Queries) SearchTransactionsDesc(ctx context.Context, arg SearchTransactionsDescParams) ([]Transaction, error) {
+	rows, err := q.db.QueryContext(ctx, searchTransactionsDesc,
+		arg.LedgerID,
+		arg.SourceID,
+		arg.CategoryID,
+		arg.StartTime,
+		arg.EndTime,
+		arg.Keyword,
+		arg.AfterTime,
+		arg.AfterID,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Transaction{}
+	for rows.Next() {
+		var i Transaction
+		if err := rows.Scan(
+			&i.ID,
+			&i.LedgerID,
+			&i.Type,
+			&i.SourceID,
+			&i.CategoryID,
+			&i.Currency,
+			&i.Amount,
+			&i.Time,
+			&i.Comment,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const summarizeTransactionsByCategory = `-- name: SummarizeTransactionsByCategory :many
 SELECT
     t.category_id AS category_id,

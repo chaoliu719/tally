@@ -1,0 +1,73 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Transaction timeline</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --muted: #666666;
+    --line: #e6e6e6;
+    color-scheme: light;
+  }
+  :root.dark {
+    --bg: #1e1e1e;
+    --fg: #f0f0f0;
+    --muted: #9a9a9a;
+    --line: #3a3a3a;
+    color-scheme: dark;
+  }
+  body {
+    font: 14px/1.5 system-ui, -apple-system, sans-serif;
+    margin: 0;
+    padding: 16px;
+    background: var(--bg);
+    color: var(--fg);
+  }
+  h1 { font-size: 15px; margin: 0 0 4px; }
+  .status { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+  .day { border-top: 1px solid var(--line); padding: 8px 0 4px; }
+  .day-label { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+  .row { display: flex; justify-content: space-between; padding: 4px 0; }
+  .amount { font-variant-numeric: tabular-nums; }
+</style>
+<h1>交易时间线（占位）</h1>
+<div class="status" id="status">connecting…</div>
+<div id="list"></div>
+<script type="module">
+/*__EXT_APPS_BUNDLE__*/
+const { App } = globalThis.ExtApps;
+
+const statusEl = document.getElementById("status");
+const listEl = document.getElementById("list");
+
+const app = new App({ name: "TransactionTimeline", version: "0.0.1" }, {}, { autoResize: true });
+
+function applyTheme(theme) {
+  document.documentElement.classList.toggle("dark", theme === "dark");
+}
+
+app.onhostcontextchanged = (ctx) => applyTheme(ctx?.theme);
+
+app.ontoolresult = ({ content }) => {
+  statusEl.textContent = "widget connected ✓ — tool result received";
+  let payload;
+  try {
+    payload = JSON.parse(content[0].text.slice(content[0].text.indexOf("\n\n") + 2));
+  } catch (e) {
+    // Placeholder tool may return plain text only; that is fine for the spike.
+    return;
+  }
+  const txns = payload.transactions ?? [];
+  listEl.innerHTML = "";
+  for (const t of txns) {
+    const row = document.createElement("div");
+    row.className = "row";
+    row.innerHTML = `<span>${t.comment || t.category_id}</span><span class="amount">${t.amount} ${t.currency}</span>`;
+    listEl.append(row);
+  }
+};
+
+await app.connect();
+applyTheme(app.getHostContext()?.theme);
+statusEl.textContent = "widget connected ✓ — waiting for tool result";
+</script>

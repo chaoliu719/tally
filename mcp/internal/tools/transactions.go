@@ -39,9 +39,9 @@ func registerTransactionTools(s *mcp.Server, deps Deps) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "search_transactions",
-		Description: "List transactions, optionally filtered by time range, source, category, and/or a case-insensitive comment keyword, sorted oldest first. Results are paginated: " +
+		Description: "List transactions, optionally filtered by time range, source, category, and/or a case-insensitive comment keyword. Sorted oldest first by default, or newest first when newest_first is true. Results are paginated: " +
 			"each call returns at most limit transactions (default 50, max 200); if more match, the response includes next_cursor -- pass it back " +
-			"as cursor on the next call to keep paging until next_cursor is no longer returned. With no filters, pages through every transaction in the ledger.",
+			"as cursor on the next call (with the same filters and the same newest_first value) to keep paging until next_cursor is no longer returned. With no filters, pages through every transaction in the ledger.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in SearchTransactionsInput) (*mcp.CallToolResult, SearchTransactionsOutput, error) {
 		return searchTransactions(ctx, deps, in)
 	})
@@ -457,14 +457,15 @@ const (
 )
 
 type SearchTransactionsInput struct {
-	LedgerID   string `json:"ledger_id" jsonschema:"the id of the ledger to search transactions in, as a decimal string"`
-	SourceID   string `json:"source_id,omitempty" jsonschema:"only include transactions from/to this source, as a decimal string"`
-	CategoryID string `json:"category_id,omitempty" jsonschema:"only include transactions in this category, as a decimal string"`
-	StartTime  int64  `json:"start_time,omitempty" jsonschema:"only include transactions at or after this unix time (seconds)"`
-	EndTime    int64  `json:"end_time,omitempty" jsonschema:"only include transactions at or before this unix time (seconds)"`
-	Keyword    string `json:"keyword,omitempty" jsonschema:"only include transactions whose comment contains this substring, case-insensitively; % and _ are matched literally, not as wildcards. Blank (empty or whitespace-only) is treated as not provided"`
-	Limit      int64  `json:"limit,omitempty" jsonschema:"maximum number of transactions to return in this page; defaults to 50 when omitted, must be between 1 and 200 (requests over 200 are rejected, not truncated)"`
-	Cursor     string `json:"cursor,omitempty" jsonschema:"opaque pagination cursor from a previous response's next_cursor; omit to fetch the first page. Must be paired with the exact same ledger_id/source_id/category_id/start_time/end_time/keyword filters used to obtain it"`
+	LedgerID    string `json:"ledger_id" jsonschema:"the id of the ledger to search transactions in, as a decimal string"`
+	SourceID    string `json:"source_id,omitempty" jsonschema:"only include transactions from/to this source, as a decimal string"`
+	CategoryID  string `json:"category_id,omitempty" jsonschema:"only include transactions in this category, as a decimal string"`
+	StartTime   int64  `json:"start_time,omitempty" jsonschema:"only include transactions at or after this unix time (seconds)"`
+	EndTime     int64  `json:"end_time,omitempty" jsonschema:"only include transactions at or before this unix time (seconds)"`
+	Keyword     string `json:"keyword,omitempty" jsonschema:"only include transactions whose comment contains this substring, case-insensitively; % and _ are matched literally, not as wildcards. Blank (empty or whitespace-only) is treated as not provided"`
+	Limit       int64  `json:"limit,omitempty" jsonschema:"maximum number of transactions to return in this page; defaults to 50 when omitted, must be between 1 and 200 (requests over 200 are rejected, not truncated)"`
+	Cursor      string `json:"cursor,omitempty" jsonschema:"opaque pagination cursor from a previous response's next_cursor; omit to fetch the first page. Must be paired with the exact same ledger_id/source_id/category_id/start_time/end_time/keyword filters and the same newest_first value used to obtain it"`
+	NewestFirst bool   `json:"newest_first,omitempty" jsonschema:"when false (default), results are ordered oldest-first and next_cursor pages toward later transactions; when true, results are ordered newest-first and next_cursor pages toward earlier transactions. Must match the value the cursor was issued under"`
 }
 
 type SearchTransactionsOutput struct {
@@ -488,7 +489,7 @@ func searchTransactions(ctx context.Context, deps Deps, in SearchTransactionsInp
 	}
 
 	params := store.SearchTransactionsParams{LedgerID: ledgerID}
-	filter := searchTransactionsFilterFields{LedgerID: ledgerID}
+	filter := searchTransactionsFilterFields{LedgerID: ledgerID, NewestFirst: in.NewestFirst}
 
 	if in.SourceID != "" {
 		id, err := parseID(in.SourceID)
@@ -542,7 +543,22 @@ func searchTransactions(ctx context.Context, deps Deps, in SearchTransactionsInp
 	// COUNT(*) query to determine whether more results remain.
 	params.Limit = limit + 1
 
-	transactions, err := deps.Q.SearchTransactions(ctx, params)
+	var transactions []store.Transaction
+	if in.NewestFirst {
+		transactions, err = deps.Q.SearchTransactionsDesc(ctx, store.SearchTransactionsDescParams{
+			LedgerID:   params.LedgerID,
+			SourceID:   params.SourceID,
+			CategoryID: params.CategoryID,
+			StartTime:  params.StartTime,
+			EndTime:    params.EndTime,
+			Keyword:    params.Keyword,
+			AfterTime:  params.AfterTime,
+			AfterID:    params.AfterID,
+			Limit:      params.Limit,
+		})
+	} else {
+		transactions, err = deps.Q.SearchTransactions(ctx, params)
+	}
 	if err != nil {
 		return nil, SearchTransactionsOutput{}, err
 	}

@@ -141,6 +141,27 @@ WHERE ledger_id = sqlc.arg('ledger_id')
 ORDER BY time, id
 LIMIT sqlc.arg('limit');
 
+-- name: SearchTransactionsDesc :many
+-- Same filters as SearchTransactions, but ordered newest-first and with the
+-- keyset comparison flipped so next_cursor pages toward earlier transactions.
+-- Used by search_transactions when newest_first is set (see
+-- add-transaction-timeline-widget).
+SELECT id, ledger_id, type, source_id, category_id, currency, amount, time, comment, created_at, updated_at
+FROM transactions
+WHERE ledger_id = sqlc.arg('ledger_id')
+  AND (sqlc.narg('source_id')   IS NULL OR source_id = sqlc.narg('source_id'))
+  AND (sqlc.narg('category_id') IS NULL OR category_id = sqlc.narg('category_id'))
+  AND (sqlc.narg('start_time')  IS NULL OR time >= sqlc.narg('start_time'))
+  AND (sqlc.narg('end_time')    IS NULL OR time <= sqlc.narg('end_time'))
+  AND (sqlc.narg('keyword')     IS NULL OR (LOWER(comment) LIKE '%' || LOWER(sqlc.narg('keyword')) || '%' ESCAPE '\'))
+  AND (
+    sqlc.narg('after_time') IS NULL
+    OR time < sqlc.narg('after_time')
+    OR (time = sqlc.narg('after_time') AND id < sqlc.narg('after_id'))
+  )
+ORDER BY time DESC, id DESC
+LIMIT sqlc.arg('limit');
+
 -- name: UpdateTransaction :one
 UPDATE transactions
 SET type = ?, source_id = ?, category_id = ?, currency = ?, amount = ?, time = ?, comment = ?, updated_at = ?

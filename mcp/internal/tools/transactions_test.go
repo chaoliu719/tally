@@ -1706,3 +1706,97 @@ func TestSearchTransactionsCursorRejectedWhenKeywordChanges(t *testing.T) {
 		Cursor:   noKeywordPage.NextCursor,
 	})
 }
+
+// TestSearchTransactionsNewestFirstOrder covers the delta spec's "按最新在前
+// 倒序翻页" first-page expectation: newest_first returns rows in descending
+// (time, id) order, the exact reverse of the default.
+func TestSearchTransactionsNewestFirstOrder(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+	createNExpenses(t, session, ledgerID, sourceID, categoryID, 6, futureTime())
+
+	var asc tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Limit: 200}, &asc)
+
+	var desc tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Limit: 200, NewestFirst: true}, &desc)
+
+	if len(desc.Transactions) != len(asc.Transactions) {
+		t.Fatalf("newest_first returned %d rows, want %d", len(desc.Transactions), len(asc.Transactions))
+	}
+	for i := range desc.Transactions {
+		want := asc.Transactions[len(asc.Transactions)-1-i]
+		if desc.Transactions[i].ID != want.ID {
+			t.Fatalf("desc[%d].ID = %q, want %q (must be the reverse of the default order)", i, desc.Transactions[i].ID, want.ID)
+		}
+		if i > 0 && desc.Transactions[i-1].Time < desc.Transactions[i].Time {
+			t.Fatalf("desc not sorted newest-first at index %d: %d then %d", i, desc.Transactions[i-1].Time, desc.Transactions[i].Time)
+		}
+	}
+}
+
+// TestSearchTransactionsNewestFirstPaginationCoversAll covers the delta
+// spec's "按最新在前倒序翻页" continuation: paging with newest_first walks
+// from the latest transaction to the earliest, once each, then stops.
+func TestSearchTransactionsNewestFirstPaginationCoversAll(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+	createNExpenses(t, session, ledgerID, sourceID, categoryID, 12, futureTime())
+
+	var full tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Limit: 200, NewestFirst: true}, &full)
+	if len(full.Transactions) != 12 {
+		t.Fatalf("expected 12 transactions unpaginated, got %d", len(full.Transactions))
+	}
+
+	var paged []tools.TransactionInfo
+	cursor := ""
+	for pages := 0; ; pages++ {
+		if pages > 20 {
+			t.Fatal("pagination did not terminate")
+		}
+		var page tools.SearchTransactionsOutput
+		callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Limit: 5, NewestFirst: true, Cursor: cursor}, &page)
+		paged = append(paged, page.Transactions...)
+		if page.NextCursor == "" {
+			break
+		}
+		cursor = page.NextCursor
+	}
+
+	if len(paged) != len(full.Transactions) {
+		t.Fatalf("paginated total = %d, want %d", len(paged), len(full.Transactions))
+	}
+	seen := map[string]bool{}
+	for i, txn := range paged {
+		if seen[txn.ID] {
+			t.Fatalf("transaction %q returned more than once across pages", txn.ID)
+		}
+		seen[txn.ID] = true
+		if txn.ID != full.Transactions[i].ID {
+			t.Fatalf("paged[%d].ID = %q, want %q (order must match the unpaginated newest-first result)", i, txn.ID, full.Transactions[i].ID)
+		}
+	}
+}
+
+// TestSearchTransactionsCursorRejectedWhenDirectionChanges covers the delta
+// spec's "cursor 无效或已不匹配当前筛选条件" scenario extended to newest_first:
+// a cursor issued oldest-first cannot be replayed newest-first.
+func TestSearchTransactionsCursorRejectedWhenDirectionChanges(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+	createNExpenses(t, session, ledgerID, sourceID, categoryID, 3, futureTime())
+
+	var page tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Limit: 1}, &page)
+	if page.NextCursor == "" {
+		t.Fatal("expected next_cursor from the first oldest-first page")
+	}
+
+	callToolExpectError(t, session, "search_transactions", tools.SearchTransactionsInput{
+		LedgerID:    ledgerID,
+		Limit:       1,
+		NewestFirst: true,
+		Cursor:      page.NextCursor,
+	})
+}

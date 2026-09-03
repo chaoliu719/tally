@@ -32,6 +32,11 @@ type Querier interface {
 	ListLedgers(ctx context.Context) ([]Ledger, error)
 	ListSources(ctx context.Context, ledgerID int64) ([]Source, error)
 	SearchTransactions(ctx context.Context, arg SearchTransactionsParams) ([]Transaction, error)
+	// Same filters as SearchTransactions, but ordered newest-first and with the
+	// keyset comparison flipped so next_cursor pages toward earlier transactions.
+	// Used by search_transactions when newest_first is set (see
+	// add-transaction-timeline-widget).
+	SearchTransactionsDesc(ctx context.Context, arg SearchTransactionsDescParams) ([]Transaction, error)
 	// Aggregates income/expense totals grouped by category and currency, within
 	// one ledger, over an optional [start_time, end_time] window.
 	SummarizeTransactionsByCategory(ctx context.Context, arg SummarizeTransactionsByCategoryParams) ([]SummarizeTransactionsByCategoryRow, error)
