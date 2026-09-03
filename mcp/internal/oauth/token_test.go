@@ -76,6 +76,50 @@ func TestAccessTokenRejectsRotatedSecret(t *testing.T) {
 	}
 }
 
+func TestRefreshTokenRoundTrip(t *testing.T) {
+	tok, expiresIn := issueRefreshToken(testSecret, "https://tally.test/mcp", "jti-1")
+	if expiresIn <= 0 {
+		t.Fatalf("expiresIn = %d, want > 0", expiresIn)
+	}
+	exp, err := verifyRefreshToken(testSecret, tok, "https://tally.test/mcp", time.Now())
+	if err != nil {
+		t.Fatalf("verifyRefreshToken on a fresh token: %v", err)
+	}
+	if time.Until(exp) <= 0 || time.Until(exp) > refreshTokenTTL+time.Minute {
+		t.Fatalf("expiry %v is not within the expected window", exp)
+	}
+}
+
+func TestRefreshTokenRejections(t *testing.T) {
+	good := func() string {
+		tok, _ := issueRefreshToken(testSecret, "https://tally.test/mcp", "jti")
+		return tok
+	}
+	now := time.Now()
+
+	if _, err := verifyRefreshToken(testSecret, flipSig(t, good()), "https://tally.test/mcp", now); err == nil {
+		t.Error("tampered refresh token verified")
+	}
+	if _, err := verifyRefreshToken("rotated-secret", good(), "https://tally.test/mcp", now); err == nil {
+		t.Error("refresh token signed with the pre-rotation secret verified")
+	}
+	if _, err := verifyRefreshToken(testSecret, good(), "https://someone-else.test/mcp", now); err == nil {
+		t.Error("refresh token for another audience verified")
+	}
+	future := now.Add(refreshTokenTTL + time.Minute)
+	if _, err := verifyRefreshToken(testSecret, good(), "https://tally.test/mcp", future); err == nil {
+		t.Error("expired refresh token verified")
+	}
+	// An access token must not verify as a refresh token, and vice versa.
+	at := IssueAccessToken(testSecret, "https://tally.test/mcp")
+	if _, err := verifyRefreshToken(testSecret, at, "https://tally.test/mcp", now); err == nil {
+		t.Error("an access token verified as a refresh token")
+	}
+	if _, err := VerifyAccessToken(testSecret, good(), "https://tally.test/mcp", now); err == nil {
+		t.Error("a refresh token verified as an access token")
+	}
+}
+
 func TestTokensAreNotCrossUsable(t *testing.T) {
 	// An access token must not verify as an authorization code, and vice versa.
 	at := IssueAccessToken(testSecret, "https://tally.test/mcp")

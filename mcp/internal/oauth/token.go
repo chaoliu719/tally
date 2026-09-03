@@ -6,7 +6,7 @@
 // openspec/changes/add-mcp-oauth-authorization/.
 //
 // Every credential this package mints — authorization codes, access tokens,
-// client IDs — is a stateless HMAC-signed value in the same two-segment form
+// refresh tokens, client IDs — is a stateless HMAC-signed value in the same two-segment form
 // as internal/confirm: base64url(JSON payload) + "." + base64url(HMAC-SHA256).
 // There is no token store and no per-token revocation; rotating the signing
 // secret invalidates everything at once.
@@ -27,13 +27,19 @@ const (
 	// replay and the code is single-use in practice.
 	authCodeTTL = 5 * time.Minute
 	// accessTokenTTL is the lifetime of an issued access token. When it
-	// elapses the client re-runs the authorization flow (no refresh token
-	// in v1; see design D6).
-	accessTokenTTL = time.Hour
+	// elapses the client exchanges its refresh token for a new one (see
+	// refreshTokenTTL and design add-oauth-refresh-token).
+	accessTokenTTL = 24 * time.Hour
+	// refreshTokenTTL bounds how long a refresh token can be exchanged at
+	// the token endpoint. Every successful refresh mints a fresh one with
+	// its expiry pushed refreshTokenTTL into the future (rolling rotation),
+	// so ongoing use never forces re-authorization.
+	refreshTokenTTL = 90 * 24 * time.Hour
 
-	typAuthCode    = "code"
-	typAccessToken = "at"
-	typClientID    = "cid"
+	typAuthCode     = "code"
+	typAccessToken  = "at"
+	typRefreshToken = "rt"
+	typClientID     = "cid"
 )
 
 // authCodePayload is what an authorization code carries. It binds the code to
@@ -51,6 +57,18 @@ type authCodePayload struct {
 // resource URI of this MCP server; the resource-server middleware rejects any
 // token whose Aud is not itself.
 type accessTokenPayload struct {
+	Typ       string `json:"typ"`
+	Audience  string `json:"aud"`
+	IssuedAt  int64  `json:"iat"`
+	ExpiresAt int64  `json:"exp"`
+	JTI       string `json:"jti"`
+}
+
+// refreshTokenPayload is what a refresh token carries. It is structurally
+// identical to accessTokenPayload; only Typ differs, so a refresh token
+// can never be presented where an access token is expected and vice versa.
+// Aud is the canonical resource URI of this MCP server.
+type refreshTokenPayload struct {
 	Typ       string `json:"typ"`
 	Audience  string `json:"aud"`
 	IssuedAt  int64  `json:"iat"`
@@ -135,6 +153,40 @@ func VerifyAccessToken(secret, token, wantAudience string, now time.Time) (expir
 	}
 	if now.Unix() > p.ExpiresAt {
 		return time.Time{}, fmt.Errorf("access token has expired")
+	}
+	return time.Unix(p.ExpiresAt, 0), nil
+}
+
+// issueRefreshToken signs a refresh token bound to audience, valid for
+// refreshTokenTTL. jti is an opaque unique id (caller supplies randomness).
+func issueRefreshToken(secret, audience, jti string) (token string, expiresIn int) {
+	now := time.Now()
+	exp := now.Add(refreshTokenTTL)
+	return encode(secret, refreshTokenPayload{
+		Typ:       typRefreshToken,
+		Audience:  audience,
+		IssuedAt:  now.Unix(),
+		ExpiresAt: exp.Unix(),
+		JTI:       jti,
+	}), int(refreshTokenTTL.Seconds())
+}
+
+// verifyRefreshToken checks a refresh token's signature, type, audience, and
+// expiry. wantAudience is this server's canonical resource URI. It returns
+// the token's expiry time on success.
+func verifyRefreshToken(secret, token, wantAudience string, now time.Time) (expiresAt time.Time, err error) {
+	var p refreshTokenPayload
+	if err := decode(secret, token, &p); err != nil {
+		return time.Time{}, err
+	}
+	if p.Typ != typRefreshToken {
+		return time.Time{}, fmt.Errorf("token is not a refresh token")
+	}
+	if p.Audience != wantAudience {
+		return time.Time{}, fmt.Errorf("refresh token audience does not match this server")
+	}
+	if now.Unix() > p.ExpiresAt {
+		return time.Time{}, fmt.Errorf("refresh token has expired")
 	}
 	return time.Unix(p.ExpiresAt, 0), nil
 }

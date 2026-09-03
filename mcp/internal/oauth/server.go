@@ -110,7 +110,7 @@ func (s *Server) handleAuthServerMetadata(w http.ResponseWriter, r *http.Request
 		TokenEndpoint:                     s.baseURL + "/token",
 		RegistrationEndpoint:              s.baseURL + "/register",
 		ResponseTypesSupported:            []string{"code"},
-		GrantTypesSupported:               []string{"authorization_code"},
+		GrantTypesSupported:               []string{"authorization_code", "refresh_token"},
 		CodeChallengeMethodsSupported:     []string{"S256"},
 		TokenEndpointAuthMethodsSupported: []string{"none"},
 	})
@@ -251,9 +251,10 @@ func (s *Server) renderLogin(w http.ResponseWriter, p *authorizeParams, errMsg s
 // --- /token ---
 
 type tokenResponse struct {
-	AccessToken string `json:"access_token"`
-	TokenType   string `json:"token_type"`
-	ExpiresIn   int    `json:"expires_in"`
+	AccessToken  string `json:"access_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int    `json:"expires_in"`
+	RefreshToken string `json:"refresh_token,omitempty"`
 }
 
 type oauthError struct {
@@ -276,10 +277,19 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 		"has_code_verifier": boolStr(r.PostForm.Get("code_verifier") != ""),
 	})
 
-	if r.PostForm.Get("grant_type") != "authorization_code" {
+	switch r.PostForm.Get("grant_type") {
+	case "authorization_code":
+		s.handleAuthCodeGrant(w, r)
+	case "refresh_token":
+		s.handleRefreshTokenGrant(w, r)
+	default:
 		writeJSON(w, http.StatusBadRequest, oauthError{ErrorCode: "unsupported_grant_type"})
-		return
 	}
+}
+
+// handleAuthCodeGrant exchanges an authorization code (with its PKCE
+// verifier) for a fresh access token + refresh token pair.
+func (s *Server) handleAuthCodeGrant(w http.ResponseWriter, r *http.Request) {
 	code := r.PostForm.Get("code")
 	verifier := r.PostForm.Get("code_verifier")
 	redirectURI := r.PostForm.Get("redirect_uri")
@@ -303,12 +313,37 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, expiresIn := issueAccessToken(s.secret, s.ResourceURI(), newJTI())
+	s.writeTokenPair(w)
+}
+
+// handleRefreshTokenGrant verifies a refresh token and issues a fresh
+// access token + refresh token pair (rolling rotation). The old refresh
+// token stays valid until its own expiry — this server keeps no state and
+// cannot revoke it.
+func (s *Server) handleRefreshTokenGrant(w http.ResponseWriter, r *http.Request) {
+	refresh := r.PostForm.Get("refresh_token")
+	if _, err := verifyRefreshToken(s.secret, refresh, s.ResourceURI(), time.Now()); err != nil {
+		writeJSON(w, http.StatusBadRequest, oauthError{ErrorCode: "invalid_grant", Description: err.Error()})
+		return
+	}
+	if res := r.PostForm.Get("resource"); res != "" && res != s.ResourceURI() {
+		writeJSON(w, http.StatusBadRequest, oauthError{ErrorCode: "invalid_grant", Description: "resource mismatch"})
+		return
+	}
+	s.writeTokenPair(w)
+}
+
+// writeTokenPair mints a fresh access token + refresh token and writes the
+// 200 token response. Both grant types end here.
+func (s *Server) writeTokenPair(w http.ResponseWriter) {
+	access, expiresIn := issueAccessToken(s.secret, s.ResourceURI(), newJTI())
+	refresh, _ := issueRefreshToken(s.secret, s.ResourceURI(), newJTI())
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, tokenResponse{
-		AccessToken: token,
-		TokenType:   "Bearer",
-		ExpiresIn:   expiresIn,
+		AccessToken:  access,
+		TokenType:    "Bearer",
+		ExpiresIn:    expiresIn,
+		RefreshToken: refresh,
 	})
 }
 

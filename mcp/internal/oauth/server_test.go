@@ -83,6 +83,10 @@ func TestAuthServerMetadata(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "\"response_types_supported\"") {
 		t.Error("metadata is missing required response_types_supported")
 	}
+	gt := strings.Join(m.GrantTypesSupported, ",")
+	if !strings.Contains(gt, "authorization_code") || !strings.Contains(gt, "refresh_token") {
+		t.Errorf("grant_types_supported = %v, want both authorization_code and refresh_token", m.GrantTypesSupported)
+	}
 	if strings.Contains(rec.Body.String(), "jwks_uri") {
 		t.Error("metadata should not advertise jwks_uri (HMAC signing, no key set)")
 	}
@@ -210,8 +214,8 @@ func TestAuthorizePOSTWrongTokenReRendersForm(t *testing.T) {
 }
 
 // fullFlow runs register -> authorize(POST, correct token) -> token, and
-// returns the issued access token.
-func fullFlow(t *testing.T, mux *http.ServeMux) string {
+// returns the issued access and refresh tokens.
+func fullFlow(t *testing.T, mux *http.ServeMux) (accessToken, refreshToken string) {
 	t.Helper()
 	cid := registerClient(t, mux, clientCB)
 	verifier, challenge := pkcePair()
@@ -252,9 +256,10 @@ func fullFlow(t *testing.T, mux *http.ServeMux) string {
 		t.Fatalf("/token status = %d, want 200; body = %s", trec.Code, trec.Body.String())
 	}
 	var tok struct {
-		AccessToken string `json:"access_token"`
-		TokenType   string `json:"token_type"`
-		ExpiresIn   int    `json:"expires_in"`
+		AccessToken  string `json:"access_token"`
+		TokenType    string `json:"token_type"`
+		ExpiresIn    int    `json:"expires_in"`
+		RefreshToken string `json:"refresh_token"`
 	}
 	if err := json.Unmarshal(trec.Body.Bytes(), &tok); err != nil {
 		t.Fatalf("/token body not JSON: %v", err)
@@ -262,15 +267,98 @@ func fullFlow(t *testing.T, mux *http.ServeMux) string {
 	if tok.TokenType != "Bearer" || tok.AccessToken == "" || tok.ExpiresIn <= 0 {
 		t.Fatalf("/token response malformed: %+v", tok)
 	}
-	return tok.AccessToken
+	if tok.RefreshToken == "" {
+		t.Fatal("/token response carried no refresh_token")
+	}
+	return tok.AccessToken, tok.RefreshToken
+}
+
+// refreshGrant drives POST /token with grant_type=refresh_token.
+func refreshGrant(mux *http.ServeMux, refreshToken string) *httptest.ResponseRecorder {
+	form := url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refreshToken},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return do(mux, req)
 }
 
 func TestFullAuthorizationCodeFlow(t *testing.T) {
 	s, mux := newTestServer()
-	at := fullFlow(t, mux)
+	at, _ := fullFlow(t, mux)
 
 	if _, err := s.VerifyAccessToken(at, time.Now()); err != nil {
 		t.Fatalf("the access token from a full flow does not verify: %v", err)
+	}
+}
+
+func TestRefreshTokenGrantRotates(t *testing.T) {
+	s, mux := newTestServer()
+	_, rt := fullFlow(t, mux)
+
+	rec := refreshGrant(mux, rt)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/token refresh: status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var tok struct {
+		AccessToken  string `json:"access_token"`
+		TokenType    string `json:"token_type"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &tok); err != nil {
+		t.Fatalf("refresh body not JSON: %v", err)
+	}
+	if tok.TokenType != "Bearer" || tok.AccessToken == "" {
+		t.Fatalf("refresh response malformed: %+v", tok)
+	}
+	if tok.RefreshToken == "" || tok.RefreshToken == rt {
+		t.Fatalf("refresh must rotate the refresh token; got %q (old %q)", tok.RefreshToken, rt)
+	}
+	if _, err := s.VerifyAccessToken(tok.AccessToken, time.Now()); err != nil {
+		t.Fatalf("access token from a refresh does not verify: %v", err)
+	}
+	// The rotated refresh token works for a further refresh.
+	if rec2 := refreshGrant(mux, tok.RefreshToken); rec2.Code != http.StatusOK {
+		t.Fatalf("second refresh: status = %d, body = %s", rec2.Code, rec2.Body.String())
+	}
+}
+
+func TestRefreshTokenGrantRejections(t *testing.T) {
+	_, mux := newTestServer()
+
+	// Signed for another server.
+	otherRT, _ := issueRefreshToken(srvSecret, "https://someone-else.test/mcp", "j")
+	// An access token presented as a refresh token.
+	accessAsRefresh := IssueAccessToken(srvSecret, srvBaseURL+"/mcp")
+	// Signed with a different secret.
+	wrongSecretRT, _ := issueRefreshToken("some-other-secret", srvBaseURL+"/mcp", "j")
+
+	for name, rt := range map[string]string{
+		"empty":        "",
+		"garbage":      "not-a-token",
+		"wrong-aud":    otherRT,
+		"access-token": accessAsRefresh,
+		"wrong-secret": wrongSecretRT,
+	} {
+		rec := refreshGrant(mux, rt)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400", name, rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), "invalid_grant") {
+			t.Errorf("%s: body = %s, want invalid_grant", name, rec.Body.String())
+		}
+	}
+}
+
+func TestTokenRejectsUnknownGrantType(t *testing.T) {
+	_, mux := newTestServer()
+	form := url.Values{"grant_type": {"client_credentials"}}
+	req := httptest.NewRequest(http.MethodPost, "/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := do(mux, req)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "unsupported_grant_type") {
+		t.Fatalf("status = %d body = %s, want 400 unsupported_grant_type", rec.Code, rec.Body.String())
 	}
 }
 
