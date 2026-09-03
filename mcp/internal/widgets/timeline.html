@@ -390,15 +390,32 @@ app.ontoolinput = ({ arguments: args }) => {
   if (args && args.ledger_id) ledgerId = String(args.ledger_id);
 };
 
-app.ontoolresult = ({ content }) => {
-  let payload;
-  try {
-    const text = content[0].text;
-    payload = JSON.parse(text.slice(text.indexOf("\n\n") + 2));
-  } catch {
-    payload = { transactions: [] };
+// The open_transaction_timeline result can reach the widget a few different
+// ways depending on the host: as structuredContent, as a text block that is
+// "<summary>\n\n<json>", or as bare JSON. Try all of them.
+function extractFirstPagePayload(result) {
+  const sc = result && result.structuredContent;
+  if (sc && (Array.isArray(sc.transactions) || typeof sc.total === "number")) return sc;
+  const content = result && result.content;
+  const text = content && content[0] && content[0].text;
+  if (typeof text === "string") {
+    const i = text.indexOf("\n\n");
+    const tries = i >= 0 ? [text.slice(i + 2), text] : [text];
+    const m = text.match(/\{[\s\S]*\}/);
+    if (m) tries.push(m[0]);
+    for (const c of tries) {
+      try {
+        const o = JSON.parse(c);
+        if (o && (Array.isArray(o.transactions) || typeof o.total === "number")) return o;
+      } catch { /* next candidate */ }
+    }
   }
-  const txns = payload.transactions || [];
+  return { transactions: [] };
+}
+
+app.ontoolresult = (result) => {
+  const payload = extractFirstPagePayload(result);
+  const txns = Array.isArray(payload.transactions) ? payload.transactions : [];
   total = typeof payload.total === "number" ? payload.total : null;
   if (total !== null && metaEl) metaEl.textContent = `共 ${total} 笔`;
 
