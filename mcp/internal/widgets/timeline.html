@@ -161,6 +161,7 @@ let cursor = "";
 let done = false;
 let loading = false;
 let total = null;
+const allTxns = [];   // every transaction appended so far, in display order
 
 // id -> name lookups, loaded once from the ledger's own read-only tools so
 // rows can show category / source names instead of bare ids.
@@ -197,12 +198,19 @@ function catLabel(id) {
   return parent ? `${parent.name} / ${c.name}` : c.name;
 }
 
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), ms)),
+  ]);
+}
+
 async function loadLookups() {
   if (lookupsLoaded || !ledgerId) return;
   lookupsLoaded = true;
   const pull = async (name, key, apply) => {
     try {
-      const res = await app.callServerTool({ name, arguments: { ledger_id: ledgerId } });
+      const res = await withTimeout(app.callServerTool({ name, arguments: { ledger_id: ledgerId } }), 4000);
       let data = res && res.structuredContent;
       if (!data || !Array.isArray(data[key])) {
         const text = res && res.content && res.content[0] && res.content[0].text;
@@ -306,6 +314,30 @@ function appendTransactions(txns) {
   for (const key of touchedDays) renderDayTotal(key);
 }
 
+// Full repaint from allTxns. Used for the first page and again once the
+// category/source name lookups resolve, so rows never block on them.
+function renderAll() {
+  mainEl.innerHTML = "";
+  lastDayKey = null;
+  lastDayBodyEl = null;
+  dayLabelEls.clear();
+  dayAgg.clear();
+  if (allTxns.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "这个账本还没有交易";
+    mainEl.append(empty);
+    return;
+  }
+  appendTransactions(allTxns);
+  if (done) {
+    const end = document.createElement("div");
+    end.className = "end";
+    end.textContent = "— 已到最早一条 —";
+    mainEl.append(end);
+  }
+}
+
 function parseSearchResult(res) {
   if (res && res.structuredContent && Array.isArray(res.structuredContent.transactions)) {
     return res.structuredContent;
@@ -327,7 +359,9 @@ async function loadMore() {
       arguments: { ledger_id: ledgerId, newest_first: true, limit: 100, cursor },
     });
     const page = parseSearchResult(res);
-    appendTransactions(page.transactions || []);
+    const more = page.transactions || [];
+    allTxns.push(...more);
+    appendTransactions(more);
     cursor = page.next_cursor || "";
     if (!cursor) {
       done = true;
@@ -356,7 +390,7 @@ app.ontoolinput = ({ arguments: args }) => {
   if (args && args.ledger_id) ledgerId = String(args.ledger_id);
 };
 
-app.ontoolresult = async ({ content }) => {
+app.ontoolresult = ({ content }) => {
   let payload;
   try {
     const text = content[0].text;
@@ -368,33 +402,19 @@ app.ontoolresult = async ({ content }) => {
   total = typeof payload.total === "number" ? payload.total : null;
   if (total !== null && metaEl) metaEl.textContent = `共 ${total} 笔`;
 
-  await loadLookups();
-
-  mainEl.innerHTML = "";
-  lastDayKey = null;
-  lastDayBodyEl = null;
-  dayLabelEls.clear();
-  dayAgg.clear();
-
-  if (txns.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "empty";
-    empty.textContent = "这个账本还没有交易";
-    mainEl.append(empty);
-    done = true;
-    return;
-  }
-  appendTransactions(txns);
+  allTxns.push(...txns);
   cursor = payload.next_cursor || "";
-  if (!cursor) {
-    done = true;
-    const end = document.createElement("div");
-    end.className = "end";
-    end.textContent = "— 已到最早一条 —";
-    mainEl.append(end);
-  } else {
-    sentinelEl.hidden = false;
-  }
+  done = !cursor || txns.length === 0;
+
+  // Paint the list right away — do not wait on the name lookups.
+  renderAll();
+  sentinelEl.hidden = done;
+
+  // Enrich rows with category / source names in the background; repaint once
+  // when they arrive. A slow or unavailable lookup never blocks the timeline.
+  loadLookups()
+    .then(() => { if (catById.size || srcById.size) renderAll(); })
+    .catch(() => { /* names stay as ids */ });
 };
 
 boot("连接中…");
