@@ -32,7 +32,17 @@
 
 ## 5. 集成验证与收尾
 
-- [ ] 5.1 claude.ai 端到端:打开面板 → 滚动翻到最早一条 → 切换深浅主题 → fullscreen;记录验证结果到 change
-- [ ] 5.2 确认整个浏览过程 Agent 上下文未被交易数据填充(观察对话 token 不随滚动增长)
+- [x] 5.1 claude.ai 端到端:打开面板 → 滚动翻到最早一条 → 切换深浅主题 → fullscreen;记录验证结果到 change
+- [x] 5.2 确认整个浏览过程 Agent 上下文未被交易数据填充(观察对话 token 不随滚动增长)
 - [x] 5.3 更新 `openspec/config.yaml` 可视化段落为已定路线(artifact 图表 / widget 历史浏览)
 - [x] 5.4 部署到 aliyun,更新部署记忆(如资源/路由有变);`openspec validate add-transaction-timeline-widget --strict` 通过
+
+## 验证结果(2026-09-03)
+
+- spike(2.3):claude.ai 确认 Go MCP server 通过 `_meta.ui.resourceUri` 能让宿主渲染 iframe widget。
+- 首次真 widget 部署白屏。根因:claude.ai `mcp_apps` 沙箱用 `document.write` 把 widget
+  拼进已声明 `io` 的共享作用域,widget 顶层 `const io = new IntersectionObserver` 撞名 →
+  整个文档 write 抛 SyntaxError。修复:脚本整体包进 async IIFE(不泄漏任何顶层声明)+
+  `io` → `scrollWatcher`。已加单测守卫。
+- 修复后(镜像 c970bb94)claude.ai 端到端通过:按天分组、最新在上、收入绿色带 +、
+  到底显示"已到最早一条";滚动浏览不增长对话上下文。
