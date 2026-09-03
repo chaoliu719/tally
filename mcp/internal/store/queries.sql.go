@@ -833,6 +833,31 @@ func (q *Queries) SummarizeTransactionsBySource(ctx context.Context, arg Summari
 	return items, nil
 }
 
+const transactionStats = `-- name: TransactionStats :one
+SELECT
+    COUNT(*) AS count,
+    MIN(time) AS earliest_time,
+    MAX(time) AS latest_time
+FROM transactions
+WHERE ledger_id = ?1
+`
+
+type TransactionStatsRow struct {
+	Count        int64
+	EarliestTime interface{}
+	LatestTime   interface{}
+}
+
+// Total count and the earliest/latest transaction time in one ledger. Used by
+// open_transaction_timeline for its degradation summary. count is 0 and the
+// times are NULL when the ledger has no transactions.
+func (q *Queries) TransactionStats(ctx context.Context, ledgerID int64) (TransactionStatsRow, error) {
+	row := q.db.QueryRowContext(ctx, transactionStats, ledgerID)
+	var i TransactionStatsRow
+	err := row.Scan(&i.Count, &i.EarliestTime, &i.LatestTime)
+	return i, err
+}
+
 const updateCategory = `-- name: UpdateCategory :one
 UPDATE categories
 SET name = ?, parent_id = ?, updated_at = ?

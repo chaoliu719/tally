@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -36,6 +37,18 @@ func TestE2ETransactionTimelineWidgetResource(t *testing.T) {
 	if err != nil || res.IsError {
 		t.Fatalf("open_transaction_timeline failed: err=%v isError=%v", err, res.IsError)
 	}
+	summary := contentText(res)
+	if !strings.Contains(summary, "1 transaction") {
+		t.Errorf("degradation summary missing the total count: %q", summary)
+	}
+	var out tools.OpenTransactionTimelineOutput
+	if raw, mErr := json.Marshal(res.StructuredContent); mErr == nil {
+		_ = json.Unmarshal(raw, &out)
+	}
+	if out.Total != 1 || len(out.Transactions) != 1 {
+		t.Errorf("structured output: total=%d rows=%d, want 1/1", out.Total, len(out.Transactions))
+	}
+
 	wantURI := widgets.URI("timeline")
 
 	// Read the widget resource itself.
@@ -68,4 +81,31 @@ func TestE2ETransactionTimelineWidgetResource(t *testing.T) {
 			t.Errorf("widget HTML pulls an external resource (%q); must be self-contained", bad)
 		}
 	}
+}
+
+// TestE2ETransactionTimelineEmptyAndMissing covers the spec's "账本为空" and
+// "指定的账本不存在" scenarios for open_transaction_timeline.
+func TestE2ETransactionTimelineEmptyAndMissing(t *testing.T) {
+	session, ledgerID := newE2ESession(t)
+
+	// Empty ledger: no error, zero rows, a summary that says so.
+	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "open_transaction_timeline",
+		Arguments: tools.OpenTransactionTimelineInput{LedgerID: ledgerID},
+	})
+	if err != nil || res.IsError {
+		t.Fatalf("empty-ledger call failed: err=%v isError=%v", err, res.IsError)
+	}
+	var out tools.OpenTransactionTimelineOutput
+	raw, _ := json.Marshal(res.StructuredContent)
+	_ = json.Unmarshal(raw, &out)
+	if out.Total != 0 || len(out.Transactions) != 0 || out.NextCursor != "" {
+		t.Errorf("empty ledger: got total=%d rows=%d cursor=%q", out.Total, len(out.Transactions), out.NextCursor)
+	}
+	if !strings.Contains(contentText(res), "no transactions") {
+		t.Errorf("empty-ledger summary = %q", contentText(res))
+	}
+
+	// Nonexistent ledger: tool-level error.
+	callExpectError(t, session, "open_transaction_timeline", tools.OpenTransactionTimelineInput{LedgerID: "999999"})
 }

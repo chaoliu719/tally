@@ -49,6 +49,10 @@ type Querier interface {
 	// Aggregates income/expense totals grouped by source and currency, within
 	// one ledger, over an optional [start_time, end_time] window.
 	SummarizeTransactionsBySource(ctx context.Context, arg SummarizeTransactionsBySourceParams) ([]SummarizeTransactionsBySourceRow, error)
+	// Total count and the earliest/latest transaction time in one ledger. Used by
+	// open_transaction_timeline for its degradation summary. count is 0 and the
+	// times are NULL when the ledger has no transactions.
+	TransactionStats(ctx context.Context, ledgerID int64) (TransactionStatsRow, error)
 	UpdateCategory(ctx context.Context, arg UpdateCategoryParams) (Category, error)
 	UpdateLedger(ctx context.Context, arg UpdateLedgerParams) (Ledger, error)
 	UpdateSource(ctx context.Context, arg UpdateSourceParams) (Source, error)

@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"tally/internal/authn"
 	"tally/internal/bootstrap"
@@ -13,6 +14,7 @@ import (
 	"tally/internal/oauth"
 	"tally/internal/store"
 	"tally/internal/tools"
+	"tally/internal/widgets"
 )
 
 const (
@@ -63,6 +65,22 @@ func buildMux(cfg *bootstrap.Config, db *sql.DB) *http.ServeMux {
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+
+	// Opt-in dev aid: serve widget HTML wired to a fake host so it can be
+	// styled in a plain browser tab. Off unless TALLY_DEV_WIDGET_PREVIEW=1;
+	// never enabled in the production deployment.
+	if os.Getenv("TALLY_DEV_WIDGET_PREVIEW") == "1" {
+		mux.HandleFunc("/widget-preview/", func(w http.ResponseWriter, r *http.Request) {
+			name := strings.TrimPrefix(r.URL.Path, "/widget-preview/")
+			html, ok := widgets.PreviewHTML(name)
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(html))
+		})
+	}
 
 	return mux
 }

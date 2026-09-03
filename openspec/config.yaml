@@ -91,8 +91,12 @@ context: |
   - 批量导入/导出:自用阶段不需要;若将来推向多用户则必做。形态已定:mcp 侧一个
     app 无关的 batch_create_transactions(preview → apply),plugin 侧每 APP 一个解析
     脚本,解析走代码不走 Agent 上下文,Agent 只看摘要与异常清单。
-  - 可视化:skill + templates 动态生成 artifacts;何种可视化适合本项目尚未研究。此后
-    设计分析类工具时,返回结构以"能直接喂给模板"为准。
+  - 可视化(路线已定,见 add-transaction-timeline-widget):宿主锁定 Claude app。
+    分析类图表(类别拆分、月度环比、多月趋势)走 artifact——skill + templates 填数据,
+    一次性快照,数据要能直接喂给模板。交易历史这类"无上界列表 + 滚动分页 + 零推理"的
+    浏览走 MCP widget(Apps SDK):tally-mcp 破例托管自包含的 `ui://` 资源,widget 通过
+    `callServerTool` 增量拉取,数据不进 Agent 上下文;widget 只读、不写、不加载任何外部
+    资源。第三种形态 elicitation 不用于可视化(对话已是唯一 UI)。
 
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.

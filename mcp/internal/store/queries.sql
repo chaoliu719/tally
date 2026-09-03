@@ -124,6 +124,17 @@ SELECT id, ledger_id, type, source_id, category_id, currency, amount, time, comm
 FROM transactions
 WHERE id = ? AND ledger_id = ?;
 
+-- name: TransactionStats :one
+-- Total count and the earliest/latest transaction time in one ledger. Used by
+-- open_transaction_timeline for its degradation summary. count is 0 and the
+-- times are NULL when the ledger has no transactions.
+SELECT
+    COUNT(*) AS count,
+    MIN(time) AS earliest_time,
+    MAX(time) AS latest_time
+FROM transactions
+WHERE ledger_id = sqlc.arg('ledger_id');
+
 -- name: SearchTransactions :many
 SELECT id, ledger_id, type, source_id, category_id, currency, amount, time, comment, created_at, updated_at
 FROM transactions

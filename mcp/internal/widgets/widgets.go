@@ -77,6 +77,39 @@ func HTML(name string) (string, bool) {
 	return html, ok
 }
 
+// previewShim is a stand-in for globalThis.ExtApps used by PreviewHTML: it
+// lets a widget be opened in an ordinary browser tab (no host, no iframe
+// bridge) for styling work. It fires ontoolresult from a ?payload= query
+// param and logs the widget->host calls instead of performing them.
+const previewShim = `globalThis.ExtApps={App:class{
+  constructor(){this._h={}}
+  set ontoolresult(f){this._h.result=f} get ontoolresult(){return this._h.result}
+  set ontoolinput(f){this._h.input=f} get ontoolinput(){return this._h.input}
+  set onhostcontextchanged(f){this._h.ctx=f} get onhostcontextchanged(){return this._h.ctx}
+  async connect(){
+    const q=new URLSearchParams(location.search);
+    const p=q.get("payload");
+    if(p&&this._h.input)this._h.input({arguments:{ledger_id:q.get("ledger_id")||"1"}});
+    if(p&&this._h.result)this._h.result({content:[{type:"text",text:"preview\n\n"+p}]});
+  }
+  getHostContext(){return{theme:new URLSearchParams(location.search).get("theme")||"light",availableDisplayModes:[]}}
+  async callServerTool(a){console.log("callServerTool",a);return{structuredContent:{transactions:[],next_cursor:""}}}
+  sendMessage(m){console.log("sendMessage",m)}
+  updateModelContext(m){console.log("updateModelContext",m)}
+  requestDisplayMode(m){console.log("requestDisplayMode",m)}
+  openLink(l){console.log("openLink",l)}
+}};`
+
+// PreviewHTML returns the named widget wired to previewShim instead of the
+// real ext-apps runtime, for opening in a plain browser tab.
+func PreviewHTML(name string) (string, bool) {
+	html, ok := map[string]string{"timeline": timelineHTML}[name]
+	if !ok {
+		return "", false
+	}
+	return strings.Replace(html, BundlePlaceholder, previewShim, 1), true
+}
+
 // URI returns the ui:// resource URI for the named widget.
 func URI(name string) string {
 	return fmt.Sprintf("ui://widgets/%s.html", name)
