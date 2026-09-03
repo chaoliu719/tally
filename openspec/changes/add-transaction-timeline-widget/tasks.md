@@ -35,4 +35,4 @@
 - [ ] 5.1 claude.ai 端到端:打开面板 → 滚动翻到最早一条 → 切换深浅主题 → fullscreen;记录验证结果到 change
 - [ ] 5.2 确认整个浏览过程 Agent 上下文未被交易数据填充(观察对话 token 不随滚动增长)
 - [x] 5.3 更新 `openspec/config.yaml` 可视化段落为已定路线(artifact 图表 / widget 历史浏览)
-- [ ] 5.4 部署到 aliyun,更新部署记忆(如资源/路由有变);`openspec validate add-transaction-timeline-widget --strict` 通过
+- [x] 5.4 部署到 aliyun,更新部署记忆(如资源/路由有变);`openspec validate add-transaction-timeline-widget --strict` 通过
