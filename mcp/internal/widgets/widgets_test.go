@@ -38,8 +38,8 @@ func TestTimelineWidgetBehaviours(t *testing.T) {
 		"search_transactions",  // ... from this tool
 		"list_categories",      // one-time id->name lookup for row labels
 		"list_sources",         // one-time id->name lookup for row labels
-		"IntersectionObserver", // infinite scroll trigger
-		"已到最早一条",               // end-of-list marker
+		"上一页",                  // pager control
+		"页尾",                   // jump-to-last-page control
 		"这个账本还没有交易",            // empty state
 		"BroadcastChannel",     // supersession guard
 		"onhostcontextchanged", // live theme follow

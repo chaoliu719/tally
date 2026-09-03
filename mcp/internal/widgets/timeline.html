@@ -103,13 +103,43 @@
     color: var(--pos);
   }
   .row.income .amount { color: var(--income); }
-  .sentinel, .end, .empty {
+  .empty {
     text-align: center;
     color: var(--muted);
     font-size: 12px;
-    padding: 16px;
+    padding: 24px 16px;
   }
-  .end { border-top: 1px solid var(--line); }
+  .pager {
+    position: sticky;
+    bottom: 0;
+    background: var(--bg);
+    border-top: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 8px 16px;
+  }
+  .pager button {
+    font: inherit;
+    font-size: 12px;
+    color: var(--fg);
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 4px 10px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .pager button:hover:not(:disabled) { background: var(--row-hover); }
+  .pager button:disabled { color: var(--muted); opacity: 0.5; cursor: default; }
+  .pager .pageinfo {
+    color: var(--muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    min-width: 6.5em;
+    text-align: center;
+  }
 </style>
 
 <header>
@@ -118,7 +148,13 @@
   <button id="expand" hidden>全屏</button>
 </header>
 <main id="main"><div class="empty" id="boot">加载中…</div></main>
-<div class="sentinel" id="sentinel" hidden>加载更早的记录…</div>
+<footer class="pager" id="pager" hidden>
+  <button id="firstBtn" type="button">« 页首</button>
+  <button id="prevBtn" type="button">‹ 上一页</button>
+  <span class="pageinfo" id="pageinfo"></span>
+  <button id="nextBtn" type="button">下一页 ›</button>
+  <button id="lastBtn" type="button">页尾 »</button>
+</footer>
 
 <script type="module">
 /*__EXT_APPS_BUNDLE__*/
@@ -134,8 +170,15 @@ const bootEl = document.getElementById("boot");
 function boot(msg) { if (bootEl) bootEl.textContent = msg; }
 function fatal(msg) { mainEl.innerHTML = '<div class="empty">' + msg + "</div>"; }
 const metaEl = document.getElementById("meta");
-const sentinelEl = document.getElementById("sentinel");
 const expandBtn = document.getElementById("expand");
+const pagerEl = document.getElementById("pager");
+const pageInfoEl = document.getElementById("pageinfo");
+const firstBtn = document.getElementById("firstBtn");
+const prevBtn = document.getElementById("prevBtn");
+const nextBtn = document.getElementById("nextBtn");
+const lastBtn = document.getElementById("lastBtn");
+
+const PAGE_SIZE = 15;
 
 const app = new App({ name: "TransactionTimeline", version: "1.0.0" }, {}, { autoResize: true });
 
@@ -157,23 +200,19 @@ app.onhostcontextchanged = (ctx) => ctx && applyTheme(ctx.theme);
 
 // --- state ---
 let ledgerId = null;
-let cursor = "";
-let done = false;
-let loading = false;
-let total = null;
-const allTxns = [];   // every transaction appended so far, in display order
+let cursor = "";              // search_transactions cursor for the next older chunk
+let doneFetching = false;     // server has no more transactions to give
+let fetching = false;
+let navBusy = false;          // serializes multi-chunk navigation (next / last)
+let total = null;             // total count reported by the tool result
+let pageIdx = 0;              // 0-based current page
+const allTxns = [];           // every transaction fetched so far, newest -> oldest
 
 // id -> name lookups, loaded once from the ledger's own read-only tools so
 // rows can show category / source names instead of bare ids.
 const catById = new Map();   // id -> { name, parentId }
 const srcById = new Map();   // id -> name
 let lookupsLoaded = false;
-
-// per-day running state, keyed by local-date key
-let lastDayKey = null;
-let lastDayBodyEl = null;
-const dayLabelEls = new Map();     // dayKey -> the .day-total span
-const dayAgg = new Map();          // dayKey -> Map(currency -> { net, frac })
 
 const dayFmt = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "long", day: "numeric" });
 const weekdayFmt = new Intl.DateTimeFormat(undefined, { weekday: "short" });
@@ -189,7 +228,7 @@ function fracDigits(s) {
   return i < 0 ? 0 : String(s).length - i - 1;
 }
 function fmtAmount(a, currency) {
-  return `${a} ${currency}`;
+  return `${a} ${currency}`;
 }
 function catLabel(id) {
   const c = catById.get(String(id));
@@ -225,25 +264,112 @@ async function loadLookups() {
   ]);
 }
 
-function renderDayTotal(dayKey) {
-  const span = dayLabelEls.get(dayKey);
-  const agg = dayAgg.get(dayKey);
-  if (!span || !agg) return;
-  const parts = [];
-  for (const [cur, v] of agg) {
-    if (v.net === 0) continue;
-    const sign = v.net > 0 ? "+" : "−";
-    parts.push(`${sign}${Math.abs(v.net).toFixed(v.frac)} ${cur}`);
+// Net income/expense per day over everything fetched so far, so a day label
+// shows the true day total even when that day is split across pages.
+function computeDayTotals() {
+  const m = new Map();
+  for (const t of allTxns) {
+    const key = dayKeyOf(t.time);
+    let cm = m.get(key);
+    if (!cm) { cm = new Map(); m.set(key, cm); }
+    const amtNum = Number(t.amount) || 0;
+    const cur = cm.get(t.currency) || { net: 0, frac: 0 };
+    cur.net += t.type === "income" ? amtNum : -amtNum;
+    cur.frac = Math.max(cur.frac, fracDigits(t.amount));
+    cm.set(t.currency, cur);
   }
-  span.textContent = parts.join("  ");
+  return m;
 }
 
-function appendTransactions(txns) {
-  const touchedDays = new Set();
-  for (const t of txns) {
+function fmtDayTotal(cm) {
+  const parts = [];
+  for (const [cur, v] of cm) {
+    if (v.net === 0) continue;
+    const sign = v.net > 0 ? "+" : "−";
+    parts.push(`${sign}${Math.abs(v.net).toFixed(v.frac)} ${cur}`);
+  }
+  return parts.join("  ");
+}
+
+function makeRow(t) {
+  const cName = catLabel(t.category_id);
+  const sName = srcById.get(String(t.source_id));
+  const row = document.createElement("div");
+  row.className = "row" + (t.type === "income" ? " income" : "");
+
+  const timeEl = document.createElement("div");
+  timeEl.className = "time";
+  timeEl.textContent = timeFmt.format(new Date(t.time * 1000));
+
+  const bodyEl = document.createElement("div");
+  bodyEl.className = "body";
+  const desc = document.createElement("div");
+  desc.className = "desc";
+  const descIsCat = !t.comment && !!cName;
+  desc.textContent = t.comment || cName || `#${t.id}`;
+  bodyEl.append(desc);
+  if (cName && !descIsCat) {
+    const sub = document.createElement("div");
+    sub.className = "sub";
+    sub.textContent = cName;
+    bodyEl.append(sub);
+  }
+
+  const rightEl = document.createElement("div");
+  rightEl.className = "right";
+  const amount = document.createElement("div");
+  amount.className = "amount";
+  amount.textContent = (t.type === "income" ? "+" : "−") + fmtAmount(t.amount, t.currency);
+  rightEl.append(amount);
+  if (sName) {
+    const ssub = document.createElement("div");
+    ssub.className = "sub";
+    ssub.textContent = sName;
+    rightEl.append(ssub);
+  }
+
+  row.append(timeEl, bodyEl, rightEl);
+  return row;
+}
+
+// How many pages we know about: the tool's total count wins; otherwise derive
+// from what is fetched, plus one unknown page while more may still load.
+function pageCount() {
+  const byTotal = total != null ? Math.ceil(total / PAGE_SIZE) : 0;
+  const byData = Math.ceil(allTxns.length / PAGE_SIZE) + (doneFetching ? 0 : 1);
+  return Math.max(byTotal, byData, 1);
+}
+
+function hasNextPage() {
+  return (pageIdx + 1) * PAGE_SIZE < allTxns.length || !doneFetching;
+}
+
+function renderControls() {
+  pagerEl.hidden = false;
+  pageInfoEl.textContent = `第 ${pageIdx + 1} / ${pageCount()} 页`;
+  const busy = fetching || navBusy;
+  firstBtn.disabled = prevBtn.disabled = busy || pageIdx === 0;
+  nextBtn.disabled = lastBtn.disabled = busy || !hasNextPage();
+}
+
+function renderPage() {
+  mainEl.innerHTML = "";
+  if (allTxns.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "这个账本还没有交易";
+    mainEl.append(empty);
+    pagerEl.hidden = true;
+    return;
+  }
+  const rows = allTxns.slice(pageIdx * PAGE_SIZE, pageIdx * PAGE_SIZE + PAGE_SIZE);
+  const dayTotals = computeDayTotals();
+  let curDayKey = null;
+  let curBody = null;
+  for (const t of rows) {
     const key = dayKeyOf(t.time);
-    if (key !== lastDayKey) {
-      lastDayKey = key;
+    if (key !== curDayKey) {
+      curDayKey = key;
       const day = document.createElement("section");
       day.className = "day";
       const label = document.createElement("div");
@@ -252,90 +378,17 @@ function appendTransactions(txns) {
       dname.textContent = formatDay(new Date(t.time * 1000));
       const dtotal = document.createElement("span");
       dtotal.className = "day-total";
+      dtotal.textContent = fmtDayTotal(dayTotals.get(key) || new Map());
       label.append(dname, dtotal);
       day.append(label);
       mainEl.append(day);
-      lastDayBodyEl = day;
-      dayLabelEls.set(key, dtotal);
-      if (!dayAgg.has(key)) dayAgg.set(key, new Map());
+      curBody = day;
     }
-    touchedDays.add(key);
-
-    // aggregate the day total (net: income positive, expense negative)
-    const agg = dayAgg.get(key);
-    const amtNum = Number(t.amount) || 0;
-    const cur = agg.get(t.currency) || { net: 0, frac: 0 };
-    cur.net += t.type === "income" ? amtNum : -amtNum;
-    cur.frac = Math.max(cur.frac, fracDigits(t.amount));
-    agg.set(t.currency, cur);
-
-    const row = document.createElement("div");
-    row.className = "row" + (t.type === "income" ? " income" : "");
-    const cName = catLabel(t.category_id);
-    const sName = srcById.get(String(t.source_id));
-
-    // time, leading
-    const timeEl = document.createElement("div");
-    timeEl.className = "time";
-    timeEl.textContent = timeFmt.format(new Date(t.time * 1000));
-
-    // content, with category as the small line beneath it
-    const bodyEl = document.createElement("div");
-    bodyEl.className = "body";
-    const desc = document.createElement("div");
-    desc.className = "desc";
-    const descIsCat = !t.comment && !!cName;
-    desc.textContent = t.comment || cName || `#${t.id}`;
-    bodyEl.append(desc);
-    if (cName && !descIsCat) {
-      const sub = document.createElement("div");
-      sub.className = "sub";
-      sub.textContent = cName;
-      bodyEl.append(sub);
-    }
-
-    // amount, with source as the small line beneath it
-    const rightEl = document.createElement("div");
-    rightEl.className = "right";
-    const amount = document.createElement("div");
-    amount.className = "amount";
-    amount.textContent = (t.type === "income" ? "+" : "−") + fmtAmount(t.amount, t.currency);
-    rightEl.append(amount);
-    if (sName) {
-      const ssub = document.createElement("div");
-      ssub.className = "sub";
-      ssub.textContent = sName;
-      rightEl.append(ssub);
-    }
-
-    row.append(timeEl, bodyEl, rightEl);
-    lastDayBodyEl.append(row);
+    curBody.append(makeRow(t));
   }
-  for (const key of touchedDays) renderDayTotal(key);
-}
-
-// Full repaint from allTxns. Used for the first page and again once the
-// category/source name lookups resolve, so rows never block on them.
-function renderAll() {
-  mainEl.innerHTML = "";
-  lastDayKey = null;
-  lastDayBodyEl = null;
-  dayLabelEls.clear();
-  dayAgg.clear();
-  if (allTxns.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "empty";
-    empty.textContent = "这个账本还没有交易";
-    mainEl.append(empty);
-    return;
-  }
-  appendTransactions(allTxns);
-  if (done) {
-    const end = document.createElement("div");
-    end.className = "end";
-    end.textContent = "— 已到最早一条 —";
-    mainEl.append(end);
-  }
+  mainEl.scrollTop = 0;
+  window.scrollTo(0, 0);
+  renderControls();
 }
 
 function parseSearchResult(res) {
@@ -349,41 +402,65 @@ function parseSearchResult(res) {
   return { transactions: [], next_cursor: "" };
 }
 
-async function loadMore() {
-  if (loading || done || superseded || !ledgerId) return;
-  loading = true;
-  sentinelEl.hidden = false;
+// Fetch the next older chunk from the server into allTxns.
+async function fetchNextChunk() {
+  if (fetching || doneFetching || superseded || !ledgerId) return;
+  fetching = true;
+  renderControls();
   try {
     const res = await app.callServerTool({
       name: "search_transactions",
       arguments: { ledger_id: ledgerId, newest_first: true, limit: 100, cursor },
     });
     const page = parseSearchResult(res);
-    const more = page.transactions || [];
-    allTxns.push(...more);
-    appendTransactions(more);
+    allTxns.push(...(page.transactions || []));
     cursor = page.next_cursor || "";
-    if (!cursor) {
-      done = true;
-      sentinelEl.hidden = true;
-      const end = document.createElement("div");
-      end.className = "end";
-      end.textContent = "— 已到最早一条 —";
-      mainEl.append(end);
-    }
+    if (!cursor) doneFetching = true;
   } catch (err) {
-    sentinelEl.textContent = "加载失败,滚动重试";
+    // leave doneFetching false so paging again retries
   } finally {
-    loading = false;
-    if (!done) sentinelEl.hidden = true;
+    fetching = false;
   }
 }
 
-// Infinite scroll: load the next page when the sentinel scrolls into view.
-const scrollWatcher = new IntersectionObserver((entries) => {
-  if (entries.some((e) => e.isIntersecting)) loadMore();
-}, { rootMargin: "400px" });
-scrollWatcher.observe(sentinelEl);
+async function ensureFetched(count) {
+  while (allTxns.length < count && !doneFetching && !superseded) {
+    const before = allTxns.length;
+    await fetchNextChunk();
+    if (allTxns.length === before && !doneFetching) break; // no progress: stop
+  }
+}
+
+async function ensureAllFetched() {
+  while (!doneFetching && !superseded) {
+    const before = allTxns.length;
+    await fetchNextChunk();
+    if (allTxns.length === before && !doneFetching) break;
+  }
+}
+
+async function withNav(fn) {
+  if (navBusy) return;
+  navBusy = true;
+  renderControls();
+  try { await fn(); } finally { navBusy = false; renderPage(); }
+}
+
+function lastPageIdx() {
+  return Math.max(0, Math.ceil(allTxns.length / PAGE_SIZE) - 1);
+}
+
+firstBtn.addEventListener("click", () => { if (!navBusy) { pageIdx = 0; renderPage(); } });
+prevBtn.addEventListener("click", () => { if (!navBusy && pageIdx > 0) { pageIdx -= 1; renderPage(); } });
+nextBtn.addEventListener("click", () => withNav(async () => {
+  const target = pageIdx + 1;
+  await ensureFetched((target + 1) * PAGE_SIZE);
+  pageIdx = Math.min(target, lastPageIdx());
+}));
+lastBtn.addEventListener("click", () => withNav(async () => {
+  await ensureAllFetched();
+  pageIdx = lastPageIdx();
+}));
 
 // --- first paint from the tool result ---
 app.ontoolinput = ({ arguments: args }) => {
@@ -419,18 +496,19 @@ app.ontoolresult = (result) => {
   total = typeof payload.total === "number" ? payload.total : null;
   if (total !== null && metaEl) metaEl.textContent = `共 ${total} 笔`;
 
+  allTxns.length = 0;
   allTxns.push(...txns);
   cursor = payload.next_cursor || "";
-  done = !cursor || txns.length === 0;
+  doneFetching = !cursor || txns.length === 0;
+  pageIdx = 0;
 
-  // Paint the list right away — do not wait on the name lookups.
-  renderAll();
-  sentinelEl.hidden = done;
+  // Paint page 1 right away — do not wait on the name lookups.
+  renderPage();
 
-  // Enrich rows with category / source names in the background; repaint once
-  // when they arrive. A slow or unavailable lookup never blocks the timeline.
+  // Enrich rows with category / source names in the background; repaint the
+  // current page once they arrive. A slow or missing lookup never blocks.
   loadLookups()
-    .then(() => { if (catById.size || srcById.size) renderAll(); })
+    .then(() => { if (catById.size || srcById.size) renderPage(); })
     .catch(() => { /* names stay as ids */ });
 };
 

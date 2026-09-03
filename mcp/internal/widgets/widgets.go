@@ -86,26 +86,31 @@ const previewShim = `globalThis.ExtApps={App:class{
   set ontoolresult(f){this._h.result=f} get ontoolresult(){return this._h.result}
   set ontoolinput(f){this._h.input=f} get ontoolinput(){return this._h.input}
   set onhostcontextchanged(f){this._h.ctx=f} get onhostcontextchanged(){return this._h.ctx}
+  _demoBatch(seed,n,cursor){
+    const now=Math.floor(Date.now()/1000);
+    const notes=["麦当劳麦辣鸡腿堡","便利店 可乐一瓶","超市采购 蔬菜水果","和朋友喝咖啡,备注写得比较长用来测试换行显示效果","",
+      "地铁充值","美团外卖","停车费","工资","话费充值","网购 数据线","AWS 账单","药店","水电费","打车"];
+    const t=[];
+    for(let i=0;i<n;i++){const k=seed+i;
+      t.push({id:String(1000-k),type:k%9===0?"income":"expense",source_id:String((k%2)+1),
+        category_id:String((k%2)+1),amount:(k%9===0?"8000.00":((k*7%400)+3+".00")),
+        currency:k%13===0?"USD":"CNY",time:now-k*7000,comment:notes[k%notes.length]});}
+    return{structuredContent:{next_cursor:cursor,transactions:t}};
+  }
   async connect(){
     const q=new URLSearchParams(location.search);
-    const now=Math.floor(Date.now()/1000);
-    const demo={total:128,next_cursor:"c1",transactions:[
-      {id:"101",type:"expense",source_id:"2",category_id:"2",amount:"32.50",currency:"CNY",time:now-3600,comment:"麦当劳麦辣鸡腿堡"},
-      {id:"102",type:"expense",source_id:"1",category_id:"2",amount:"128.00",currency:"CNY",time:now-7200,comment:""},
-      {id:"105",type:"expense",source_id:"1",category_id:"1",amount:"55.00",currency:"CNY",time:now-9000,comment:"和朋友喝咖啡,备注写得比较长用来测试换行显示效果"},
-      {id:"103",type:"income",source_id:"1",category_id:"1",amount:"8000.00",currency:"CNY",time:now-90000,comment:"工资"},
-      {id:"104",type:"expense",source_id:"2",category_id:"1",amount:"6.00",currency:"USD",time:now-95000,comment:"AWS 账单"}]};
-    const p=q.get("payload")||JSON.stringify(demo);
+    const demo=q.get("payload")||JSON.stringify(Object.assign({total:47},this._demoBatch(0,20,"c1").structuredContent));
+    this._page=0;
     if(this._h.input)this._h.input({arguments:{ledger_id:q.get("ledger_id")||"1"}});
-    if(this._h.result)this._h.result({content:[{type:"text",text:"preview\n\n"+p}]});
+    if(this._h.result)this._h.result({content:[{type:"text",text:"preview\n\n"+demo}]});
   }
   getHostContext(){return{theme:new URLSearchParams(location.search).get("theme")||"light",availableDisplayModes:[]}}
   async callServerTool(a){console.log("callServerTool",a);
     if(a&&a.name==="list_categories")return{structuredContent:{categories:[{id:"1",name:"餐饮",parent_id:"0"},{id:"2",name:"外卖",parent_id:"1"}]}};
     if(a&&a.name==="list_sources")return{structuredContent:{sources:[{id:"1",name:"招行储蓄卡"},{id:"2",name:"支付宝"}]}};
-    if(a&&a.name==="search_transactions"){const now=Math.floor(Date.now()/1000);return{structuredContent:{next_cursor:"",transactions:[
-      {id:"90",type:"expense",source_id:"2",category_id:"2",amount:"19.90",currency:"CNY",time:now-200000,comment:"便利店"},
-      {id:"89",type:"expense",source_id:"1",category_id:"1",amount:"240.00",currency:"CNY",time:now-260000,comment:"超市采购"}]}};}
+    if(a&&a.name==="search_transactions"){this._page=(this._page||0)+1;
+      if(this._page===1)return this._demoBatch(20,20,"c2");
+      return this._demoBatch(40,7,"");}
     return{structuredContent:{transactions:[],next_cursor:""}};
   }
   sendMessage(m){console.log("sendMessage",m)}
