@@ -64,11 +64,15 @@
 - **THEN** 返回"未找到"错误,而不是该交易的信息
 
 ### Requirement: 按条件搜索交易
-用户 SHALL 能够通过 `search_transactions` 工具,指定 `ledger_id`,并按时间范围、来源、分类、关键词中的一个或多个条件筛选该账本内的交易列表,并通过 `limit`/`cursor` 分批翻页取完结果。关键词筛选通过可选入参 `keyword` 提供,对交易的 `comment` 字段做大小写不敏感的子串匹配;非空白的 `keyword` 与时间范围、来源、分类等其他已提供的筛选条件以 AND 组合。`keyword` 为空字符串或仅由空白字符组成时,视为未提供该参数,不产生任何筛选效果。结果按 `time`、`id` 稳定排序;每次调用最多返回 `limit` 条(未提供时默认为 50,超过 200 的请求被拒绝),当还有更多结果时响应中带一个 `next_cursor`,把它原样传回下一次调用的 `cursor` 入参即可取得下一页;没有更多结果时不返回 `next_cursor`。`cursor` 的有效性校验涵盖包括 `keyword` 在内的全部筛选条件——用与签发时不同的 `keyword` 复用同一个 `cursor` 会被拒绝,而不是静默地把两种筛选条件混合在一起翻页。
+用户 SHALL 能够通过 `search_transactions` 工具,指定 `ledger_id`,并按时间范围、来源、分类、关键词中的一个或多个条件筛选该账本内的交易列表,并通过 `limit`/`cursor` 分批翻页取完结果。关键词筛选通过可选入参 `keyword` 提供,对交易的 `comment` 字段做大小写不敏感的子串匹配;非空白的 `keyword` 与时间范围、来源、分类等其他已提供的筛选条件以 AND 组合。`keyword` 为空字符串或仅由空白字符组成时,视为未提供该参数,不产生任何筛选效果。
+
+结果排序方向由可选入参 `newest_first` 控制:未提供或为 `false` 时,结果按 `time`、`id` 升序(最早的在前),`next_cursor` 沿时间轴向更晚的方向翻页——此为默认,与历史行为一致;为 `true` 时,结果按 `time`、`id` 降序(最新的在前),`next_cursor` 沿时间轴向更早的方向翻页。两种方向都使用稳定的 keyset 翻页,不重复、不遗漏。
+
+每次调用最多返回 `limit` 条(未提供时默认为 50,超过 200 的请求被拒绝),当还有更多结果时响应中带一个 `next_cursor`,把它原样传回下一次调用的 `cursor` 入参即可取得下一页;没有更多结果时不返回 `next_cursor`。`cursor` 的有效性校验涵盖包括 `keyword` 与 `newest_first` 在内的全部筛选/排序条件——用与签发时不同的 `keyword` 或不同的 `newest_first` 复用同一个 `cursor` 会被拒绝,而不是静默地把两种条件混合在一起翻页。
 
 #### Scenario: 无筛选条件
 - **WHEN** 调用 `search_transactions`,指定一个已存在的账本,不提供任何其他筛选条件
-- **THEN** 返回该账本中最早的一页交易(最多 `limit` 条,按 `time`、`id` 排序),不包含其他账本的交易
+- **THEN** 返回该账本中最早的一页交易(最多 `limit` 条,按 `time`、`id` 升序),不包含其他账本的交易
 
 #### Scenario: 按时间范围筛选
 - **WHEN** 调用 `search_transactions` 并指定起止时间
@@ -76,7 +80,7 @@
 
 #### Scenario: 按关键词筛选
 - **WHEN** 调用 `search_transactions` 并提供非空白的 `keyword`,该账本内存在一笔或多笔交易的 `comment` 包含该关键词的子串(大小写不限)
-- **THEN** 只返回 `comment` 命中该关键词子串的交易,按 `time`、`id` 排序分页;`comment` 中大小写与 `keyword` 不同、但忽略大小写后仍匹配的交易同样被返回
+- **THEN** 只返回 `comment` 命中该关键词子串的交易,按当前排序方向分页;`comment` 中大小写与 `keyword` 不同、但忽略大小写后仍匹配的交易同样被返回
 
 #### Scenario: 关键词与其他筛选条件组合
 - **WHEN** 调用 `search_transactions` 同时提供 `keyword` 与时间范围、`source_id`、`category_id` 中的一个或多个
@@ -103,11 +107,19 @@
 - **THEN** 只返回前 `limit` 条,响应中带一个 `next_cursor`
 
 #### Scenario: 使用 cursor 翻页
-- **WHEN** 调用 `search_transactions` 并提供上一次响应返回的 `next_cursor` 作为 `cursor`,其余筛选条件(含 `ledger_id`、`keyword`)与上一次调用相同
+- **WHEN** 调用 `search_transactions` 并提供上一次响应返回的 `next_cursor` 作为 `cursor`,其余筛选条件(含 `ledger_id`、`keyword`、`newest_first`)与上一次调用相同
 - **THEN** 返回紧接上一页之后的下一页结果,不重复、不遗漏上一页已返回的交易
 
+#### Scenario: 默认按最早在前翻页
+- **WHEN** 调用 `search_transactions` 不提供 `newest_first`,或提供 `newest_first=false`
+- **THEN** 结果按 `time`、`id` 升序返回,行为与本 change 之前完全一致
+
+#### Scenario: 按最新在前倒序翻页
+- **WHEN** 调用 `search_transactions` 提供 `newest_first=true`,该账本内交易数量超过 `limit`
+- **THEN** 第一页返回该筛选范围内最新的 `limit` 条(按 `time`、`id` 降序),携带 `next_cursor`;用该 `next_cursor` 续翻返回紧接其后、更早的一页,直到覆盖到最早一条后不再返回 `next_cursor`
+
 #### Scenario: cursor 无效或已不匹配当前筛选条件
-- **WHEN** 调用 `search_transactions` 提供的 `cursor` 无法解析,或是用不同的筛选条件(`ledger_id`/`source_id`/`category_id`/`start_time`/`end_time`/`keyword`)签发的
+- **WHEN** 调用 `search_transactions` 提供的 `cursor` 无法解析,或是用不同的筛选/排序条件(`ledger_id`/`source_id`/`category_id`/`start_time`/`end_time`/`keyword`/`newest_first`)签发的
 - **THEN** 请求被拒绝,返回说明 cursor 无效的错误,不返回任何交易
 
 #### Scenario: limit 超过上限
@@ -116,7 +128,7 @@
 
 #### Scenario: 上一页返回后账本发生变化
 - **WHEN** 在两次翻页调用之间,该账本内有新交易被创建、或已返回过的交易被更新/删除
-- **THEN** 翻页仍然基于 `cursor` 中记录的位置(`time`、`id`)继续,不因为新增/变更的交易而重复返回或跳过尚未返回的交易
+- **THEN** 翻页仍然基于 `cursor` 中记录的位置(`time`、`id`)与方向继续,不因为新增/变更的交易而重复返回或跳过尚未返回的交易
 
 #### Scenario: 指定的账本不存在
 - **WHEN** 调用 `search_transactions`,指定的 `ledger_id` 不对应任何已存在的账本
