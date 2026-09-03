@@ -96,14 +96,22 @@
   <span class="meta" id="meta"></span>
   <button id="expand" hidden>全屏</button>
 </header>
-<main id="main"></main>
+<main id="main"><div class="empty" id="boot">加载中…</div></main>
 <div class="sentinel" id="sentinel" hidden>加载更早的记录…</div>
 
 <script type="module">
 /*__EXT_APPS_BUNDLE__*/
+// Everything runs inside this IIFE: the claude.ai apps sandbox splices the
+// widget in via document.write into a shared scope that already declares some
+// short identifiers (e.g. `io`), so leaking top-level `const`s breaks the
+// whole document write. Keep all names local.
+(async () => {
 const { App } = globalThis.ExtApps;
 
 const mainEl = document.getElementById("main");
+const bootEl = document.getElementById("boot");
+function boot(msg) { if (bootEl) bootEl.textContent = msg; }
+function fatal(msg) { mainEl.innerHTML = '<div class="empty">' + msg + "</div>"; }
 const metaEl = document.getElementById("meta");
 const sentinelEl = document.getElementById("sentinel");
 const expandBtn = document.getElementById("expand");
@@ -212,10 +220,10 @@ async function loadMore() {
 }
 
 // Infinite scroll: load the next page when the sentinel scrolls into view.
-const io = new IntersectionObserver((entries) => {
+const scrollWatcher = new IntersectionObserver((entries) => {
   if (entries.some((e) => e.isIntersecting)) loadMore();
 }, { rootMargin: "400px" });
-io.observe(sentinelEl);
+scrollWatcher.observe(sentinelEl);
 
 // --- first paint from the tool result ---
 app.ontoolinput = ({ arguments: args }) => {
@@ -232,7 +240,7 @@ app.ontoolresult = ({ content }) => {
   }
   const txns = payload.transactions || [];
   total = typeof payload.total === "number" ? payload.total : null;
-  if (total !== null) metaEl.textContent = `共 ${total} 笔`;
+  if (total !== null && metaEl) metaEl.textContent = `共 ${total} 笔`;
   mainEl.innerHTML = "";
   lastDayKey = null;
   lastDayBodyEl = null;
@@ -258,7 +266,14 @@ app.ontoolresult = ({ content }) => {
   }
 };
 
-await app.connect();
+boot("连接中…");
+try {
+  await app.connect();
+} catch (err) {
+  fatal("连接宿主失败:" + (err && err.message ? err.message : err));
+  return;
+}
+boot("已连接,等待数据…");
 applyTheme(app.getHostContext()?.theme);
 
 const ctx = app.getHostContext();
@@ -266,4 +281,5 @@ if (ctx?.availableDisplayModes?.includes("fullscreen")) {
   expandBtn.hidden = false;
   expandBtn.addEventListener("click", () => app.requestDisplayMode({ mode: "fullscreen" }));
 }
+})();
 </script>

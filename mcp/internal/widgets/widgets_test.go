@@ -50,6 +50,18 @@ func TestTimelineWidgetBehaviours(t *testing.T) {
 	}
 }
 
+func TestTimelineScriptIsScopeIsolated(t *testing.T) {
+	html, _ := HTML("timeline")
+	// claude.ai splices the widget into a shared scope via document.write; a
+	// leaked top-level declaration (notably `io`) breaks the whole write.
+	if !strings.Contains(html, "(async () => {") {
+		t.Error("widget script is not wrapped in an IIFE")
+	}
+	if strings.Contains(html, "\nconst io ") || strings.Contains(html, "\nconst io=") {
+		t.Error("widget declares `io` — collides with the claude.ai apps sandbox")
+	}
+}
+
 func TestPreviewHTMLUsesShim(t *testing.T) {
 	html, ok := PreviewHTML("timeline")
 	if !ok {
