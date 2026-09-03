@@ -156,13 +156,18 @@ func nullableUnix(v any) int64 {
 	}
 }
 
-// formatUnixDate renders unix seconds as a plain calendar date. tally does no
-// timezone handling anywhere (see config.yaml), so this is UTC and only used
-// for the human-readable degradation summary; the widget itself groups by the
-// host's local date.
+// summaryZone is the timezone the human-readable degradation summary renders
+// dates in. tally stores no timezone anywhere (see config.yaml); the widget
+// itself groups by the host's local date, which for the single user is
+// CST (UTC+8), so the text fallback matches by pinning the same offset rather
+// than drifting a day in UTC.
+var summaryZone = time.FixedZone("UTC+8", 8*60*60)
+
+// formatUnixDate renders unix seconds as a plain calendar date in summaryZone,
+// used only for the human-readable degradation summary.
 func formatUnixDate(ts int64) string {
 	if ts == 0 {
 		return "?"
 	}
-	return time.Unix(ts, 0).UTC().Format("2006-01-02") + " UTC"
+	return time.Unix(ts, 0).In(summaryZone).Format("2006-01-02") + " (UTC+8)"
 }

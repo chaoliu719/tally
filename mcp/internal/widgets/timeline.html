@@ -41,7 +41,7 @@
     gap: 12px;
   }
   header h1 { font-size: 14px; font-weight: 600; margin: 0; }
-  header .meta { color: var(--muted); font-size: 12px; }
+  header .meta { color: var(--muted); font-size: 12px; margin-left: auto; }
   header button {
     font: inherit;
     font-size: 12px;
@@ -53,9 +53,7 @@
     cursor: pointer;
   }
   header button:hover { color: var(--fg); }
-  .day {
-    padding: 0 16px;
-  }
+  .day { padding: 0 16px; }
   .day-label {
     position: sticky;
     top: 41px;
@@ -64,24 +62,47 @@
     font-size: 12px;
     font-weight: 600;
     padding: 10px 0 4px;
-  }
-  .day-total { font-weight: 400; }
-  .row {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
     gap: 12px;
-    padding: 7px 0;
-    border-top: 1px solid var(--line);
   }
-  .row .desc { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-  .row .amount {
+  .day-total {
+    font-weight: 400;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 0;
+    border-top: 1px solid var(--line);
+  }
+  .row:hover { background: var(--row-hover); }
+  .row .time {
+    flex: none;
+    width: 3.4em;
+    color: var(--muted);
+    font-size: 16px;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .row .body { flex: 1; min-width: 0; }
+  .row .right { flex: none; text-align: right; white-space: nowrap; }
+  .row .desc { overflow-wrap: anywhere; }
+  .row .sub {
+    color: var(--muted);
+    font-size: 12px;
+    margin-top: 1px;
+    overflow-wrap: anywhere;
+  }
+  .row .amount {
+    font-variant-numeric: tabular-nums;
     color: var(--pos);
   }
   .row.income .amount { color: var(--income); }
-  .row.income .amount::before { content: "+"; }
   .sentinel, .end, .empty {
     text-align: center;
     color: var(--muted);
@@ -139,21 +160,78 @@ let ledgerId = null;
 let cursor = "";
 let done = false;
 let loading = false;
-let lastDayKey = null;     // the day-key of the last row appended
-let lastDayBodyEl = null;  // the .day container currently being filled
 let total = null;
 
-const dayFmt = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "long", day: "numeric", weekday: "short" });
+// id -> name lookups, loaded once from the ledger's own read-only tools so
+// rows can show category / source names instead of bare ids.
+const catById = new Map();   // id -> { name, parentId }
+const srcById = new Map();   // id -> name
+let lookupsLoaded = false;
+
+// per-day running state, keyed by local-date key
+let lastDayKey = null;
+let lastDayBodyEl = null;
+const dayLabelEls = new Map();     // dayKey -> the .day-total span
+const dayAgg = new Map();          // dayKey -> Map(currency -> { net, frac })
+
+const dayFmt = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "long", day: "numeric" });
+const weekdayFmt = new Intl.DateTimeFormat(undefined, { weekday: "short" });
+function formatDay(d) { return `${dayFmt.format(d)} ${weekdayFmt.format(d)}`; }
+const timeFmt = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
 function dayKeyOf(unixSeconds) {
   const d = new Date(unixSeconds * 1000);
   return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 }
 
+function fracDigits(s) {
+  const i = String(s).indexOf(".");
+  return i < 0 ? 0 : String(s).length - i - 1;
+}
 function fmtAmount(a, currency) {
-  return `${a} ${currency}`;
+  return `${a} ${currency}`;
+}
+function catLabel(id) {
+  const c = catById.get(String(id));
+  if (!c) return "";
+  const parent = c.parentId && c.parentId !== "0" ? catById.get(String(c.parentId)) : null;
+  return parent ? `${parent.name} / ${c.name}` : c.name;
+}
+
+async function loadLookups() {
+  if (lookupsLoaded || !ledgerId) return;
+  lookupsLoaded = true;
+  const pull = async (name, key, apply) => {
+    try {
+      const res = await app.callServerTool({ name, arguments: { ledger_id: ledgerId } });
+      let data = res && res.structuredContent;
+      if (!data || !Array.isArray(data[key])) {
+        const text = res && res.content && res.content[0] && res.content[0].text;
+        if (text) { try { data = JSON.parse(text); } catch { /* ignore */ } }
+      }
+      for (const it of (data && data[key]) || []) apply(it);
+    } catch { /* names are optional — degrade to ids */ }
+  };
+  await Promise.all([
+    pull("list_categories", "categories", (c) => catById.set(String(c.id), { name: c.name, parentId: c.parent_id })),
+    pull("list_sources", "sources", (s) => srcById.set(String(s.id), s.name)),
+  ]);
+}
+
+function renderDayTotal(dayKey) {
+  const span = dayLabelEls.get(dayKey);
+  const agg = dayAgg.get(dayKey);
+  if (!span || !agg) return;
+  const parts = [];
+  for (const [cur, v] of agg) {
+    if (v.net === 0) continue;
+    const sign = v.net > 0 ? "+" : "−";
+    parts.push(`${sign}${Math.abs(v.net).toFixed(v.frac)} ${cur}`);
+  }
+  span.textContent = parts.join("  ");
 }
 
 function appendTransactions(txns) {
+  const touchedDays = new Set();
   for (const t of txns) {
     const key = dayKeyOf(t.time);
     if (key !== lastDayKey) {
@@ -162,22 +240,70 @@ function appendTransactions(txns) {
       day.className = "day";
       const label = document.createElement("div");
       label.className = "day-label";
-      label.textContent = dayFmt.format(new Date(t.time * 1000));
+      const dname = document.createElement("span");
+      dname.textContent = formatDay(new Date(t.time * 1000));
+      const dtotal = document.createElement("span");
+      dtotal.className = "day-total";
+      label.append(dname, dtotal);
       day.append(label);
       mainEl.append(day);
       lastDayBodyEl = day;
+      dayLabelEls.set(key, dtotal);
+      if (!dayAgg.has(key)) dayAgg.set(key, new Map());
     }
+    touchedDays.add(key);
+
+    // aggregate the day total (net: income positive, expense negative)
+    const agg = dayAgg.get(key);
+    const amtNum = Number(t.amount) || 0;
+    const cur = agg.get(t.currency) || { net: 0, frac: 0 };
+    cur.net += t.type === "income" ? amtNum : -amtNum;
+    cur.frac = Math.max(cur.frac, fracDigits(t.amount));
+    agg.set(t.currency, cur);
+
     const row = document.createElement("div");
     row.className = "row" + (t.type === "income" ? " income" : "");
-    const desc = document.createElement("span");
+    const cName = catLabel(t.category_id);
+    const sName = srcById.get(String(t.source_id));
+
+    // time, leading
+    const timeEl = document.createElement("div");
+    timeEl.className = "time";
+    timeEl.textContent = timeFmt.format(new Date(t.time * 1000));
+
+    // content, with category as the small line beneath it
+    const bodyEl = document.createElement("div");
+    bodyEl.className = "body";
+    const desc = document.createElement("div");
     desc.className = "desc";
-    desc.textContent = t.comment || `#${t.id}`;
-    const amount = document.createElement("span");
+    const descIsCat = !t.comment && !!cName;
+    desc.textContent = t.comment || cName || `#${t.id}`;
+    bodyEl.append(desc);
+    if (cName && !descIsCat) {
+      const sub = document.createElement("div");
+      sub.className = "sub";
+      sub.textContent = cName;
+      bodyEl.append(sub);
+    }
+
+    // amount, with source as the small line beneath it
+    const rightEl = document.createElement("div");
+    rightEl.className = "right";
+    const amount = document.createElement("div");
     amount.className = "amount";
-    amount.textContent = fmtAmount(t.amount, t.currency);
-    row.append(desc, amount);
+    amount.textContent = (t.type === "income" ? "+" : "−") + fmtAmount(t.amount, t.currency);
+    rightEl.append(amount);
+    if (sName) {
+      const ssub = document.createElement("div");
+      ssub.className = "sub";
+      ssub.textContent = sName;
+      rightEl.append(ssub);
+    }
+
+    row.append(timeEl, bodyEl, rightEl);
     lastDayBodyEl.append(row);
   }
+  for (const key of touchedDays) renderDayTotal(key);
 }
 
 function parseSearchResult(res) {
@@ -230,7 +356,7 @@ app.ontoolinput = ({ arguments: args }) => {
   if (args && args.ledger_id) ledgerId = String(args.ledger_id);
 };
 
-app.ontoolresult = ({ content }) => {
+app.ontoolresult = async ({ content }) => {
   let payload;
   try {
     const text = content[0].text;
@@ -241,9 +367,14 @@ app.ontoolresult = ({ content }) => {
   const txns = payload.transactions || [];
   total = typeof payload.total === "number" ? payload.total : null;
   if (total !== null && metaEl) metaEl.textContent = `共 ${total} 笔`;
+
+  await loadLookups();
+
   mainEl.innerHTML = "";
   lastDayKey = null;
   lastDayBodyEl = null;
+  dayLabelEls.clear();
+  dayAgg.clear();
 
   if (txns.length === 0) {
     const empty = document.createElement("div");

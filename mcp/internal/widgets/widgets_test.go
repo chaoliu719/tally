@@ -36,6 +36,8 @@ func TestTimelineWidgetBehaviours(t *testing.T) {
 		"callServerTool",       // widget fetches its own pages
 		"newest_first",         // ... in descending order
 		"search_transactions",  // ... from this tool
+		"list_categories",      // one-time id->name lookup for row labels
+		"list_sources",         // one-time id->name lookup for row labels
 		"IntersectionObserver", // infinite scroll trigger
 		"已到最早一条",               // end-of-list marker
 		"这个账本还没有交易",            // empty state
