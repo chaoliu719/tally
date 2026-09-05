@@ -65,6 +65,20 @@ func TestTimelineWidgetBehaviours(t *testing.T) {
 	if !strings.Contains(html, `el.addEventListener("change", commitFilters)`) {
 		t.Error("filter inputs are not wired to live re-filtering")
 	}
+	// The filter bar shows/hides via an explicit .open class, not the
+	// [hidden] attribute (which .filterbar's own display rule defeats in
+	// some browsers).
+	if !strings.Contains(html, ".filterbar.open") || !strings.Contains(html, `classList.toggle("open")`) {
+		t.Error("filter bar is not toggled via the .open class")
+	}
+	if !strings.Contains(html, `aria-expanded`) {
+		t.Error("filter toggle does not track aria-expanded")
+	}
+	// Theme only follows an explicit light/dark host context; a context
+	// without a theme (e.g. on a display-mode change) must not reset it.
+	if !strings.Contains(html, `if (theme !== "light" && theme !== "dark") return;`) {
+		t.Error("applyTheme does not guard against a themeless host context")
+	}
 }
 
 func TestTimelineScriptIsScopeIsolated(t *testing.T) {

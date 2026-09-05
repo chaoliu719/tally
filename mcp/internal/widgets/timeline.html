@@ -140,15 +140,30 @@
     min-width: 6.5em;
     text-align: center;
   }
+  #filterToggle::after { content: "▾"; margin-left: 5px; font-size: 9px; vertical-align: 1px; }
+  #filterToggle[aria-expanded="true"]::after { content: "▴"; }
   #filterToggle.active { color: var(--fg); border-color: var(--fg); }
+  #filterToggle.active::before {
+    content: "";
+    display: inline-block;
+    width: 5px; height: 5px;
+    margin-right: 5px;
+    border-radius: 50%;
+    background: var(--fg);
+    vertical-align: 1px;
+  }
+  /* Toggled by the .open class only -- never rely on the [hidden] attribute
+     here: this rule's `display` would defeat the UA [hidden] style in some
+     browsers, so the bar is display:none by default and flex only when open. */
   .filterbar {
+    display: none;
     padding: 10px 16px;
     border-bottom: 1px solid var(--line);
-    display: flex;
     flex-wrap: wrap;
     align-items: flex-end;
     gap: 8px 12px;
   }
+  .filterbar.open { display: flex; }
   .filterbar .field {
     display: flex;
     flex-direction: column;
@@ -188,10 +203,10 @@
 <header>
   <h1>交易时间线</h1>
   <span class="meta" id="meta"></span>
-  <button id="filterToggle" type="button">筛选</button>
+  <button id="filterToggle" type="button" aria-expanded="false" aria-controls="filterBar">筛选</button>
   <button id="expand" hidden>全屏</button>
 </header>
-<div class="filterbar" id="filterBar" hidden>
+<div class="filterbar" id="filterBar">
   <label class="field">从<input type="date" id="filterStart"></label>
   <label class="field">到<input type="date" id="filterEnd"></label>
   <label class="field">分类<select id="filterCat"><option value="">不限分类</option></select></label>
@@ -253,10 +268,15 @@ try {
 } catch { /* BroadcastChannel unavailable — non-fatal */ }
 
 // --- theme ---
+// The host fires onhostcontextchanged for display-mode changes too (entering
+// / leaving fullscreen), and that context can arrive without a `theme`
+// field. Treat only "light" / "dark" as authoritative and ignore anything
+// else, so a partial context never silently drops us back to light.
 function applyTheme(theme) {
+  if (theme !== "light" && theme !== "dark") return;
   document.documentElement.classList.toggle("dark", theme === "dark");
 }
-app.onhostcontextchanged = (ctx) => ctx && applyTheme(ctx.theme);
+app.onhostcontextchanged = (ctx) => { if (ctx) applyTheme(ctx.theme); };
 
 // --- state ---
 let ledgerId = null;
@@ -677,7 +697,10 @@ function commitFilters() {
   renderPage();
 }
 
-filterToggle.addEventListener("click", () => { filterBar.hidden = !filterBar.hidden; });
+filterToggle.addEventListener("click", () => {
+  const open = filterBar.classList.toggle("open");
+  filterToggle.setAttribute("aria-expanded", open ? "true" : "false");
+});
 for (const el of [filterStart, filterEnd, filterCat, filterSrc]) {
   el.addEventListener("change", commitFilters);
 }

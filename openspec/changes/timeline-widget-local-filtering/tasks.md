@@ -22,6 +22,11 @@
 - [x] 4.2 `nextBtn` / `lastBtn`:若 `!doneFetching` 先 `await drainAll()`,再基于 `view` 的 `lastPageIdx()` 纯本地跳页。验证:drain 未完成时点「页尾」经 `drainAll` 完成后跳到最后一页。
 - [x] 4.3 `updateMeta()`:`filtersActive` 时显示 `已筛选 · ${view.length} 笔`;否则 `共 ${total} 笔`;空结果区分 `没有符合当前条件的交易` vs `这个账本还没有交易`。验证:`widgets_test.go` 断言两种空态文案都在 HTML 中。
 
+## 4b. widget bug 修复(测试中发现)
+
+- [x] 4b.1 深色主题下进入/退出全屏变浅色:`applyTheme` 只接受 `"light"` / `"dark"`,`onhostcontextchanged` 里不含主题字段的上下文直接忽略,不再 `toggle("dark", false)`。验证:深色下 `app.requestDisplayMode({mode:"fullscreen"})` 往返后仍为深色。
+- [x] 4b.2 「筛选」控件点击无反应:过滤条改用显式 `.filterbar.open` class 控制展开/收起(默认 `display:none`),不再依赖会被 `.filterbar{display:flex}` 覆盖的 `[hidden]` 属性;`filterToggle` 切 `.open` 并同步 `aria-expanded`;按钮加 caret(▾/▴)与活跃筛选圆点。验证:`widgets_test.go` 断言 HTML 含 `.filterbar.open` 与 `aria-expanded`;JS 解析通过。
+
 ## 5. 校验与收尾
 
 - [x] 5.1 更新 `e2e_transaction_timeline_widget_test.go`(断言结果含 inline categories/sources)、`widgets_test.go`(新增 `ingestInlineLookups` / `drainAll` / `descendantIdsOf` / `matchesFilters` / 过滤空态文案断言);`internal/tools/timeline_test.go` 覆盖结果查找表与空账本。验证:`go test ./...` 全绿。

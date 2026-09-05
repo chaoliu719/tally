@@ -46,6 +46,11 @@ Sources    []SourceInfo   `json:"sources"`    // {id, name}
 
 **备选**:保留"应用"按钮做一次性提交。否决:过滤全本地后单次过滤成本可忽略,即时反馈体验更好,少一个必须点的控件(用户明确要求)。日期 input 的 `change` 只在失焦/选定后触发,不会边打字边抖动。
 
+### D4: 两个 widget bug(测试中发现)
+
+- **深色→全屏变浅色**:`onhostcontextchanged` 不只在主题切换时触发,展示模式切换(进/出全屏)也会触发,且该上下文可能不带 `theme`。旧代码 `ctx && applyTheme(ctx.theme)` → `applyTheme(undefined)` → `classList.toggle("dark", false)` 把深色清掉,且退出全屏不会再补发主题,所以一直是浅色。修复:`applyTheme` 只认 `"light"` / `"dark"`,其它一律忽略(不动当前配色)。
+- **「筛选」点击无反应**:过滤条靠元素的 `[hidden]` 属性收起,但 `.filterbar { display: flex }` 是作者样式,在 UA 的 `[hidden] { display: none }` 不带 `!important` 的浏览器里会盖过它 —— `hidden` 形同虚设,`toggle` 也就"没反应"。修复:`.filterbar` 默认 `display: none`,`.filterbar.open` 才 `display: flex`,`filterToggle` 切 `.open` class 并同步 `aria-expanded`。顺带给按钮加 caret 与活跃筛选圆点(用户要求"改样子")。
+
 `nextBtn` / `lastBtn`:取数只为"后台还没拉完时补齐",逻辑简化为"若 `!doneFetching` 先 `await drainAll()`,再纯本地跳页"。
 
 **子孙分类展开**:在 `catById`(已有 `parentId`)基础上构建 `descendantsOf(catId)` —— 一次性 BFS 出 `parentId → children[]` 邻接表,选中分类时收集其子树 id 集合,`matchesFilters` 里按 `idSet.has(t.category_id)` 判断。等价于服务端 `include_descendants=true`。
