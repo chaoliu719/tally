@@ -55,6 +55,16 @@ func TestTimelineWidgetBehaviours(t *testing.T) {
 			t.Errorf("timeline widget missing %q", want)
 		}
 	}
+	// The filter bar applies live on every input change -- there is no
+	// "应用" / confirm button to click (change timeline-widget-local-filtering).
+	for _, absent := range []string{"filterApply", "button.primary"} {
+		if strings.Contains(html, absent) {
+			t.Errorf("timeline widget still references removed apply button: %q", absent)
+		}
+	}
+	if !strings.Contains(html, `el.addEventListener("change", commitFilters)`) {
+		t.Error("filter inputs are not wired to live re-filtering")
+	}
 }
 
 func TestTimelineScriptIsScopeIsolated(t *testing.T) {

@@ -18,7 +18,7 @@
 
 ## 4. widget:筛选与翻页去联网
 
-- [x] 4.1 `filterApply` / `filterReset` 走新的 `commitFilters()`:更新 `filters` / `filtersActive` / `catFilterIds` → `pageIdx = 0` → `refreshView()` → `updateMeta()` → `renderPage()`;删除 `reloadWithFilters()` 及其 `search_transactions` 重拉。验证:`commitFilters` 中无任何 `callServerTool`。
+- [x] 4.1 过滤条去掉「应用」按钮:`filterStart` / `filterEnd` / `filterCat` / `filterSrc` 的 `change` 事件各自绑到 `commitFilters()`(读四个输入当前值 → 更新 `filters` / `filtersActive` / `catFilterIds` → `pageIdx = 0` → `refreshView()` → `updateMeta()` → `renderPage()`);`filterReset` 清空输入后调 `commitFilters()`;删除 `reloadWithFilters()` 及其 `search_transactions` 重拉,移除 `#filterApply` 元素与 `.filterbar button.primary` 样式。验证:HTML 中不含 `filterApply` / "应用";`widgets_test.go` 断言过滤条无 primary 按钮;`go test ./internal/widgets/` 通过。
 - [x] 4.2 `nextBtn` / `lastBtn`:若 `!doneFetching` 先 `await drainAll()`,再基于 `view` 的 `lastPageIdx()` 纯本地跳页。验证:drain 未完成时点「页尾」经 `drainAll` 完成后跳到最后一页。
 - [x] 4.3 `updateMeta()`:`filtersActive` 时显示 `已筛选 · ${view.length} 笔`;否则 `共 ${total} 笔`;空结果区分 `没有符合当前条件的交易` vs `这个账本还没有交易`。验证:`widgets_test.go` 断言两种空态文案都在 HTML 中。
 

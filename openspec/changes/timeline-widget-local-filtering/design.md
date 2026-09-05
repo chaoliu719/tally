@@ -42,7 +42,9 @@ Sources    []SourceInfo   `json:"sources"`    // {id, name}
 
 筛选视图:引入 `visibleTxns()` = `allTxns.filter(matchesFilters)`。所有渲染/分页函数(`renderPage` / `computeDayTotals` / `pageCount` / `hasNextPage` / `lastPageIdx` / 翻页按钮 disable 逻辑)改为基于 `visibleTxns()` 的结果(计算一次缓存到局部变量,避免每次重算)。
 
-`filterApply` / `filterReset`:只更新 `filters` / `filtersActive` → `pageIdx = 0` → `renderPage()`。删除 `reloadWithFilters()` 的清空与联网。
+过滤条无"应用"按钮:`filterStart` / `filterEnd` / `filterCat` / `filterSrc` 各自的 `change` 事件都绑到同一个 `commitFilters()` —— 读四个输入的当前值 → 更新 `filters` / `filtersActive` / `catFilterIds` → `pageIdx = 0` → `refreshView()` → `updateMeta()` → `renderPage()`,纯本地、瞬时。`filterReset` 清空四个输入再调 `commitFilters()`。删除 `reloadWithFilters()` 的清空与联网。
+
+**备选**:保留"应用"按钮做一次性提交。否决:过滤全本地后单次过滤成本可忽略,即时反馈体验更好,少一个必须点的控件(用户明确要求)。日期 input 的 `change` 只在失焦/选定后触发,不会边打字边抖动。
 
 `nextBtn` / `lastBtn`:取数只为"后台还没拉完时补齐",逻辑简化为"若 `!doneFetching` 先 `await drainAll()`,再纯本地跳页"。
 
@@ -61,7 +63,7 @@ Sources    []SourceInfo   `json:"sources"`    // {id, name}
 ## Risks / Trade-offs
 
 - **[整份账本进 iframe 内存]** → 单用户数千条、每条是小 JSON 对象,量级 ~百 KB 到个位 MB,浏览器无压力。文档里明确记为"账本量级显著变大时重新评估"的触发点。
-- **[后台 drain 期间用户就应用了筛选]** → `visibleTxns()` 基于当时已取回的部分,`drainAll` 完成后需要再 `renderPage()` 一次刷新(drain 循环结束时无条件重绘当前页)。页码/条数在 drain 完成前对"很久以前"的筛选结果可能偏小,可接受(与旧版"还没滚到"行为一致),drain 通常几秒内结束。
+- **[后台 drain 期间用户就改了筛选]** → `view` 基于当时已取回的部分,`drainAll` 完成后再 `renderPage()` 一次刷新(drain 循环结束时无条件重绘当前页)。页码/条数在 drain 完成前对"很久以前"的筛选结果可能偏小,可接受(与旧版"还没滚到"行为一致),drain 通常几秒内结束。
 - **[drain 把整个账本一次性拉取,对话里多次打开会重复全量拉取]** → supersession 让旧实例停;每次打开是一轮全量桥接调用(200 条/页 → 数千条约 10~20 次 `search_transactions`)。比旧版(2 次 lookup + 按需翻页)总请求数多,但都在后台、不阻塞交互,且用户实际感知的每一次操作都不再等待。若成为问题,可把首屏页 size 再调大以减少轮数。
 - **[旧版服务端 / 结果被 text-only 投递]** → `extractFirstPagePayload` 已能从 text block 解析 JSON;新字段走同一路径。缺字段则降级,不报错。
 - **[`search_transactions` 无 limit 上限风险]** → 保持每页 `limit: 100`(与现状一致),仅首屏由服务端返回 200;不改。

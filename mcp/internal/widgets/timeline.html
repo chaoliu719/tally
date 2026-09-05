@@ -183,7 +183,6 @@
     cursor: pointer;
   }
   .filterbar button:disabled { color: var(--muted); opacity: 0.5; cursor: default; }
-  .filterbar button.primary { background: var(--fg); color: var(--bg); border-color: var(--fg); }
 </style>
 
 <header>
@@ -199,7 +198,6 @@
   <label class="field">来源<select id="filterSrc"><option value="">不限来源</option></select></label>
   <div class="actions">
     <button type="button" id="filterReset">重置</button>
-    <button type="button" id="filterApply" class="primary">应用</button>
   </div>
 </div>
 <main id="main"><div class="empty" id="boot">加载中…</div></main>
@@ -232,7 +230,6 @@ const filterStart = document.getElementById("filterStart");
 const filterEnd = document.getElementById("filterEnd");
 const filterCat = document.getElementById("filterCat");
 const filterSrc = document.getElementById("filterSrc");
-const filterApply = document.getElementById("filterApply");
 const filterReset = document.getElementById("filterReset");
 const pagerEl = document.getElementById("pager");
 const pageInfoEl = document.getElementById("pageinfo");
@@ -272,8 +269,9 @@ let total = null;             // ledger-wide count reported by the tool result
 let pageIdx = 0;              // 0-based current page
 const allTxns = [];           // every transaction fetched so far, newest -> oldest
 
-// active filters, committed only when the user hits "应用". Filtering is
-// entirely local over allTxns -- start / end are bare "YYYY-MM-DD" strings
+// active filters, re-committed on every filter-input change (no "应用"
+// button). Filtering is entirely local over allTxns -- start / end are bare
+// "YYYY-MM-DD" strings
 // compared lexically against a row's date prefix (see design.md D2), no
 // search_transactions params, no network.
 let filters = { source_id: "", category_id: "", start: "", end: "" };
@@ -660,8 +658,9 @@ function updateMeta() {
   else metaEl.textContent = "";
 }
 
-// Commit the filter-bar inputs as the active filter and re-render locally.
-// No network: the whole ledger is (being) drained into allTxns already.
+// Re-read the filter-bar inputs and re-render locally. Called on every
+// input change -- there is no "应用" button. No network: the whole ledger is
+// (being) drained into allTxns already, so a filter pass is instant.
 function commitFilters() {
   filters = {
     source_id: filterSrc.value,
@@ -672,7 +671,6 @@ function commitFilters() {
   filtersActive = !!(filters.source_id || filters.category_id || filters.start || filters.end);
   catFilterIds = filters.category_id ? descendantIdsOf(filters.category_id) : null;
   filterToggle.classList.toggle("active", filtersActive);
-  filterBar.hidden = true;
   pageIdx = 0;
   refreshView();
   updateMeta();
@@ -680,7 +678,9 @@ function commitFilters() {
 }
 
 filterToggle.addEventListener("click", () => { filterBar.hidden = !filterBar.hidden; });
-filterApply.addEventListener("click", commitFilters);
+for (const el of [filterStart, filterEnd, filterCat, filterSrc]) {
+  el.addEventListener("change", commitFilters);
+}
 filterReset.addEventListener("click", () => {
   filterStart.value = "";
   filterEnd.value = "";
