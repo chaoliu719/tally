@@ -50,6 +50,7 @@ Sources    []SourceInfo   `json:"sources"`    // {id, name}
 
 - **深色→全屏变浅色**:`onhostcontextchanged` 不只在主题切换时触发,展示模式切换(进/出全屏)也会触发,且该上下文可能不带 `theme`。旧代码 `ctx && applyTheme(ctx.theme)` → `applyTheme(undefined)` → `classList.toggle("dark", false)` 把深色清掉,且退出全屏不会再补发主题,所以一直是浅色。修复:`applyTheme` 只认 `"light"` / `"dark"`,其它一律忽略(不动当前配色)。
 - **「筛选」点击无反应**:过滤条靠元素的 `[hidden]` 属性收起,但 `.filterbar { display: flex }` 是作者样式,在 UA 的 `[hidden] { display: none }` 不带 `!important` 的浏览器里会盖过它 —— `hidden` 形同虚设,`toggle` 也就"没反应"。修复:`.filterbar` 默认 `display: none`,`.filterbar.open` 才 `display: flex`,`filterToggle` 切 `.open` class 并同步 `aria-expanded`。顺带给按钮加 caret 与活跃筛选圆点(用户要求"改样子")。
+- **进全屏后「全屏」按钮还在**:按钮可见性此前只在 init 时按 `availableDisplayModes` 判一次。改为 `syncDisplayMode(ctx)` 挂在 `onhostcontextchanged` 上,按 `ctx.displayMode`/`ctx.mode` 是否为 `fullscreen` 实时隐藏/恢复;进全屏即隐藏,退出全屏由宿主自己负责,回到内联时再显示。
 
 `nextBtn` / `lastBtn`:取数只为"后台还没拉完时补齐",逻辑简化为"若 `!doneFetching` 先 `await drainAll()`,再纯本地跳页"。
 

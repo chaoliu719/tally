@@ -79,6 +79,10 @@ func TestTimelineWidgetBehaviours(t *testing.T) {
 	if !strings.Contains(html, `if (theme !== "light" && theme !== "dark") return;`) {
 		t.Error("applyTheme does not guard against a themeless host context")
 	}
+	// The "全屏" button hides once the panel is in fullscreen.
+	if !strings.Contains(html, "syncDisplayMode") {
+		t.Error("expand button visibility is not synced to the display mode")
+	}
 }
 
 func TestTimelineScriptIsScopeIsolated(t *testing.T) {

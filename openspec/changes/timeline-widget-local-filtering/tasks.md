@@ -25,6 +25,7 @@
 ## 4b. widget bug 修复(测试中发现)
 
 - [x] 4b.1 深色主题下进入/退出全屏变浅色:`applyTheme` 只接受 `"light"` / `"dark"`,`onhostcontextchanged` 里不含主题字段的上下文直接忽略,不再 `toggle("dark", false)`。验证:深色下 `app.requestDisplayMode({mode:"fullscreen"})` 往返后仍为深色。
+- [x] 4b.3 进入全屏后「全屏」按钮不消失:新增 `syncDisplayMode(ctx)`,`expandBtn.hidden = !canFullscreen || inFullscreen`(`inFullscreen` 看 `ctx.displayMode` / `ctx.mode === "fullscreen"`);挂到 `onhostcontextchanged` 并在 init 调一次。验证:`widgets_test.go` 断言含 `syncDisplayMode`;JS 解析通过。
 - [x] 4b.2 「筛选」控件点击无反应:过滤条改用显式 `.filterbar.open` class 控制展开/收起(默认 `display:none`),不再依赖会被 `.filterbar{display:flex}` 覆盖的 `[hidden]` 属性;`filterToggle` 切 `.open` 并同步 `aria-expanded`;按钮加 caret(▾/▴)与活跃筛选圆点。验证:`widgets_test.go` 断言 HTML 含 `.filterbar.open` 与 `aria-expanded`;JS 解析通过。
 
 ## 5. 校验与收尾

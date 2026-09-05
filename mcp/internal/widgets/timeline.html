@@ -276,7 +276,18 @@ function applyTheme(theme) {
   if (theme !== "light" && theme !== "dark") return;
   document.documentElement.classList.toggle("dark", theme === "dark");
 }
-app.onhostcontextchanged = (ctx) => { if (ctx) applyTheme(ctx.theme); };
+
+// The "全屏" button only makes sense while inline: show it when the host
+// offers a fullscreen mode and we are not already in it, hide it otherwise
+// (the host provides its own way back out of fullscreen).
+function syncDisplayMode(ctx) {
+  const canFullscreen = !!ctx && Array.isArray(ctx.availableDisplayModes)
+    && ctx.availableDisplayModes.includes("fullscreen");
+  const inFullscreen = !!ctx && (ctx.displayMode === "fullscreen" || ctx.mode === "fullscreen");
+  expandBtn.hidden = !canFullscreen || inFullscreen;
+}
+
+app.onhostcontextchanged = (ctx) => { if (ctx) { applyTheme(ctx.theme); syncDisplayMode(ctx); } };
 
 // --- state ---
 let ledgerId = null;
@@ -795,10 +806,7 @@ try {
 boot("已连接,等待数据…");
 applyTheme(app.getHostContext()?.theme);
 
-const ctx = app.getHostContext();
-if (ctx?.availableDisplayModes?.includes("fullscreen")) {
-  expandBtn.hidden = false;
-  expandBtn.addEventListener("click", () => app.requestDisplayMode({ mode: "fullscreen" }));
-}
+expandBtn.addEventListener("click", () => app.requestDisplayMode({ mode: "fullscreen" }));
+syncDisplayMode(app.getHostContext());
 })();
 </script>
