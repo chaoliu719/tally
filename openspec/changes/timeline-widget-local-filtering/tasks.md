@@ -28,6 +28,11 @@
 - [x] 4b.3 进入全屏后「全屏」按钮不消失:新增 `syncDisplayMode(ctx)`,`expandBtn.hidden = !canFullscreen || inFullscreen`(`inFullscreen` 看 `ctx.displayMode` / `ctx.mode === "fullscreen"`);挂到 `onhostcontextchanged` 并在 init 调一次。验证:`widgets_test.go` 断言含 `syncDisplayMode`;JS 解析通过。
 - [x] 4b.2 「筛选」控件点击无反应:过滤条改用显式 `.filterbar.open` class 控制展开/收起(默认 `display:none`),不再依赖会被 `.filterbar{display:flex}` 覆盖的 `[hidden]` 属性;`filterToggle` 切 `.open` 并同步 `aria-expanded`;按钮加 caret(▾/▴)与活跃筛选圆点。验证:`widgets_test.go` 断言 HTML 含 `.filterbar.open` 与 `aria-expanded`;JS 解析通过。
 
+## 4c. widget 资源加载慢(~10s)优化
+
+- [x] 4c.1 时间线 `ui://` 资源的 `resources/read` handler 设 `res.TTLMs`(`widgetResourceTTL = 5min`)+ `res.CacheScope = "public"`,取代 SDK 默认的"立即过期"—— 宿主可在 5 分钟内复用缓存的 ~380KB HTML,不必每次打开面板/刷新页面都重拉。验证:`e2e_transaction_timeline_widget_test.go` 断言 `rr.TTLMs > 0`;`go test ./cmd/tally-mcp/` 通过。
+- 说明:Caddy 层压缩走不通 —— MCP streamable-HTTP 响应是 `text/event-stream`,Caddy `encode` 对 SSE 主动跳过;缓存提示是更干净的杠杆。bundle 体积(337KB 的 vendored ext-apps runtime 占大头)本轮不动。
+
 ## 5. 校验与收尾
 
 - [x] 5.1 更新 `e2e_transaction_timeline_widget_test.go`(断言结果含 inline categories/sources)、`widgets_test.go`(新增 `ingestInlineLookups` / `drainAll` / `descendantIdsOf` / `matchesFilters` / 过滤空态文案断言);`internal/tools/timeline_test.go` 覆盖结果查找表与空账本。验证:`go test ./...` 全绿。

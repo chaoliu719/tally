@@ -120,3 +120,18 @@
 #### Scenario: 进入/退出全屏不改变主题
 - **WHEN** 面板在深色主题下运行,用户请求进入全屏、随后退出全屏
 - **THEN** 面板始终保持深色配色,不因展示模式切换而变为浅色
+
+### Requirement: widget 资源自包含且不发起外部请求
+tally-mcp 托管的每一个 `ui://` widget 资源 SHALL 以 mime 类型 `text/html;profile=mcp-app` 提供,且为单文件自包含:内联所需的 Apps SDK 浏览器运行时、样式与脚本,不引用任何外部脚本、样式表、字体或图片 URL。widget 内所有对账本数据的读取 SHALL 通过 `callServerTool` 走 tally-mcp 自身的工具,不直接发起跨域网络请求。widget SHALL 不做任何写操作。时间线 widget 资源的 `resources/read` 结果 SHALL 携带一个正的新鲜度提示(缓存 TTL)与 `public` 缓存范围,使宿主可在该时段内复用已缓存的 HTML 而不必每次打开面板或刷新页面都重新拉取整份(约 380KB)资源。
+
+#### Scenario: 资源可被宿主直接渲染
+- **WHEN** 宿主对 widget 的 `ui://` URI 发起 `resources/read`
+- **THEN** 返回的内容 mime 类型为 `text/html;profile=mcp-app`,且是一个不依赖任何外部 URL 即可运行的完整 HTML 文档
+
+#### Scenario: widget 只读
+- **WHEN** 审视 widget 脚本发起的所有 `callServerTool` 调用
+- **THEN** 全部指向只读工具(如 `search_transactions`);没有任何调用会创建、修改或删除数据
+
+#### Scenario: 资源结果带缓存提示
+- **WHEN** 宿主对时间线 widget 的 `ui://` URI 发起 `resources/read`
+- **THEN** 结果的 TTL 提示为正值、缓存范围为 `public`,宿主可在 TTL 内复用缓存副本

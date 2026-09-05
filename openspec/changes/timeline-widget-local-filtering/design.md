@@ -52,6 +52,15 @@ Sources    []SourceInfo   `json:"sources"`    // {id, name}
 - **「筛选」点击无反应**:过滤条靠元素的 `[hidden]` 属性收起,但 `.filterbar { display: flex }` 是作者样式,在 UA 的 `[hidden] { display: none }` 不带 `!important` 的浏览器里会盖过它 —— `hidden` 形同虚设,`toggle` 也就"没反应"。修复:`.filterbar` 默认 `display: none`,`.filterbar.open` 才 `display: flex`,`filterToggle` 切 `.open` class 并同步 `aria-expanded`。顺带给按钮加 caret 与活跃筛选圆点(用户要求"改样子")。
 - **进全屏后「全屏」按钮还在**:按钮可见性此前只在 init 时按 `availableDisplayModes` 判一次。改为 `syncDisplayMode(ctx)` 挂在 `onhostcontextchanged` 上,按 `ctx.displayMode`/`ctx.mode` 是否为 `fullscreen` 实时隐藏/恢复;进全屏即隐藏,退出全屏由宿主自己负责,回到内联时再显示。
 
+### D5: widget 资源加载慢(~10s)
+
+`ui://` 资源(内联 ext-apps runtime 后约 380KB)每次打开面板 / 刷新页面都要经 `iframe → 宿主 → model-context → 服务端` 重新 `resources/read` 一次;go-sdk 默认 `TTLMs=0` = 立即过期,宿主每次都全量重取。
+
+- **选定:给 `resources/read` 结果设 `TTLMs`(5min)+ `CacheScope="public"`**。宿主在 TTL 内复用缓存副本,一个工作会话里的反复开关/刷新不再重拉。5min 是折中:够短,新部署几分钟内自然生效(用户仍可硬刷新)。TTL 值 `widgetResourceTTL` 常量,可调。
+- **否决:Caddy 层 gzip/zstd**。MCP streamable-HTTP 的 POST /mcp 响应 Content-Type 是 `text/event-stream`(即便 `resources/read` 这种一问一答),Caddy `encode` 对 SSE 主动跳过压缩,`match` 也盖不过;强上 SSE 压缩有破坏流式的风险。
+- **否决(本轮):缩小 bundle**。337KB 的 vendored `ext-apps-app-with-deps.js` 是大头,tree-shake/换精简构建有回归风险,留作后续。
+- **否决:把 bundle 拆成独立可缓存子资源**。iframe CSP 禁止 module import / 外部脚本,必须内联。
+
 `nextBtn` / `lastBtn`:取数只为"后台还没拉完时补齐",逻辑简化为"若 `!doneFetching` 先 `await drainAll()`,再纯本地跳页"。
 
 **子孙分类展开**:在 `catById`(已有 `parentId`)基础上构建 `descendantsOf(catId)` —— 一次性 BFS 出 `parentId → children[]` 邻接表,选中分类时收集其子树 id 集合,`matchesFilters` 里按 `idSet.has(t.category_id)` 判断。等价于服务端 `include_descendants=true`。

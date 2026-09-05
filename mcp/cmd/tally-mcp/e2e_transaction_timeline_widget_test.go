@@ -67,6 +67,11 @@ func TestE2ETransactionTimelineWidgetResource(t *testing.T) {
 	if len(rr.Contents) != 1 {
 		t.Fatalf("resource contents = %d, want 1", len(rr.Contents))
 	}
+	// A positive freshness hint so the host caches the ~380KB payload instead
+	// of refetching it on every panel open / page reload.
+	if rr.TTLMs <= 0 {
+		t.Errorf("widget resource TTLMs = %d, want > 0 so the host can cache it", rr.TTLMs)
+	}
 	c := rr.Contents[0]
 	if c.MIMEType != widgets.MIMEType {
 		t.Errorf("mime = %q, want %q", c.MIMEType, widgets.MIMEType)
