@@ -39,7 +39,11 @@ CREATE TABLE IF NOT EXISTS transactions (
     currency     TEXT NOT NULL,             -- ISO 4217 code; validated against the static
                                              -- currency table in Go code, not a DB constraint
     amount       INTEGER NOT NULL,          -- signed, in the transaction currency's smallest unit
-    time         INTEGER NOT NULL,          -- unix seconds
+    time         TEXT NOT NULL,             -- local wall-clock date-time as the user stated it,
+                                             -- format "YYYY-MM-DD HH:MM:SS", no timezone marker;
+                                             -- never interpreted or converted, compared only as a
+                                             -- string (lexicographic order equals chronological
+                                             -- order for this fixed-width, zero-padded format)
     comment      TEXT NOT NULL DEFAULT '',
     created_at   INTEGER NOT NULL,
     updated_at   INTEGER NOT NULL

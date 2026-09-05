@@ -29,8 +29,8 @@ func registerAnalyticsTools(s *mcp.Server, deps Deps) {
 
 type GetFinancialSummaryInput struct {
 	LedgerID  string `json:"ledger_id" jsonschema:"the id of the ledger to summarize, as a decimal string"`
-	StartTime int64  `json:"start_time,omitempty" jsonschema:"only include transactions at or after this unix time (seconds); omit for no lower bound"`
-	EndTime   int64  `json:"end_time,omitempty" jsonschema:"only include transactions at or before this unix time (seconds); omit for no upper bound"`
+	StartTime string `json:"start_time,omitempty" jsonschema:"only include transactions at or after this local date-time (format YYYY-MM-DD HH:MM:SS, no timezone); omit for no lower bound"`
+	EndTime   string `json:"end_time,omitempty" jsonschema:"only include transactions at or before this local date-time (format YYYY-MM-DD HH:MM:SS, no timezone); omit for no upper bound"`
 }
 
 // CurrencyTotals is the income/expense/net summary for one currency, over
@@ -87,12 +87,18 @@ func getFinancialSummary(ctx context.Context, deps Deps, in GetFinancialSummaryI
 	categoryParams := store.SummarizeTransactionsByCategoryParams{LedgerID: ledgerID}
 	sourceParams := store.SummarizeTransactionsBySourceParams{LedgerID: ledgerID}
 
-	if in.StartTime > 0 {
+	if in.StartTime != "" {
+		if err := validateLocalDateTime(in.StartTime); err != nil {
+			return nil, GetFinancialSummaryOutput{}, err
+		}
 		currencyParams.StartTime = in.StartTime
 		categoryParams.StartTime = in.StartTime
 		sourceParams.StartTime = in.StartTime
 	}
-	if in.EndTime > 0 {
+	if in.EndTime != "" {
+		if err := validateLocalDateTime(in.EndTime); err != nil {
+			return nil, GetFinancialSummaryOutput{}, err
+		}
 		currencyParams.EndTime = in.EndTime
 		categoryParams.EndTime = in.EndTime
 		sourceParams.EndTime = in.EndTime

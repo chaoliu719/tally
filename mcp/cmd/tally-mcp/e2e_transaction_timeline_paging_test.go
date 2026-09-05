@@ -2,6 +2,7 @@ package main
 
 import (
 	"testing"
+	"time"
 
 	"tally/internal/tools"
 )
@@ -25,7 +26,6 @@ func TestE2ETransactionTimelineNewestFirstPaging(t *testing.T) {
 		Operation: "create", Name: "Dining",
 	}, &cat)
 
-	base := futureTime()
 	const n = 7
 	for i := 0; i < n; i++ {
 		call(t, session, "create_transaction", tools.CreateTransactionInput{LedgerID: ledgerID,
@@ -34,7 +34,7 @@ func TestE2ETransactionTimelineNewestFirstPaging(t *testing.T) {
 			CategoryID: cat.Category.ID,
 			Amount:     cnyAmount(int64(100 + i)),
 			Currency:   "CNY",
-			Time:       base + int64(i)*3600,
+			Time:       futureTimeOffset(time.Duration(i) * time.Hour),
 		}, &tools.CreateTransactionOutput{})
 	}
 
@@ -68,13 +68,15 @@ func TestE2ETransactionTimelineNewestFirstPaging(t *testing.T) {
 		}
 		seen[txn.ID] = true
 		if i > 0 && collected[i-1].Time < txn.Time {
-			t.Fatalf("not newest-first at index %d: %d then %d", i, collected[i-1].Time, txn.Time)
+			t.Fatalf("not newest-first at index %d: %s then %s", i, collected[i-1].Time, txn.Time)
 		}
 	}
-	if collected[0].Time != base+int64(n-1)*3600 {
-		t.Fatalf("first row time = %d, want the latest transaction %d", collected[0].Time, base+int64(n-1)*3600)
+	latest := futureTimeOffset(time.Duration(n-1) * time.Hour)
+	earliest := futureTimeOffset(0)
+	if collected[0].Time != latest {
+		t.Fatalf("first row time = %s, want the latest transaction %s", collected[0].Time, latest)
 	}
-	if collected[n-1].Time != base {
-		t.Fatalf("last row time = %d, want the earliest transaction %d", collected[n-1].Time, base)
+	if collected[n-1].Time != earliest {
+		t.Fatalf("last row time = %s, want the earliest transaction %s", collected[n-1].Time, earliest)
 	}
 }

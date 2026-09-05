@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -127,8 +126,8 @@ func openTransactionTimeline(ctx context.Context, deps Deps, in OpenTransactionT
 	} else {
 		summary = fmt.Sprintf("Ledger %s has %d transaction(s), from %s to %s. Showing the %d most recent below",
 			in.LedgerID, stats.Count,
-			formatUnixDate(nullableUnix(stats.EarliestTime)),
-			formatUnixDate(nullableUnix(stats.LatestTime)),
+			formatLocalDate(nullableString(stats.EarliestTime)),
+			formatLocalDate(nullableString(stats.LatestTime)),
 			len(infos))
 		if nextCursor != "" {
 			summary += "; the rest load as you scroll the panel (or page search_transactions with newest_first=true)."
@@ -143,31 +142,29 @@ func openTransactionTimeline(ctx context.Context, deps Deps, in OpenTransactionT
 	return result, out, nil
 }
 
-// nullableUnix pulls an int64 unix seconds value out of a nullable SQL
-// aggregate result (MIN/MAX time), returning 0 when the column was NULL.
-func nullableUnix(v any) int64 {
-	switch n := v.(type) {
-	case int64:
-		return n
-	case float64:
-		return int64(n)
+// nullableString pulls a string value out of a nullable SQL aggregate result
+// (MIN/MAX time), returning "" when the column was NULL. The SQL driver may
+// hand back either a string or a []byte for a TEXT column, depending on the
+// scan path, so both are handled.
+func nullableString(v any) string {
+	switch s := v.(type) {
+	case string:
+		return s
+	case []byte:
+		return string(s)
 	default:
-		return 0
+		return ""
 	}
 }
 
-// summaryZone is the timezone the human-readable degradation summary renders
-// dates in. tally stores no timezone anywhere (see config.yaml); the widget
-// itself groups by the host's local date, which for the single user is
-// CST (UTC+8), so the text fallback matches by pinning the same offset rather
-// than drifting a day in UTC.
-var summaryZone = time.FixedZone("UTC+8", 8*60*60)
-
-// formatUnixDate renders unix seconds as a plain calendar date in summaryZone,
-// used only for the human-readable degradation summary.
-func formatUnixDate(ts int64) string {
-	if ts == 0 {
+// formatLocalDate renders a "YYYY-MM-DD HH:MM:SS" local date-time string
+// (tally stores no timezone anywhere -- see design.md) as just its date
+// part, used only for the human-readable degradation summary. No timezone
+// conversion happens here or anywhere else: the stored string already is
+// the date it displays.
+func formatLocalDate(s string) string {
+	if len(s) < len("2006-01-02") {
 		return "?"
 	}
-	return time.Unix(ts, 0).In(summaryZone).Format("2006-01-02") + " (UTC+8)"
+	return s[:len("2006-01-02")]
 }

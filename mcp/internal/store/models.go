@@ -37,7 +37,7 @@ type Transaction struct {
 	CategoryID int64
 	Currency   string
 	Amount     int64
-	Time       int64
+	Time       string
 	Comment    string
 	CreatedAt  int64
 	UpdatedAt  int64

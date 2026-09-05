@@ -59,27 +59,42 @@ func findSourceSummary(t *testing.T, rows []tools.SourceSummary, sourceID string
 	return tools.SourceSummary{}
 }
 
+// TestGetFinancialSummaryRejectsInvalidTimeRangeFormat covers "start_time 或
+// end_time 格式非法" (specs/financial-analytics/spec.md).
+func TestGetFinancialSummaryRejectsInvalidTimeRangeFormat(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+
+	callToolExpectError(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{
+		LedgerID:  ledgerID,
+		StartTime: "not-a-time",
+	})
+	callToolExpectError(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{
+		LedgerID: ledgerID,
+		EndTime:  "2026-09-05T11:00:00",
+	})
+}
+
 func TestGetFinancialSummaryTimeRange(t *testing.T) {
 	session, ledgerID := newTestSession(t)
 	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
 
-	earlyTime := futureTime()
+	earlyTime := futureUnix()
 	lateTime := earlyTime + 100000
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: earlyTime,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: timeString(earlyTime),
 	}, &tools.CreateTransactionOutput{})
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(200), Currency: "CNY", Time: lateTime,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(200), Currency: "CNY", Time: timeString(lateTime),
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.GetFinancialSummaryOutput
 	callTool(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{
 		LedgerID:  ledgerID,
-		StartTime: earlyTime - 10,
-		EndTime:   earlyTime + 10,
+		StartTime: timeString(earlyTime - 10),
+		EndTime:   timeString(earlyTime + 10),
 	}, &out)
 
 	if len(out.TotalsByCurrency) != 1 {
@@ -145,8 +160,8 @@ func TestGetFinancialSummaryEmptyRange(t *testing.T) {
 	var out tools.GetFinancialSummaryOutput
 	callTool(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{
 		LedgerID:  ledgerID,
-		StartTime: futureTime() + 1000000,
-		EndTime:   futureTime() + 1100000,
+		StartTime: timeString(futureUnix() + 1000000),
+		EndTime:   timeString(futureUnix() + 1100000),
 	}, &out)
 
 	if len(out.TotalsByCurrency) != 0 {

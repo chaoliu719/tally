@@ -2,6 +2,7 @@ package main
 
 import (
 	"testing"
+	"time"
 
 	"tally/internal/tools"
 )
@@ -58,7 +59,7 @@ func TestE2ETransactionKeywordSearchFindsPrecedent(t *testing.T) {
 		CategoryID: groceries.Category.ID,
 		Amount:     cnyAmount(8800),
 		Currency:   "CNY",
-		Time:       futureTime() + 10,
+		Time:       futureTimeOffset(10 * time.Second),
 		Comment:    "Walmart weekly groceries",
 	}, &tools.CreateTransactionOutput{})
 

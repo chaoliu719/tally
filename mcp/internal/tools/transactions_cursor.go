@@ -24,8 +24,8 @@ type searchTransactionsFilterFields struct {
 	LedgerID    int64
 	SourceID    sql.NullInt64
 	CategoryID  sql.NullInt64
-	StartTime   sql.NullInt64
-	EndTime     sql.NullInt64
+	StartTime   sql.NullString
+	EndTime     sql.NullString
 	Keyword     string
 	NewestFirst bool
 }
@@ -46,14 +46,14 @@ func searchTransactionsFilterFingerprint(f searchTransactionsFilterFields) strin
 // produce a wrong or rejected query, never a permission bypass or data
 // change.
 type searchTransactionsCursor struct {
-	LastTime    int64  `json:"last_time"`
+	LastTime    string `json:"last_time"`
 	LastID      int64  `json:"last_id"`
 	Fingerprint string `json:"filter_fingerprint"`
 }
 
 // encodeSearchTransactionsCursor builds the opaque cursor string for the
 // last row of a page, to be returned as next_cursor.
-func encodeSearchTransactionsCursor(lastTime, lastID int64, filter searchTransactionsFilterFields) string {
+func encodeSearchTransactionsCursor(lastTime string, lastID int64, filter searchTransactionsFilterFields) string {
 	c := searchTransactionsCursor{
 		LastTime:    lastTime,
 		LastID:      lastID,
@@ -68,17 +68,17 @@ func encodeSearchTransactionsCursor(lastTime, lastID int64, filter searchTransac
 // issued under the same filters as the current request (filter), returning
 // the keyset position to resume from. It returns an error if the cursor
 // cannot be parsed, or if its fingerprint doesn't match the current filters.
-func decodeSearchTransactionsCursor(cursor string, filter searchTransactionsFilterFields) (lastTime, lastID int64, err error) {
+func decodeSearchTransactionsCursor(cursor string, filter searchTransactionsFilterFields) (lastTime string, lastID int64, err error) {
 	body, err := base64.RawURLEncoding.DecodeString(cursor)
 	if err != nil {
-		return 0, 0, fmt.Errorf("invalid cursor")
+		return "", 0, fmt.Errorf("invalid cursor")
 	}
 	var c searchTransactionsCursor
 	if err := json.Unmarshal(body, &c); err != nil {
-		return 0, 0, fmt.Errorf("invalid cursor")
+		return "", 0, fmt.Errorf("invalid cursor")
 	}
 	if c.Fingerprint == "" || c.Fingerprint != searchTransactionsFilterFingerprint(filter) {
-		return 0, 0, fmt.Errorf("cursor does not match the current filters; fetch a fresh first page")
+		return "", 0, fmt.Errorf("cursor does not match the current filters; fetch a fresh first page")
 	}
 	return c.LastTime, c.LastID, nil
 }

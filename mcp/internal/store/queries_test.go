@@ -25,6 +25,7 @@ func TestTransactionsReferenceSourceAndCategory(t *testing.T) {
 	q := New(db)
 
 	now := time.Now().Unix()
+	nowStr := time.Now().Format("2006-01-02 15:04:05")
 
 	ledger, err := q.CreateLedger(ctx, CreateLedgerParams{
 		Name: "Personal", CreatedAt: now, UpdatedAt: now,
@@ -54,13 +55,13 @@ func TestTransactionsReferenceSourceAndCategory(t *testing.T) {
 	}
 
 	income, err := q.CreateTransaction(ctx, CreateTransactionParams{
-		LedgerID: ledger.ID, Type: "income", SourceID: source.ID, CategoryID: category.ID, Currency: "CNY", Amount: 10000, Time: now, CreatedAt: now, UpdatedAt: now,
+		LedgerID: ledger.ID, Type: "income", SourceID: source.ID, CategoryID: category.ID, Currency: "CNY", Amount: 10000, Time: nowStr, CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil {
 		t.Fatalf("CreateTransaction (income) failed: %v", err)
 	}
 	expense, err := q.CreateTransaction(ctx, CreateTransactionParams{
-		LedgerID: ledger.ID, Type: "expense", SourceID: source.ID, CategoryID: sub.ID, Currency: "CNY", Amount: -2500, Time: now, CreatedAt: now, UpdatedAt: now,
+		LedgerID: ledger.ID, Type: "expense", SourceID: source.ID, CategoryID: sub.ID, Currency: "CNY", Amount: -2500, Time: nowStr, CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil {
 		t.Fatalf("CreateTransaction (expense) failed: %v", err)

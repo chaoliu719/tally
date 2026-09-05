@@ -214,13 +214,28 @@ const catById = new Map();   // id -> { name, parentId }
 const srcById = new Map();   // id -> name
 let lookupsLoaded = false;
 
+// t.time is a naive "YYYY-MM-DD HH:MM:SS" local date-time string with no
+// timezone marker (see design.md's D1/D5) -- it is never parsed through
+// Date(unixSeconds) or Date(isoString), both of which would silently
+// reinterpret it in the viewing device's timezone. Grouping and display
+// below work directly on the string's fixed-width fields instead.
 const dayFmt = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "long", day: "numeric" });
 const weekdayFmt = new Intl.DateTimeFormat(undefined, { weekday: "short" });
-function formatDay(d) { return `${dayFmt.format(d)} ${weekdayFmt.format(d)}`; }
-const timeFmt = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
-function dayKeyOf(unixSeconds) {
-  const d = new Date(unixSeconds * 1000);
-  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+function dayKeyOf(timeStr) {
+  return String(timeStr).slice(0, 10); // "YYYY-MM-DD"
+}
+function rowTimeOf(timeStr) {
+  return String(timeStr).slice(11, 16); // "HH:MM"
+}
+// dayFmt/weekdayFmt still go through Intl + Date for locale-aware rendering
+// (month names, weekday abbreviations), but the Date is built from the
+// key's own y/m/d components via the local-component constructor -- which
+// treats them as wall-clock values with no timezone conversion -- not by
+// parsing the string or an epoch offset.
+function formatDay(dayKey) {
+  const [y, mo, d] = dayKey.split("-").map(Number);
+  const localDate = new Date(y, mo - 1, d);
+  return `${dayFmt.format(localDate)} ${weekdayFmt.format(localDate)}`;
 }
 
 function fracDigits(s) {
@@ -299,7 +314,7 @@ function makeRow(t) {
 
   const timeEl = document.createElement("div");
   timeEl.className = "time";
-  timeEl.textContent = timeFmt.format(new Date(t.time * 1000));
+  timeEl.textContent = rowTimeOf(t.time);
 
   const bodyEl = document.createElement("div");
   bodyEl.className = "body";
@@ -375,7 +390,7 @@ function renderPage() {
       const label = document.createElement("div");
       label.className = "day-label";
       const dname = document.createElement("span");
-      dname.textContent = formatDay(new Date(t.time * 1000));
+      dname.textContent = formatDay(key);
       const dtotal = document.createElement("span");
       dtotal.className = "day-total";
       dtotal.textContent = fmtDayTotal(dayTotals.get(key) || new Map());

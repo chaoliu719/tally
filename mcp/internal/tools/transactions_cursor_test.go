@@ -16,10 +16,10 @@ func TestSearchTransactionsCursorRoundTrip(t *testing.T) {
 	filter := searchTransactionsFilterFields{
 		SourceID:   sql.NullInt64{Int64: 7, Valid: true},
 		CategoryID: sql.NullInt64{Int64: 3, Valid: true},
-		StartTime:  sql.NullInt64{Int64: 1000, Valid: true},
+		StartTime:  sql.NullString{String: "2026-01-01 00:00:00", Valid: true},
 	}
 
-	cursor := encodeSearchTransactionsCursor(1234, 5, filter)
+	cursor := encodeSearchTransactionsCursor("2026-01-02 03:04:05", 5, filter)
 	if cursor == "" {
 		t.Fatal("expected a non-empty cursor")
 	}
@@ -28,8 +28,8 @@ func TestSearchTransactionsCursorRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if lastTime != 1234 || lastID != 5 {
-		t.Fatalf("decoded (last_time, last_id) = (%d, %d), want (1234, 5)", lastTime, lastID)
+	if lastTime != "2026-01-02 03:04:05" || lastID != 5 {
+		t.Fatalf("decoded (last_time, last_id) = (%s, %d), want (2026-01-02 03:04:05, 5)", lastTime, lastID)
 	}
 }
 
@@ -49,7 +49,7 @@ func TestSearchTransactionsCursorRejectsCorruptedInput(t *testing.T) {
 
 func TestSearchTransactionsCursorRejectsMismatchedFilter(t *testing.T) {
 	issuedUnder := searchTransactionsFilterFields{SourceID: sql.NullInt64{Int64: 1, Valid: true}}
-	cursor := encodeSearchTransactionsCursor(100, 1, issuedUnder)
+	cursor := encodeSearchTransactionsCursor("2026-01-01 00:00:00", 1, issuedUnder)
 
 	differentFilter := searchTransactionsFilterFields{SourceID: sql.NullInt64{Int64: 2, Valid: true}}
 	if _, _, err := decodeSearchTransactionsCursor(cursor, differentFilter); err == nil {
@@ -96,7 +96,7 @@ func TestSearchTransactionsFilterFingerprintDiffersByKeyword(t *testing.T) {
 
 func TestSearchTransactionsCursorRejectsMismatchedKeyword(t *testing.T) {
 	issuedWithKeyword := searchTransactionsFilterFields{LedgerID: 1, Keyword: "starbucks"}
-	cursor := encodeSearchTransactionsCursor(100, 1, issuedWithKeyword)
+	cursor := encodeSearchTransactionsCursor("2026-01-01 00:00:00", 1, issuedWithKeyword)
 
 	// Decoding under no keyword at all must be rejected.
 	noKeyword := searchTransactionsFilterFields{LedgerID: 1}
@@ -113,7 +113,7 @@ func TestSearchTransactionsCursorRejectsMismatchedKeyword(t *testing.T) {
 	// And the reverse: a cursor issued with no keyword must be rejected when
 	// replayed with one.
 	issuedWithoutKeyword := searchTransactionsFilterFields{LedgerID: 1}
-	cursorNoKeyword := encodeSearchTransactionsCursor(100, 1, issuedWithoutKeyword)
+	cursorNoKeyword := encodeSearchTransactionsCursor("2026-01-01 00:00:00", 1, issuedWithoutKeyword)
 	if _, _, err := decodeSearchTransactionsCursor(cursorNoKeyword, searchTransactionsFilterFields{LedgerID: 1, Keyword: "starbucks"}); err == nil {
 		t.Fatal("expected an error decoding a no-keyword-issued cursor with a keyword in the current request")
 	}

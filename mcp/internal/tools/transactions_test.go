@@ -10,8 +10,29 @@ import (
 	"tally/internal/tools"
 )
 
-func futureTime() int64 {
+// testTimeLayout matches tools.localDateTimeLayout: the only format
+// transactions.time accepts (a naive local date-time, no timezone).
+const testTimeLayout = "2006-01-02 15:04:05"
+
+// futureUnix is a fixed future instant (unix seconds), used only as an
+// internal test-fixture concept so existing tests can keep doing plain
+// integer offset arithmetic ("base+10", "base+int64(i)*2", ...) to build a
+// set of fixture transactions with a deterministic, strictly-ordered time
+// spacing. Production code never converts through unix seconds (see
+// design.md's D3) -- timeString is the only bridge back to the wire format.
+func futureUnix() int64 {
 	return time.Now().Add(time.Hour).Unix()
+}
+
+// timeString formats a unix-seconds value (as produced by futureUnix and
+// arithmetic on it) as the local date-time string transactions.time
+// requires on the wire.
+func timeString(unixSeconds int64) string {
+	return time.Unix(unixSeconds, 0).Format(testTimeLayout)
+}
+
+func futureTime() string {
+	return timeString(futureUnix())
 }
 
 // cnyAmount formats minorUnits (fen) as the CNY decimal-string amount the
@@ -275,6 +296,59 @@ func TestCreateTransactionRejectsInvalidAmountFormat(t *testing.T) {
 	}
 }
 
+// TestCreateTransactionRejectsInvalidTimeFormat covers the "发生时间格式非法"
+// scenario (specs/transaction-recording/spec.md): time must be exactly
+// "YYYY-MM-DD HH:MM:SS", naive (no timezone marker, no "Z" suffix), with a
+// real calendar date and valid hour/minute/second.
+func TestCreateTransactionRejectsInvalidTimeFormat(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+
+	badTimes := []string{
+		"",
+		"2026-09-05",                // missing time-of-day
+		"2026-09-05T11:00:00",       // ISO "T" separator, not a space
+		"2026-09-05 11:00:00Z",      // timezone suffix
+		"2026-09-05 11:00:00+08:00", // timezone offset
+		"2026-13-05 11:00:00",       // month out of range
+		"2026-09-05 25:00:00",       // hour out of range
+		"09-05-2026 11:00:00",       // wrong field order
+		"not a time",
+	}
+	for _, tm := range badTimes {
+		callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
+			LedgerID:   ledgerID,
+			Type:       "expense",
+			SourceID:   sourceID,
+			CategoryID: categoryID,
+			Amount:     "50.00",
+			Currency:   "CNY",
+			Time:       tm,
+		})
+	}
+
+	var list tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID}, &list)
+	if len(list.Transactions) != 0 {
+		t.Fatalf("expected no transaction recorded, got %d", len(list.Transactions))
+	}
+}
+
+// TestSearchTransactionsRejectsInvalidTimeRangeFormat covers "start_time 或
+// end_time 格式非法" (specs/transaction-recording/spec.md).
+func TestSearchTransactionsRejectsInvalidTimeRangeFormat(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+
+	callToolExpectError(t, session, "search_transactions", tools.SearchTransactionsInput{
+		LedgerID:  ledgerID,
+		StartTime: "not-a-time",
+	})
+	callToolExpectError(t, session, "search_transactions", tools.SearchTransactionsInput{
+		LedgerID: ledgerID,
+		EndTime:  "2026-09-05T11:00:00",
+	})
+}
+
 // TestCreateTransactionRejectsAmountPrecisionExceedingCurrency covers
 // spec.md's "金额小数位数超出币种精度" scenario: CNY allows at most 2
 // fractional digits, so "50.001" must be rejected.
@@ -403,7 +477,7 @@ func TestSearchTransactionsNoFilter(t *testing.T) {
 	}, &tools.CreateTransactionOutput{})
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(200), Currency: "CNY", Time: futureTime() + 3600,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(200), Currency: "CNY", Time: timeString(futureUnix() + 3600),
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.SearchTransactionsOutput
@@ -417,23 +491,23 @@ func TestSearchTransactionsTimeRange(t *testing.T) {
 	session, ledgerID := newTestSession(t)
 	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
 
-	earlyTime := futureTime()
+	earlyTime := futureUnix()
 	lateTime := earlyTime + 100000
 
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: earlyTime,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: timeString(earlyTime),
 	}, &tools.CreateTransactionOutput{})
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(200), Currency: "CNY", Time: lateTime,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(200), Currency: "CNY", Time: timeString(lateTime),
 	}, &tools.CreateTransactionOutput{})
 
 	var out tools.SearchTransactionsOutput
 	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{
 		LedgerID:  ledgerID,
-		StartTime: earlyTime - 10,
-		EndTime:   earlyTime + 10,
+		StartTime: timeString(earlyTime - 10),
+		EndTime:   timeString(earlyTime + 10),
 	}, &out)
 
 	if len(out.Transactions) != 1 {
@@ -703,6 +777,37 @@ func TestUpdateTransactionRejectsInvalidAmountFormat(t *testing.T) {
 	}
 }
 
+// TestUpdateTransactionRejectsInvalidTimeFormat covers "发生时间格式非法" for
+// update_transaction (specs/transaction-recording/spec.md).
+func TestUpdateTransactionRejectsInvalidTimeFormat(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+
+	originalTime := futureTime()
+	var created tools.CreateTransactionOutput
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: originalTime,
+	}, &created)
+
+	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
+		LedgerID:   ledgerID,
+		ID:         created.Transaction.ID,
+		Type:       "expense",
+		SourceID:   sourceID,
+		CategoryID: categoryID,
+		Amount:     "50.00",
+		Currency:   "CNY",
+		Time:       "2026-09-05T11:00:00Z",
+	})
+
+	var got tools.GetTransactionOutput
+	callTool(t, session, "get_transaction", tools.GetTransactionInput{LedgerID: ledgerID, ID: created.Transaction.ID}, &got)
+	if got.Transaction.Time != originalTime {
+		t.Fatalf("transaction changed after rejected update: Time = %q, want %q", got.Transaction.Time, originalTime)
+	}
+}
+
 // TestUpdateTransactionRejectsAmountPrecisionExceedingCurrency covers
 // spec.md's "金额小数位数超出币种精度" scenario for update_transaction.
 func TestUpdateTransactionRejectsAmountPrecisionExceedingCurrency(t *testing.T) {
@@ -899,8 +1004,8 @@ func TestSearchTransactionsEmptyResult(t *testing.T) {
 	var out tools.SearchTransactionsOutput
 	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{
 		LedgerID:  ledgerID,
-		StartTime: futureTime() + 1000000,
-		EndTime:   futureTime() + 1100000,
+		StartTime: timeString(futureUnix() + 1000000),
+		EndTime:   timeString(futureUnix() + 1100000),
 	}, &out)
 
 	if out.Transactions == nil {
@@ -930,7 +1035,7 @@ func createExpensesAtOffsets(t *testing.T, session *mcp.ClientSession, ledgerID,
 			CategoryID: categoryID,
 			Amount:     cnyAmount(int64(i + 1)),
 			Currency:   "CNY",
-			Time:       base + off,
+			Time:       timeString(base + off),
 		}, &created)
 		ids = append(ids, created.Transaction.ID)
 	}
@@ -956,7 +1061,7 @@ func createNExpenses(t *testing.T, session *mcp.ClientSession, ledgerID, sourceI
 func TestSearchTransactionsDefaultPageSize(t *testing.T) {
 	session, ledgerID := newTestSession(t)
 	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
-	createNExpenses(t, session, ledgerID, sourceID, categoryID, 55, futureTime())
+	createNExpenses(t, session, ledgerID, sourceID, categoryID, 55, futureUnix())
 
 	var out tools.SearchTransactionsOutput
 	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID}, &out)
@@ -975,7 +1080,7 @@ func TestSearchTransactionsDefaultPageSize(t *testing.T) {
 func TestSearchTransactionsNextCursorOnlyWhenMoreResults(t *testing.T) {
 	session, ledgerID := newTestSession(t)
 	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
-	createNExpenses(t, session, ledgerID, sourceID, categoryID, 5, futureTime())
+	createNExpenses(t, session, ledgerID, sourceID, categoryID, 5, futureUnix())
 
 	var exactFit tools.SearchTransactionsOutput
 	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Limit: 5}, &exactFit)
@@ -1003,7 +1108,7 @@ func TestSearchTransactionsNextCursorOnlyWhenMoreResults(t *testing.T) {
 func TestSearchTransactionsCursorPaginationCoversAllResults(t *testing.T) {
 	session, ledgerID := newTestSession(t)
 	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
-	createNExpenses(t, session, ledgerID, sourceID, categoryID, 12, futureTime())
+	createNExpenses(t, session, ledgerID, sourceID, categoryID, 12, futureUnix())
 
 	var full tools.SearchTransactionsOutput
 	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Limit: 200}, &full)
@@ -1047,7 +1152,7 @@ func TestSearchTransactionsCursorPaginationCoversAllResults(t *testing.T) {
 func TestSearchTransactionsInvalidCursorRejected(t *testing.T) {
 	session, ledgerID := newTestSession(t)
 	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
-	createNExpenses(t, session, ledgerID, sourceID, categoryID, 3, futureTime())
+	createNExpenses(t, session, ledgerID, sourceID, categoryID, 3, futureUnix())
 
 	callToolExpectError(t, session, "search_transactions", tools.SearchTransactionsInput{
 		LedgerID: ledgerID,
@@ -1058,7 +1163,7 @@ func TestSearchTransactionsInvalidCursorRejected(t *testing.T) {
 func TestSearchTransactionsCursorRejectedWhenFiltersChange(t *testing.T) {
 	session, ledgerID := newTestSession(t)
 	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
-	createNExpenses(t, session, ledgerID, sourceID, categoryID, 3, futureTime())
+	createNExpenses(t, session, ledgerID, sourceID, categoryID, 3, futureUnix())
 
 	var otherSource tools.ManageSourceOutput
 	callTool(t, session, "manage_source", tools.ManageSourceInput{
@@ -1102,7 +1207,7 @@ func TestSearchTransactionsLimitOverMaxRejected(t *testing.T) {
 func TestSearchTransactionsPaginationSurvivesLedgerChanges(t *testing.T) {
 	session, ledgerID := newTestSession(t)
 	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
-	base := futureTime()
+	base := futureUnix()
 
 	// T1..T4 at base+10, +20, +30, +40.
 	ids := createExpensesAtOffsets(t, session, ledgerID, sourceID, categoryID, base, []int64{10, 20, 30, 40})
@@ -1129,13 +1234,13 @@ func TestSearchTransactionsPaginationSurvivesLedgerChanges(t *testing.T) {
 	var before tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(999), Currency: "CNY", Time: base + 5,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(999), Currency: "CNY", Time: timeString(base + 5),
 	}, &before)
 	// - a new transaction inserted after everything so far -- must appear.
 	var after tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(998), Currency: "CNY", Time: base + 50,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(998), Currency: "CNY", Time: timeString(base + 50),
 	}, &after)
 	// - T1 (already returned in page1) is updated -- must not reappear or
 	//   otherwise disturb pagination. Time is left unchanged so its keyset
@@ -1148,7 +1253,7 @@ func TestSearchTransactionsPaginationSurvivesLedgerChanges(t *testing.T) {
 		CategoryID: categoryID,
 		Amount:     cnyAmount(12345),
 		Currency:   "CNY",
-		Time:       base + 10,
+		Time:       timeString(base + 10),
 		Comment:    "edited after page1",
 	}, &tools.UpdateTransactionOutput{})
 
@@ -1391,7 +1496,7 @@ func TestSearchTransactionsKeywordMatchesCommentCaseInsensitively(t *testing.T) 
 	}, &starbucks)
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(200), Currency: "CNY", Time: futureTime() + 10,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(200), Currency: "CNY", Time: timeString(futureUnix() + 10),
 		Comment: "walmart grocery",
 	}, &tools.CreateTransactionOutput{})
 
@@ -1423,7 +1528,7 @@ func TestSearchTransactionsKeywordMatchesChineseComment(t *testing.T) {
 	}, &starbucks)
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(8800), Currency: "CNY", Time: futureTime() + 10,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(8800), Currency: "CNY", Time: timeString(futureUnix() + 10),
 		Comment: "沃尔玛购物",
 	}, &tools.CreateTransactionOutput{})
 
@@ -1458,34 +1563,34 @@ func TestSearchTransactionsKeywordCombinedWithOtherFilters(t *testing.T) {
 	var otherSource tools.ManageSourceOutput
 	callTool(t, session, "manage_source", tools.ManageSourceInput{LedgerID: ledgerID, Operation: "create", Name: "Credit Card"}, &otherSource)
 
-	base := futureTime()
+	base := futureUnix()
 
 	// Matches every filter -- the only one that should be returned.
 	var want tools.CreateTransactionOutput
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: base,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: timeString(base),
 		Comment: "starbucks coffee",
 	}, &want)
 
 	// Matches keyword and time, but the wrong source.
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: otherSource.Source.ID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: base,
+		Type:     "expense", SourceID: otherSource.Source.ID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: timeString(base),
 		Comment: "starbucks coffee",
 	}, &tools.CreateTransactionOutput{})
 
 	// Matches source/category/time, but not the keyword.
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: base,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: timeString(base),
 		Comment: "walmart grocery",
 	}, &tools.CreateTransactionOutput{})
 
 	// Matches keyword/source/category, but falls outside the time range.
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: base + 100000,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(100), Currency: "CNY", Time: timeString(base + 100000),
 		Comment: "starbucks coffee",
 	}, &tools.CreateTransactionOutput{})
 
@@ -1494,8 +1599,8 @@ func TestSearchTransactionsKeywordCombinedWithOtherFilters(t *testing.T) {
 		LedgerID:   ledgerID,
 		SourceID:   sourceID,
 		CategoryID: categoryID,
-		StartTime:  base - 10,
-		EndTime:    base + 10,
+		StartTime:  timeString(base - 10),
+		EndTime:    timeString(base + 10),
 		Keyword:    "starbucks",
 	}, &out)
 
@@ -1527,7 +1632,7 @@ func TestSearchTransactionsKeywordWildcardCharactersMatchedLiterally(t *testing.
 	// returned.
 	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 		LedgerID: ledgerID,
-		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(200), Currency: "CNY", Time: futureTime() + 10,
+		Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(200), Currency: "CNY", Time: timeString(futureUnix() + 10),
 		Comment: "50X off invoiceZ",
 	}, &tools.CreateTransactionOutput{})
 
@@ -1598,14 +1703,14 @@ func TestSearchTransactionsKeywordNoMatchReturnsEmpty(t *testing.T) {
 func TestSearchTransactionsKeywordPaginationCoversAllMatches(t *testing.T) {
 	session, ledgerID := newTestSession(t)
 	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
-	base := futureTime()
+	base := futureUnix()
 
 	var matchingIDs []string
 	for i := range 12 {
 		var created tools.CreateTransactionOutput
 		callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 			LedgerID: ledgerID,
-			Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(int64(i + 1)), Currency: "CNY", Time: base + int64(i)*2,
+			Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(int64(i + 1)), Currency: "CNY", Time: timeString(base + int64(i)*2),
 			Comment: "starbucks coffee",
 		}, &created)
 		matchingIDs = append(matchingIDs, created.Transaction.ID)
@@ -1614,7 +1719,7 @@ func TestSearchTransactionsKeywordPaginationCoversAllMatches(t *testing.T) {
 		// skip it without breaking keyset pagination.
 		callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 			LedgerID: ledgerID,
-			Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(999), Currency: "CNY", Time: base + int64(i)*2 + 1,
+			Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(999), Currency: "CNY", Time: timeString(base + int64(i)*2 + 1),
 			Comment: "walmart grocery",
 		}, &tools.CreateTransactionOutput{})
 	}
@@ -1666,7 +1771,7 @@ func TestSearchTransactionsCursorRejectedWhenKeywordChanges(t *testing.T) {
 	for i := range 3 {
 		callTool(t, session, "create_transaction", tools.CreateTransactionInput{
 			LedgerID: ledgerID,
-			Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(int64(i + 1)), Currency: "CNY", Time: futureTime() + int64(i),
+			Type:     "expense", SourceID: sourceID, CategoryID: categoryID, Amount: cnyAmount(int64(i + 1)), Currency: "CNY", Time: timeString(futureUnix() + int64(i)),
 			Comment: "starbucks coffee",
 		}, &tools.CreateTransactionOutput{})
 	}
@@ -1713,7 +1818,7 @@ func TestSearchTransactionsCursorRejectedWhenKeywordChanges(t *testing.T) {
 func TestSearchTransactionsNewestFirstOrder(t *testing.T) {
 	session, ledgerID := newTestSession(t)
 	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
-	createNExpenses(t, session, ledgerID, sourceID, categoryID, 6, futureTime())
+	createNExpenses(t, session, ledgerID, sourceID, categoryID, 6, futureUnix())
 
 	var asc tools.SearchTransactionsOutput
 	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Limit: 200}, &asc)
@@ -1730,7 +1835,7 @@ func TestSearchTransactionsNewestFirstOrder(t *testing.T) {
 			t.Fatalf("desc[%d].ID = %q, want %q (must be the reverse of the default order)", i, desc.Transactions[i].ID, want.ID)
 		}
 		if i > 0 && desc.Transactions[i-1].Time < desc.Transactions[i].Time {
-			t.Fatalf("desc not sorted newest-first at index %d: %d then %d", i, desc.Transactions[i-1].Time, desc.Transactions[i].Time)
+			t.Fatalf("desc not sorted newest-first at index %d: %s then %s", i, desc.Transactions[i-1].Time, desc.Transactions[i].Time)
 		}
 	}
 }
@@ -1741,7 +1846,7 @@ func TestSearchTransactionsNewestFirstOrder(t *testing.T) {
 func TestSearchTransactionsNewestFirstPaginationCoversAll(t *testing.T) {
 	session, ledgerID := newTestSession(t)
 	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
-	createNExpenses(t, session, ledgerID, sourceID, categoryID, 12, futureTime())
+	createNExpenses(t, session, ledgerID, sourceID, categoryID, 12, futureUnix())
 
 	var full tools.SearchTransactionsOutput
 	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Limit: 200, NewestFirst: true}, &full)
@@ -1785,7 +1890,7 @@ func TestSearchTransactionsNewestFirstPaginationCoversAll(t *testing.T) {
 func TestSearchTransactionsCursorRejectedWhenDirectionChanges(t *testing.T) {
 	session, ledgerID := newTestSession(t)
 	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
-	createNExpenses(t, session, ledgerID, sourceID, categoryID, 3, futureTime())
+	createNExpenses(t, session, ledgerID, sourceID, categoryID, 3, futureUnix())
 
 	var page tools.SearchTransactionsOutput
 	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Limit: 1}, &page)

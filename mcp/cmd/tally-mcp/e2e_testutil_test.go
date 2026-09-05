@@ -16,8 +16,24 @@ import (
 	"tally/internal/tools"
 )
 
-func futureTime() int64 {
-	return time.Now().Add(time.Hour).Unix()
+// testTimeLayout matches tools.localDateTimeLayout: the only format
+// transactions.time accepts (a naive local date-time, no timezone).
+const testTimeLayout = "2006-01-02 15:04:05"
+
+// testTimeAnchor is a single fixed future instant, computed once per test
+// binary run, that fixture transactions below are built from -- so that
+// offsets (futureTimeOffset) are exact and reproducible instead of drifting
+// with wall-clock time between calls.
+var testTimeAnchor = time.Now().Add(time.Hour)
+
+func futureTime() string {
+	return testTimeAnchor.Format(testTimeLayout)
+}
+
+// futureTimeOffset returns a local date-time string d away from
+// testTimeAnchor, for tests that need multiple strictly-ordered timestamps.
+func futureTimeOffset(d time.Duration) string {
+	return testTimeAnchor.Add(d).Format(testTimeLayout)
 }
 
 // cnyAmount formats minorUnits (fen) as the CNY decimal-string amount the

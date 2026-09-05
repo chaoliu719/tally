@@ -68,6 +68,19 @@ var createableTransactionTypes = map[string]bool{
 	"expense": true,
 }
 
+// localDateTimeLayout is the only format tally['s transactions.time field
+// accepts: a naive local date-time, no timezone marker. It is never parsed
+// into a time.Time for arithmetic -- only validated against this layout and
+// otherwise stored/compared/returned as a plain string (see design.md's D3).
+const localDateTimeLayout = "2006-01-02 15:04:05"
+
+func validateLocalDateTime(s string) error {
+	if _, err := time.Parse(localDateTimeLayout, s); err != nil {
+		return fmt.Errorf("invalid time %q: expected format YYYY-MM-DD HH:MM:SS", s)
+	}
+	return nil
+}
+
 // TransactionInfo is the wire representation of a transaction returned by
 // create_transaction, get_transaction, and search_transactions.
 type TransactionInfo struct {
@@ -77,7 +90,7 @@ type TransactionInfo struct {
 	CategoryID string `json:"category_id" jsonschema:"the id of the transaction's category, as a decimal string"`
 	Amount     string `json:"amount" jsonschema:"the transaction amount, as a decimal string in the currency's major unit; how many fractional digits that allows varies by currency (e.g. \"50.00\" for CNY, \"5000\" for JPY, \"5.000\" for BHD). Positive for both income and expense"`
 	Currency   string `json:"currency" jsonschema:"the transaction's currency, as an ISO 4217 code"`
-	Time       int64  `json:"time" jsonschema:"when the transaction occurred, as unix seconds"`
+	Time       string `json:"time" jsonschema:"when the transaction occurred, as a local date-time string in the form YYYY-MM-DD HH:MM:SS (24-hour, zero-padded); no timezone -- stored and returned exactly as given, never converted"`
 	Comment    string `json:"comment,omitempty" jsonschema:"an optional note about the transaction"`
 }
 
@@ -88,7 +101,7 @@ type CreateTransactionInput struct {
 	CategoryID string `json:"category_id" jsonschema:"the id of the transaction's category, as a decimal string; any existing category in the same ledger"`
 	Amount     string `json:"amount" jsonschema:"the transaction amount, as a decimal string in the currency's major unit; how many fractional digits that allows varies by currency (e.g. \"50.00\" for CNY, \"5000\" for JPY, \"5.000\" for BHD); must be positive"`
 	Currency   string `json:"currency" jsonschema:"the transaction's currency, as an ISO 4217 code, e.g. CNY, USD"`
-	Time       int64  `json:"time" jsonschema:"when the transaction occurred, as unix seconds"`
+	Time       string `json:"time" jsonschema:"when the transaction occurred, as a local date-time string in the form YYYY-MM-DD HH:MM:SS (24-hour, zero-padded); no timezone -- stored and returned exactly as given, never converted"`
 	Comment    string `json:"comment,omitempty" jsonschema:"an optional note about the transaction"`
 }
 
@@ -117,7 +130,7 @@ type validatedTransactionFields struct {
 // positive decimal number at or under that currency's standard precision.
 // currency must be validated before amount can be parsed, since amount's
 // allowed decimal precision depends on which currency it's in.
-func validateTransactionInput(ctx context.Context, deps Deps, ledgerIDStr, txType, sourceIDStr, categoryIDStr, amountStr, currencyCode string, txTime int64) (validatedTransactionFields, error) {
+func validateTransactionInput(ctx context.Context, deps Deps, ledgerIDStr, txType, sourceIDStr, categoryIDStr, amountStr, currencyCode, txTime string) (validatedTransactionFields, error) {
 	if !createableTransactionTypes[txType] {
 		return validatedTransactionFields{}, fmt.Errorf("missing or unsupported transaction type: %q", txType)
 	}
@@ -144,8 +157,11 @@ func validateTransactionInput(ctx context.Context, deps Deps, ledgerIDStr, txTyp
 		return validatedTransactionFields{}, err
 	}
 
-	if txTime <= 0 {
+	if txTime == "" {
 		return validatedTransactionFields{}, fmt.Errorf("missing required field: time")
+	}
+	if err := validateLocalDateTime(txTime); err != nil {
+		return validatedTransactionFields{}, err
 	}
 
 	if _, err := deps.Q.GetSource(ctx, store.GetSourceParams{ID: sourceID, LedgerID: ledgerID}); err != nil {
@@ -270,7 +286,7 @@ type UpdateTransactionInput struct {
 	CategoryID string `json:"category_id" jsonschema:"the id of the transaction's category, as a decimal string; any existing category in the same ledger"`
 	Amount     string `json:"amount" jsonschema:"the transaction amount, as a decimal string in the currency's major unit; how many fractional digits that allows varies by currency (e.g. \"50.00\" for CNY, \"5000\" for JPY, \"5.000\" for BHD); must be positive"`
 	Currency   string `json:"currency" jsonschema:"the transaction's currency, as an ISO 4217 code, e.g. CNY, USD"`
-	Time       int64  `json:"time" jsonschema:"when the transaction occurred, as unix seconds"`
+	Time       string `json:"time" jsonschema:"when the transaction occurred, as a local date-time string in the form YYYY-MM-DD HH:MM:SS (24-hour, zero-padded); no timezone -- stored and returned exactly as given, never converted"`
 	Comment    string `json:"comment,omitempty" jsonschema:"an optional note about the transaction"`
 }
 
@@ -346,7 +362,7 @@ type transactionDeletionRevisionFields struct {
 	CategoryID int64
 	Currency   string
 	Amount     int64
-	Time       int64
+	Time       string
 	Comment    string
 }
 
@@ -460,8 +476,8 @@ type SearchTransactionsInput struct {
 	LedgerID    string `json:"ledger_id" jsonschema:"the id of the ledger to search transactions in, as a decimal string"`
 	SourceID    string `json:"source_id,omitempty" jsonschema:"only include transactions from/to this source, as a decimal string"`
 	CategoryID  string `json:"category_id,omitempty" jsonschema:"only include transactions in this category, as a decimal string"`
-	StartTime   int64  `json:"start_time,omitempty" jsonschema:"only include transactions at or after this unix time (seconds)"`
-	EndTime     int64  `json:"end_time,omitempty" jsonschema:"only include transactions at or before this unix time (seconds)"`
+	StartTime   string `json:"start_time,omitempty" jsonschema:"only include transactions at or after this local date-time (format YYYY-MM-DD HH:MM:SS, no timezone)"`
+	EndTime     string `json:"end_time,omitempty" jsonschema:"only include transactions at or before this local date-time (format YYYY-MM-DD HH:MM:SS, no timezone)"`
 	Keyword     string `json:"keyword,omitempty" jsonschema:"only include transactions whose comment contains this substring, case-insensitively; % and _ are matched literally, not as wildcards. Blank (empty or whitespace-only) is treated as not provided"`
 	Limit       int64  `json:"limit,omitempty" jsonschema:"maximum number of transactions to return in this page; defaults to 50 when omitted, must be between 1 and 200 (requests over 200 are rejected, not truncated)"`
 	Cursor      string `json:"cursor,omitempty" jsonschema:"opaque pagination cursor from a previous response's next_cursor; omit to fetch the first page. Must be paired with the exact same ledger_id/source_id/category_id/start_time/end_time/keyword filters and the same newest_first value used to obtain it"`
@@ -507,13 +523,19 @@ func searchTransactions(ctx context.Context, deps Deps, in SearchTransactionsInp
 		params.CategoryID = id
 		filter.CategoryID = sql.NullInt64{Int64: id, Valid: true}
 	}
-	if in.StartTime > 0 {
+	if in.StartTime != "" {
+		if err := validateLocalDateTime(in.StartTime); err != nil {
+			return nil, SearchTransactionsOutput{}, err
+		}
 		params.StartTime = in.StartTime
-		filter.StartTime = sql.NullInt64{Int64: in.StartTime, Valid: true}
+		filter.StartTime = sql.NullString{String: in.StartTime, Valid: true}
 	}
-	if in.EndTime > 0 {
+	if in.EndTime != "" {
+		if err := validateLocalDateTime(in.EndTime); err != nil {
+			return nil, SearchTransactionsOutput{}, err
+		}
 		params.EndTime = in.EndTime
-		filter.EndTime = sql.NullInt64{Int64: in.EndTime, Valid: true}
+		filter.EndTime = sql.NullString{String: in.EndTime, Valid: true}
 	}
 	if keyword := strings.TrimSpace(in.Keyword); keyword != "" {
 		params.Keyword = escapeLikeKeyword(keyword)

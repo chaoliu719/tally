@@ -5,11 +5,6 @@ bookkeeping workflow inside a conversation — precedent lookup, a conversationa
 write, `comment` discipline, spending analysis, and category split/merge hygiene. See the
 [skills](skills/) for what each one covers.
 
-It also ships one [hook](hooks/): `time-context` injects the current date, weekday, and local
-timezone at session start and on every prompt, so the assistant has a reliable anchor when a
-transaction is dated "yesterday" or "last Friday" rather than today. It only appends context —
-it never intercepts or blocks a tool call.
-
 ## Prerequisites
 
 A running `tally-mcp` instance and its bearer token — see [`mcp/README.md`](../mcp/README.md)
