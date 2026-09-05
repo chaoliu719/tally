@@ -9,3 +9,6 @@
 
 # Claude Code local state (per-machine, not shared)
 .claude/settings.local.json
+
+# Claude Code project settings (leave to each machine for now)
+.claude/settings.json
