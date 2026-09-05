@@ -61,6 +61,18 @@ func registerTransactionTools(s *mcp.Server, deps Deps) {
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in DeleteTransactionInput) (*mcp.CallToolResult, DeleteTransactionOutput, error) {
 		return deleteTransaction(ctx, deps, in)
 	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "batch_delete_transactions",
+		Description: fmt.Sprintf("Delete a batch of transactions by id, in one ledger. This is a two-step preview -> confirm: "+
+			"call without confirmation_token to preview (returns each id's current transaction info, or a not_found marker, "+
+			"plus one token covering the whole batch), then call again with the returned confirmation_token to actually delete. "+
+			"Deletion is best-effort per item: an id that no longer exists or changed since the preview is reported individually "+
+			"(status not_found or revision_changed) without blocking the rest of the batch from being deleted. "+
+			"At most %d ids per call -- previewing more than that is rejected outright.", batchDeleteTransactionsMaxIDs),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in BatchDeleteTransactionsInput) (*mcp.CallToolResult, BatchDeleteTransactionsOutput, error) {
+		return batchDeleteTransactions(ctx, deps, in)
+	})
 }
 
 var createableTransactionTypes = map[string]bool{
@@ -465,6 +477,172 @@ func deleteTransaction(ctx context.Context, deps Deps, in DeleteTransactionInput
 	}
 
 	return nil, DeleteTransactionOutput{Status: "deleted", Transaction: info}, nil
+}
+
+const (
+	confirmActionBatchDeleteTransactions = "batch_delete_transactions"
+	batchDeleteTransactionsMaxIDs        = 100
+)
+
+type BatchDeleteTransactionsInput struct {
+	LedgerID          string   `json:"ledger_id" jsonschema:"the id of the ledger these transactions belong to, as a decimal string"`
+	IDs               []string `json:"ids" jsonschema:"the transactions' unique ids, as decimal strings; at most 100 per call"`
+	ConfirmationToken string   `json:"confirmation_token,omitempty" jsonschema:"omit to preview the batch and receive a token covering it, or supply the token from a prior preview to actually delete"`
+}
+
+// BatchDeleteTransactionItemResult reports the outcome for one id in a
+// batch_delete_transactions call, whether previewed or confirmed.
+type BatchDeleteTransactionItemResult struct {
+	ID          string           `json:"id" jsonschema:"the transaction's unique id, as a decimal string"`
+	Status      string           `json:"status" jsonschema:"pending_confirmation, deleted, not_found, or revision_changed"`
+	Transaction *TransactionInfo `json:"transaction,omitempty" jsonschema:"the transaction's info (or, for a completed delete, its last known info); absent when status is not_found"`
+}
+
+type BatchDeleteTransactionsOutput struct {
+	Results           []BatchDeleteTransactionItemResult `json:"results" jsonschema:"one result per requested id, in the same order as the request"`
+	ConfirmationToken string                             `json:"confirmation_token,omitempty" jsonschema:"present on preview; pass this back as confirmation_token to actually delete the batch"`
+	ExpiresAt         int64                              `json:"expires_at,omitempty" jsonschema:"unix seconds when confirmation_token expires; present on preview"`
+}
+
+func batchDeleteTransactions(ctx context.Context, deps Deps, in BatchDeleteTransactionsInput) (*mcp.CallToolResult, BatchDeleteTransactionsOutput, error) {
+	if in.LedgerID == "" {
+		return nil, BatchDeleteTransactionsOutput{}, fmt.Errorf("missing required field: ledger_id")
+	}
+	ledgerID, err := parseID(in.LedgerID)
+	if err != nil {
+		return nil, BatchDeleteTransactionsOutput{}, err
+	}
+	if len(in.IDs) == 0 {
+		return nil, BatchDeleteTransactionsOutput{}, fmt.Errorf("missing required field: ids")
+	}
+	if len(in.IDs) > batchDeleteTransactionsMaxIDs {
+		return nil, BatchDeleteTransactionsOutput{}, fmt.Errorf("too many ids: got %d, max is %d per call", len(in.IDs), batchDeleteTransactionsMaxIDs)
+	}
+
+	ids := make([]int64, len(in.IDs))
+	for i, idStr := range in.IDs {
+		id, err := parseID(idStr)
+		if err != nil {
+			return nil, BatchDeleteTransactionsOutput{}, err
+		}
+		ids[i] = id
+	}
+
+	if in.ConfirmationToken == "" {
+		return previewBatchDeleteTransactions(ctx, deps, ledgerID, in.IDs, ids)
+	}
+	return confirmBatchDeleteTransactions(ctx, deps, ledgerID, in.IDs, ids, in.ConfirmationToken)
+}
+
+func previewBatchDeleteTransactions(ctx context.Context, deps Deps, ledgerID int64, idStrs []string, ids []int64) (*mcp.CallToolResult, BatchDeleteTransactionsOutput, error) {
+	results := make([]BatchDeleteTransactionItemResult, len(ids))
+	// items covers every requested id, including not-found ones (with an
+	// empty revision) -- the token's id set must match the full batch the
+	// caller previewed, so a later confirm resending the same ids list
+	// verifies cleanly. A not-found id's empty revision is never compared:
+	// confirmDeleteOneTransaction re-queries first and reports not_found
+	// before it would look at revision.
+	items := make([]confirm.Item, len(ids))
+
+	for i, id := range ids {
+		idStr := idStrs[i]
+		transaction, err := deps.Q.GetTransaction(ctx, store.GetTransactionParams{ID: id, LedgerID: ledgerID})
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				results[i] = BatchDeleteTransactionItemResult{ID: idStr, Status: "not_found"}
+				items[i] = confirm.Item{ID: idStr}
+				continue
+			}
+			return nil, BatchDeleteTransactionsOutput{}, err
+		}
+
+		info, err := toTransactionInfo(transaction)
+		if err != nil {
+			return nil, BatchDeleteTransactionsOutput{}, err
+		}
+		results[i] = BatchDeleteTransactionItemResult{ID: idStr, Status: "pending_confirmation", Transaction: &info}
+		items[i] = confirm.Item{ID: idStr, Revision: transactionDeletionRevision(transaction)}
+	}
+
+	token, expiresAt := confirm.IssueBatch(deps.ConfirmSecret, confirmActionBatchDeleteTransactions, items)
+	return nil, BatchDeleteTransactionsOutput{
+		Results:           results,
+		ConfirmationToken: token,
+		ExpiresAt:         expiresAt,
+	}, nil
+}
+
+func confirmBatchDeleteTransactions(ctx context.Context, deps Deps, ledgerID int64, idStrs []string, ids []int64, token string) (*mcp.CallToolResult, BatchDeleteTransactionsOutput, error) {
+	wantItems := make([]confirm.Item, len(idStrs))
+	for i, idStr := range idStrs {
+		wantItems[i] = confirm.Item{ID: idStr}
+	}
+	if err := confirm.VerifyBatch(deps.ConfirmSecret, token, confirmActionBatchDeleteTransactions, wantItems, time.Now()); err != nil {
+		return nil, BatchDeleteTransactionsOutput{}, err
+	}
+
+	tokenItems, err := confirm.BatchItems(token)
+	if err != nil {
+		return nil, BatchDeleteTransactionsOutput{}, err
+	}
+	expectedRevision := make(map[string]string, len(tokenItems))
+	for _, item := range tokenItems {
+		expectedRevision[item.ID] = item.Revision
+	}
+
+	results := make([]BatchDeleteTransactionItemResult, len(ids))
+	for i, id := range ids {
+		idStr := idStrs[i]
+		result, err := confirmDeleteOneTransaction(ctx, deps, ledgerID, id, idStr, expectedRevision[idStr])
+		if err != nil {
+			return nil, BatchDeleteTransactionsOutput{}, err
+		}
+		results[i] = result
+	}
+
+	return nil, BatchDeleteTransactionsOutput{Results: results}, nil
+}
+
+// confirmDeleteOneTransaction re-queries and deletes a single transaction as
+// part of a batch confirm, in its own transaction, mirroring
+// deleteTransaction's own begin/check/delete/commit sequence. It reports
+// not_found or revision_changed instead of erroring, so one item's failure
+// never blocks the rest of the batch (see design.md's best-effort decision).
+func confirmDeleteOneTransaction(ctx context.Context, deps Deps, ledgerID, id int64, idStr, wantRevision string) (BatchDeleteTransactionItemResult, error) {
+	tx, err := deps.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return BatchDeleteTransactionItemResult{}, err
+	}
+	defer tx.Rollback()
+
+	q := deps.Q.WithTx(tx)
+
+	transaction, err := q.GetTransaction(ctx, store.GetTransactionParams{ID: id, LedgerID: ledgerID})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return BatchDeleteTransactionItemResult{ID: idStr, Status: "not_found"}, nil
+		}
+		return BatchDeleteTransactionItemResult{}, err
+	}
+
+	info, err := toTransactionInfo(transaction)
+	if err != nil {
+		return BatchDeleteTransactionItemResult{}, err
+	}
+
+	if transactionDeletionRevision(transaction) != wantRevision {
+		return BatchDeleteTransactionItemResult{ID: idStr, Status: "revision_changed", Transaction: &info}, nil
+	}
+
+	if err := q.DeleteTransaction(ctx, id); err != nil {
+		return BatchDeleteTransactionItemResult{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return BatchDeleteTransactionItemResult{}, err
+	}
+
+	return BatchDeleteTransactionItemResult{ID: idStr, Status: "deleted", Transaction: &info}, nil
 }
 
 const (
