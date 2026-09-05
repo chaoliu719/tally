@@ -37,4 +37,4 @@
 
 - [x] 5.1 更新 `e2e_transaction_timeline_widget_test.go`(断言结果含 inline categories/sources)、`widgets_test.go`(新增 `ingestInlineLookups` / `drainAll` / `descendantIdsOf` / `matchesFilters` / 过滤空态文案断言);`internal/tools/timeline_test.go` 覆盖结果查找表与空账本。验证:`go test ./...` 全绿。
 - [x] 5.2 `openspec validate timeline-widget-local-filtering --strict` 通过。
-- [ ] 5.3 归档时用 openspec-archive 把 delta 同步进 `openspec/specs/transaction-timeline-widget/spec.md`。验证:归档后主 spec 三个 Requirement 反映新行为,`openspec list --specs` 无警告。
+- [x] 5.3 归档时用 openspec-archive 把 delta 同步进 `openspec/specs/transaction-timeline-widget/spec.md`。验证:归档后主 spec 三个 Requirement 反映新行为,`openspec list --specs` 无警告。
