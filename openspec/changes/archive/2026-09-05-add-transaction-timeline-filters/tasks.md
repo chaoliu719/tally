@@ -32,4 +32,4 @@
 - [x] 6.1 `cd mcp && go build ./...` 通过(确认 `go:embed` 的 HTML 改动不破坏构建)
 - [x] 6.2 对 `timeline.html` 内联的 `<script type="module">` 做一次 `node --check` 语法校验
 - [x] 6.3 `cd mcp && go test ./...` 通过，覆盖第 3 组新增的 `include_descendants` 单测
-- [ ] 6.4 在 claude.ai cowork 环境中实际打开一次 widget，走一遍时间范围/分类(含选父类看子孙交易是否出现)/来源过滤、组合过滤、重置的交互，确认与 `specs/transaction-timeline-widget/spec.md` 中的 Scenario 一致
+- [x] 6.4 在 claude.ai cowork 环境中实际打开一次 widget，走一遍时间范围/分类(含选父类看子孙交易是否出现)/来源过滤、组合过滤、重置的交互，确认与 `specs/transaction-timeline-widget/spec.md` 中的 Scenario 一致
