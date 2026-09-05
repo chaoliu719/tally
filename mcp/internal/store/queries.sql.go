@@ -517,7 +517,10 @@ SELECT id, ledger_id, type, source_id, category_id, currency, amount, time, comm
 FROM transactions
 WHERE ledger_id = ?1
   AND (?2   IS NULL OR source_id = ?2)
-  AND (?3 IS NULL OR category_id = ?3)
+  AND (
+    ?3 IS NULL
+    OR category_id IN (SELECT value FROM json_each(?3))
+  )
   AND (?4  IS NULL OR time >= ?4)
   AND (?5    IS NULL OR time <= ?5)
   AND (?6     IS NULL OR (LOWER(comment) LIKE '%' || LOWER(?6) || '%' ESCAPE '\'))
@@ -531,22 +534,22 @@ LIMIT ?9
 `
 
 type SearchTransactionsParams struct {
-	LedgerID   int64
-	SourceID   interface{}
-	CategoryID interface{}
-	StartTime  interface{}
-	EndTime    interface{}
-	Keyword    interface{}
-	AfterTime  interface{}
-	AfterID    sql.NullInt64
-	Limit      int64
+	LedgerID        int64
+	SourceID        interface{}
+	CategoryIdsJson interface{}
+	StartTime       interface{}
+	EndTime         interface{}
+	Keyword         interface{}
+	AfterTime       interface{}
+	AfterID         sql.NullInt64
+	Limit           int64
 }
 
 func (q *Queries) SearchTransactions(ctx context.Context, arg SearchTransactionsParams) ([]Transaction, error) {
 	rows, err := q.db.QueryContext(ctx, searchTransactions,
 		arg.LedgerID,
 		arg.SourceID,
-		arg.CategoryID,
+		arg.CategoryIdsJson,
 		arg.StartTime,
 		arg.EndTime,
 		arg.Keyword,
@@ -592,7 +595,10 @@ SELECT id, ledger_id, type, source_id, category_id, currency, amount, time, comm
 FROM transactions
 WHERE ledger_id = ?1
   AND (?2   IS NULL OR source_id = ?2)
-  AND (?3 IS NULL OR category_id = ?3)
+  AND (
+    ?3 IS NULL
+    OR category_id IN (SELECT value FROM json_each(?3))
+  )
   AND (?4  IS NULL OR time >= ?4)
   AND (?5    IS NULL OR time <= ?5)
   AND (?6     IS NULL OR (LOWER(comment) LIKE '%' || LOWER(?6) || '%' ESCAPE '\'))
@@ -606,15 +612,15 @@ LIMIT ?9
 `
 
 type SearchTransactionsDescParams struct {
-	LedgerID   int64
-	SourceID   interface{}
-	CategoryID interface{}
-	StartTime  interface{}
-	EndTime    interface{}
-	Keyword    interface{}
-	AfterTime  interface{}
-	AfterID    sql.NullInt64
-	Limit      int64
+	LedgerID        int64
+	SourceID        interface{}
+	CategoryIdsJson interface{}
+	StartTime       interface{}
+	EndTime         interface{}
+	Keyword         interface{}
+	AfterTime       interface{}
+	AfterID         sql.NullInt64
+	Limit           int64
 }
 
 // Same filters as SearchTransactions, but ordered newest-first and with the
@@ -625,7 +631,7 @@ func (q *Queries) SearchTransactionsDesc(ctx context.Context, arg SearchTransact
 	rows, err := q.db.QueryContext(ctx, searchTransactionsDesc,
 		arg.LedgerID,
 		arg.SourceID,
-		arg.CategoryID,
+		arg.CategoryIdsJson,
 		arg.StartTime,
 		arg.EndTime,
 		arg.Keyword,

@@ -518,6 +518,91 @@ func TestSearchTransactionsTimeRange(t *testing.T) {
 	}
 }
 
+func TestSearchTransactionsCategoryIDExactMatchByDefault(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+	sourceID, _ := setupSourceAndCategory(t, session, ledgerID)
+
+	var parent tools.ManageCategoryOutput
+	callTool(t, session, "manage_category", tools.ManageCategoryInput{
+		LedgerID: ledgerID, Operation: "create", Name: "Food",
+	}, &parent)
+	var child tools.ManageCategoryOutput
+	callTool(t, session, "manage_category", tools.ManageCategoryInput{
+		LedgerID: ledgerID, Operation: "create", Name: "Restaurants", ParentID: parent.Category.ID,
+	}, &child)
+
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: parent.Category.ID, Amount: cnyAmount(100), Currency: "CNY", Time: futureTime(),
+	}, &tools.CreateTransactionOutput{})
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: child.Category.ID, Amount: cnyAmount(200), Currency: "CNY", Time: futureTime(),
+	}, &tools.CreateTransactionOutput{})
+
+	var out tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{
+		LedgerID: ledgerID, CategoryID: parent.Category.ID,
+	}, &out)
+
+	if len(out.Transactions) != 1 || out.Transactions[0].Amount != cnyAmount(100) {
+		t.Fatalf("expected only the parent-category transaction (%s), got %d transactions: %+v", cnyAmount(100), len(out.Transactions), out.Transactions)
+	}
+}
+
+func TestSearchTransactionsCategoryIDIncludeDescendants(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+	sourceID, _ := setupSourceAndCategory(t, session, ledgerID)
+
+	var parent tools.ManageCategoryOutput
+	callTool(t, session, "manage_category", tools.ManageCategoryInput{
+		LedgerID: ledgerID, Operation: "create", Name: "Food",
+	}, &parent)
+	var child tools.ManageCategoryOutput
+	callTool(t, session, "manage_category", tools.ManageCategoryInput{
+		LedgerID: ledgerID, Operation: "create", Name: "Restaurants", ParentID: parent.Category.ID,
+	}, &child)
+	var grandchild tools.ManageCategoryOutput
+	callTool(t, session, "manage_category", tools.ManageCategoryInput{
+		LedgerID: ledgerID, Operation: "create", Name: "Fast Food", ParentID: child.Category.ID,
+	}, &grandchild)
+	var unrelated tools.ManageCategoryOutput
+	callTool(t, session, "manage_category", tools.ManageCategoryInput{
+		LedgerID: ledgerID, Operation: "create", Name: "Transport",
+	}, &unrelated)
+
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: parent.Category.ID, Amount: cnyAmount(100), Currency: "CNY", Time: futureTime(),
+	}, &tools.CreateTransactionOutput{})
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: child.Category.ID, Amount: cnyAmount(200), Currency: "CNY", Time: futureTime(),
+	}, &tools.CreateTransactionOutput{})
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: grandchild.Category.ID, Amount: cnyAmount(300), Currency: "CNY", Time: futureTime(),
+	}, &tools.CreateTransactionOutput{})
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID,
+		Type:     "expense", SourceID: sourceID, CategoryID: unrelated.Category.ID, Amount: cnyAmount(400), Currency: "CNY", Time: futureTime(),
+	}, &tools.CreateTransactionOutput{})
+
+	var out tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{
+		LedgerID: ledgerID, CategoryID: parent.Category.ID, IncludeDescendants: true,
+	}, &out)
+
+	if len(out.Transactions) != 3 {
+		t.Fatalf("expected 3 transactions (parent + child + grandchild), got %d: %+v", len(out.Transactions), out.Transactions)
+	}
+	for _, txn := range out.Transactions {
+		if txn.CategoryID == unrelated.Category.ID {
+			t.Fatalf("unrelated category's transaction leaked into include_descendants result: %+v", txn)
+		}
+	}
+}
+
 func TestUpdateTransactionHappyPath(t *testing.T) {
 	session, ledgerID, q := newTestSessionWithStore(t)
 	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)

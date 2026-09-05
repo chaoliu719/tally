@@ -534,7 +534,10 @@ async function fetchNextChunk() {
   try {
     const args = { ledger_id: ledgerId, newest_first: true, limit: 100, cursor };
     if (filters.source_id) args.source_id = filters.source_id;
-    if (filters.category_id) args.category_id = filters.category_id;
+    if (filters.category_id) {
+      args.category_id = filters.category_id;
+      args.include_descendants = true;
+    }
     if (filters.start_time) args.start_time = filters.start_time;
     if (filters.end_time) args.end_time = filters.end_time;
     const res = await app.callServerTool({ name: "search_transactions", arguments: args });

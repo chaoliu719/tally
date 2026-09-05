@@ -13,21 +13,22 @@ import (
 // embedded in a search_transactions cursor (see design.md's "cursor 编码:
 // base64url(JSON)"). It captures exactly the parameters that affect which
 // rows are eligible for keyset pagination and in what order -- ledger_id/
-// source_id/category_id/start_time/end_time/keyword plus the sort direction
-// (newest_first) -- so a cursor issued under one set of filters (or one sort
-// direction) is rejected if replayed against a different set (see the spec's
+// source_id/category_id/include_descendants/start_time/end_time/keyword plus
+// the sort direction (newest_first) -- so a cursor issued under one set of
+// filters (or one sort direction) is rejected if replayed against a different set (see the spec's
 // "cursor 无效或已不匹配当前筛选条件" scenario). Keyword stores the
 // trimmed, canonical keyword value; empty means "not provided", matching how
 // searchTransactions treats a blank keyword (see add-transaction-keyword-
 // search's design.md).
 type searchTransactionsFilterFields struct {
-	LedgerID    int64
-	SourceID    sql.NullInt64
-	CategoryID  sql.NullInt64
-	StartTime   sql.NullString
-	EndTime     sql.NullString
-	Keyword     string
-	NewestFirst bool
+	LedgerID           int64
+	SourceID           sql.NullInt64
+	CategoryID         sql.NullInt64
+	IncludeDescendants bool
+	StartTime          sql.NullString
+	EndTime            sql.NullString
+	Keyword            string
+	NewestFirst        bool
 }
 
 func searchTransactionsFilterFingerprint(f searchTransactionsFilterFields) string {

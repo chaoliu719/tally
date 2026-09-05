@@ -118,3 +118,26 @@ func TestSearchTransactionsCursorRejectsMismatchedKeyword(t *testing.T) {
 		t.Fatal("expected an error decoding a no-keyword-issued cursor with a keyword in the current request")
 	}
 }
+
+// These cover add-transaction-timeline-filters's design.md D4: the cursor's
+// filter fingerprint must be sensitive to IncludeDescendants, since it
+// changes which rows a given category_id matches.
+
+func TestSearchTransactionsFilterFingerprintDiffersByIncludeDescendants(t *testing.T) {
+	exact := searchTransactionsFilterFields{LedgerID: 1, CategoryID: sql.NullInt64{Int64: 3, Valid: true}}
+	withDescendants := searchTransactionsFilterFields{LedgerID: 1, CategoryID: sql.NullInt64{Int64: 3, Valid: true}, IncludeDescendants: true}
+
+	if searchTransactionsFilterFingerprint(exact) == searchTransactionsFilterFingerprint(withDescendants) {
+		t.Fatal("expected toggling include_descendants to change the fingerprint")
+	}
+}
+
+func TestSearchTransactionsCursorRejectsMismatchedIncludeDescendants(t *testing.T) {
+	issuedWithDescendants := searchTransactionsFilterFields{LedgerID: 1, CategoryID: sql.NullInt64{Int64: 3, Valid: true}, IncludeDescendants: true}
+	cursor := encodeSearchTransactionsCursor("2026-01-01 00:00:00", 1, issuedWithDescendants)
+
+	exactOnly := searchTransactionsFilterFields{LedgerID: 1, CategoryID: sql.NullInt64{Int64: 3, Valid: true}}
+	if _, _, err := decodeSearchTransactionsCursor(cursor, exactOnly); err == nil {
+		t.Fatal("expected an error decoding an include_descendants-issued cursor as an exact-match request")
+	}
+}

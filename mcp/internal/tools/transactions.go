@@ -651,15 +651,16 @@ const (
 )
 
 type SearchTransactionsInput struct {
-	LedgerID    string `json:"ledger_id" jsonschema:"the id of the ledger to search transactions in, as a decimal string"`
-	SourceID    string `json:"source_id,omitempty" jsonschema:"only include transactions from/to this source, as a decimal string"`
-	CategoryID  string `json:"category_id,omitempty" jsonschema:"only include transactions in this category, as a decimal string"`
-	StartTime   string `json:"start_time,omitempty" jsonschema:"only include transactions at or after this local date-time (format YYYY-MM-DD HH:MM:SS, no timezone)"`
-	EndTime     string `json:"end_time,omitempty" jsonschema:"only include transactions at or before this local date-time (format YYYY-MM-DD HH:MM:SS, no timezone)"`
-	Keyword     string `json:"keyword,omitempty" jsonschema:"only include transactions whose comment contains this substring, case-insensitively; % and _ are matched literally, not as wildcards. Blank (empty or whitespace-only) is treated as not provided"`
-	Limit       int64  `json:"limit,omitempty" jsonschema:"maximum number of transactions to return in this page; defaults to 50 when omitted, must be between 1 and 200 (requests over 200 are rejected, not truncated)"`
-	Cursor      string `json:"cursor,omitempty" jsonschema:"opaque pagination cursor from a previous response's next_cursor; omit to fetch the first page. Must be paired with the exact same ledger_id/source_id/category_id/start_time/end_time/keyword filters and the same newest_first value used to obtain it"`
-	NewestFirst bool   `json:"newest_first,omitempty" jsonschema:"when false (default), results are ordered oldest-first and next_cursor pages toward later transactions; when true, results are ordered newest-first and next_cursor pages toward earlier transactions. Must match the value the cursor was issued under"`
+	LedgerID           string `json:"ledger_id" jsonschema:"the id of the ledger to search transactions in, as a decimal string"`
+	SourceID           string `json:"source_id,omitempty" jsonschema:"only include transactions from/to this source, as a decimal string"`
+	CategoryID         string `json:"category_id,omitempty" jsonschema:"only include transactions in this category, as a decimal string"`
+	IncludeDescendants bool   `json:"include_descendants,omitempty" jsonschema:"when true, also include transactions in any descendant of category_id (recursively); has no effect if category_id is not set. Defaults to false (exact match only)"`
+	StartTime          string `json:"start_time,omitempty" jsonschema:"only include transactions at or after this local date-time (format YYYY-MM-DD HH:MM:SS, no timezone)"`
+	EndTime            string `json:"end_time,omitempty" jsonschema:"only include transactions at or before this local date-time (format YYYY-MM-DD HH:MM:SS, no timezone)"`
+	Keyword            string `json:"keyword,omitempty" jsonschema:"only include transactions whose comment contains this substring, case-insensitively; % and _ are matched literally, not as wildcards. Blank (empty or whitespace-only) is treated as not provided"`
+	Limit              int64  `json:"limit,omitempty" jsonschema:"maximum number of transactions to return in this page; defaults to 50 when omitted, must be between 1 and 200 (requests over 200 are rejected, not truncated)"`
+	Cursor             string `json:"cursor,omitempty" jsonschema:"opaque pagination cursor from a previous response's next_cursor; omit to fetch the first page. Must be paired with the exact same ledger_id/source_id/category_id/start_time/end_time/keyword filters and the same newest_first value used to obtain it"`
+	NewestFirst        bool   `json:"newest_first,omitempty" jsonschema:"when false (default), results are ordered oldest-first and next_cursor pages toward later transactions; when true, results are ordered newest-first and next_cursor pages toward earlier transactions. Must match the value the cursor was issued under"`
 }
 
 type SearchTransactionsOutput struct {
@@ -698,8 +699,21 @@ func searchTransactions(ctx context.Context, deps Deps, in SearchTransactionsInp
 		if err != nil {
 			return nil, SearchTransactionsOutput{}, err
 		}
-		params.CategoryID = id
+		categoryIDs := []int64{id}
+		if in.IncludeDescendants {
+			descendants, err := deps.Q.ListCategoryDescendantIDs(ctx, id)
+			if err != nil {
+				return nil, SearchTransactionsOutput{}, err
+			}
+			categoryIDs = append(categoryIDs, descendants...)
+		}
+		categoryIDsJSON, err := json.Marshal(categoryIDs)
+		if err != nil {
+			return nil, SearchTransactionsOutput{}, err
+		}
+		params.CategoryIdsJson = string(categoryIDsJSON)
 		filter.CategoryID = sql.NullInt64{Int64: id, Valid: true}
+		filter.IncludeDescendants = in.IncludeDescendants
 	}
 	if in.StartTime != "" {
 		if err := validateLocalDateTime(in.StartTime); err != nil {
@@ -746,15 +760,15 @@ func searchTransactions(ctx context.Context, deps Deps, in SearchTransactionsInp
 	var transactions []store.Transaction
 	if in.NewestFirst {
 		transactions, err = deps.Q.SearchTransactionsDesc(ctx, store.SearchTransactionsDescParams{
-			LedgerID:   params.LedgerID,
-			SourceID:   params.SourceID,
-			CategoryID: params.CategoryID,
-			StartTime:  params.StartTime,
-			EndTime:    params.EndTime,
-			Keyword:    params.Keyword,
-			AfterTime:  params.AfterTime,
-			AfterID:    params.AfterID,
-			Limit:      params.Limit,
+			LedgerID:        params.LedgerID,
+			SourceID:        params.SourceID,
+			CategoryIdsJson: params.CategoryIdsJson,
+			StartTime:       params.StartTime,
+			EndTime:         params.EndTime,
+			Keyword:         params.Keyword,
+			AfterTime:       params.AfterTime,
+			AfterID:         params.AfterID,
+			Limit:           params.Limit,
 		})
 	} else {
 		transactions, err = deps.Q.SearchTransactions(ctx, params)
