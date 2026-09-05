@@ -140,13 +140,68 @@
     min-width: 6.5em;
     text-align: center;
   }
+  #filterToggle.active { color: var(--fg); border-color: var(--fg); }
+  .filterbar {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 8px 12px;
+  }
+  .filterbar .field {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .filterbar input[type="date"],
+  .filterbar select {
+    font: inherit;
+    font-size: 12px;
+    color: var(--fg);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 4px 6px;
+    max-width: 10em;
+  }
+  .filterbar .actions {
+    display: flex;
+    gap: 8px;
+    margin-left: auto;
+  }
+  .filterbar button {
+    font: inherit;
+    font-size: 12px;
+    color: var(--fg);
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 5px 12px;
+    cursor: pointer;
+  }
+  .filterbar button:disabled { color: var(--muted); opacity: 0.5; cursor: default; }
+  .filterbar button.primary { background: var(--fg); color: var(--bg); border-color: var(--fg); }
 </style>
 
 <header>
   <h1>交易时间线</h1>
   <span class="meta" id="meta"></span>
+  <button id="filterToggle" type="button">筛选</button>
   <button id="expand" hidden>全屏</button>
 </header>
+<div class="filterbar" id="filterBar" hidden>
+  <label class="field">从<input type="date" id="filterStart"></label>
+  <label class="field">到<input type="date" id="filterEnd"></label>
+  <label class="field">分类<select id="filterCat"><option value="">不限分类</option></select></label>
+  <label class="field">来源<select id="filterSrc"><option value="">不限来源</option></select></label>
+  <div class="actions">
+    <button type="button" id="filterReset">重置</button>
+    <button type="button" id="filterApply" class="primary">应用</button>
+  </div>
+</div>
 <main id="main"><div class="empty" id="boot">加载中…</div></main>
 <footer class="pager" id="pager" hidden>
   <button id="firstBtn" type="button">« 页首</button>
@@ -171,6 +226,14 @@ function boot(msg) { if (bootEl) bootEl.textContent = msg; }
 function fatal(msg) { mainEl.innerHTML = '<div class="empty">' + msg + "</div>"; }
 const metaEl = document.getElementById("meta");
 const expandBtn = document.getElementById("expand");
+const filterToggle = document.getElementById("filterToggle");
+const filterBar = document.getElementById("filterBar");
+const filterStart = document.getElementById("filterStart");
+const filterEnd = document.getElementById("filterEnd");
+const filterCat = document.getElementById("filterCat");
+const filterSrc = document.getElementById("filterSrc");
+const filterApply = document.getElementById("filterApply");
+const filterReset = document.getElementById("filterReset");
 const pagerEl = document.getElementById("pager");
 const pageInfoEl = document.getElementById("pageinfo");
 const firstBtn = document.getElementById("firstBtn");
@@ -207,6 +270,11 @@ let navBusy = false;          // serializes multi-chunk navigation (next / last)
 let total = null;             // total count reported by the tool result
 let pageIdx = 0;              // 0-based current page
 const allTxns = [];           // every transaction fetched so far, newest -> oldest
+
+// active filters, committed only when the user hits "应用" — mid-edit input
+// values never leak into fetchNextChunk until then.
+let filters = { source_id: "", category_id: "", start_time: "", end_time: "" };
+let filtersActive = false;
 
 // id -> name lookups, loaded once from the ledger's own read-only tools so
 // rows can show category / source names instead of bare ids.
@@ -277,6 +345,45 @@ async function loadLookups() {
     pull("list_categories", "categories", (c) => catById.set(String(c.id), { name: c.name, parentId: c.parent_id })),
     pull("list_sources", "sources", (s) => srcById.set(String(s.id), s.name)),
   ]);
+}
+
+// Fill the filter dropdowns from the lookups above: top-level categories
+// first, each followed by its children indented (category_id filters match
+// one exact id, not a parent plus its children, so both levels stay pickable).
+function populateFilterOptions() {
+  const cats = [...catById.entries()];
+  const children = new Map();
+  for (const [id, c] of cats) {
+    if (c.parentId && c.parentId !== "0") {
+      if (!children.has(c.parentId)) children.set(c.parentId, []);
+      children.get(c.parentId).push([id, c]);
+    }
+  }
+  const topLevel = cats.filter(([, c]) => !c.parentId || c.parentId === "0");
+  topLevel.sort((a, b) => a[1].name.localeCompare(b[1].name));
+  filterCat.innerHTML = '<option value="">不限分类</option>';
+  for (const [id, c] of topLevel) {
+    const opt = document.createElement("option");
+    opt.value = id;
+    opt.textContent = c.name;
+    filterCat.append(opt);
+    const kids = (children.get(id) || []).sort((a, b) => a[1].name.localeCompare(b[1].name));
+    for (const [kid, kc] of kids) {
+      const kopt = document.createElement("option");
+      kopt.value = kid;
+      kopt.textContent = "　" + kc.name;
+      filterCat.append(kopt);
+    }
+  }
+
+  const srcs = [...srcById.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  filterSrc.innerHTML = '<option value="">不限来源</option>';
+  for (const [id, name] of srcs) {
+    const opt = document.createElement("option");
+    opt.value = id;
+    opt.textContent = name;
+    filterSrc.append(opt);
+  }
 }
 
 // Net income/expense per day over everything fetched so far, so a day label
@@ -350,7 +457,9 @@ function makeRow(t) {
 // How many pages we know about: the tool's total count wins; otherwise derive
 // from what is fetched, plus one unknown page while more may still load.
 function pageCount() {
-  const byTotal = total != null ? Math.ceil(total / PAGE_SIZE) : 0;
+  // total is a ledger-wide stat from open_transaction_timeline; once filters
+  // are active it no longer describes the current result set.
+  const byTotal = !filtersActive && total != null ? Math.ceil(total / PAGE_SIZE) : 0;
   const byData = Math.ceil(allTxns.length / PAGE_SIZE) + (doneFetching ? 0 : 1);
   return Math.max(byTotal, byData, 1);
 }
@@ -372,7 +481,7 @@ function renderPage() {
   if (allTxns.length === 0) {
     const empty = document.createElement("div");
     empty.className = "empty";
-    empty.textContent = "这个账本还没有交易";
+    empty.textContent = filtersActive ? "没有符合条件的交易" : "这个账本还没有交易";
     mainEl.append(empty);
     pagerEl.hidden = true;
     return;
@@ -423,10 +532,12 @@ async function fetchNextChunk() {
   fetching = true;
   renderControls();
   try {
-    const res = await app.callServerTool({
-      name: "search_transactions",
-      arguments: { ledger_id: ledgerId, newest_first: true, limit: 100, cursor },
-    });
+    const args = { ledger_id: ledgerId, newest_first: true, limit: 100, cursor };
+    if (filters.source_id) args.source_id = filters.source_id;
+    if (filters.category_id) args.category_id = filters.category_id;
+    if (filters.start_time) args.start_time = filters.start_time;
+    if (filters.end_time) args.end_time = filters.end_time;
+    const res = await app.callServerTool({ name: "search_transactions", arguments: args });
     const page = parseSearchResult(res);
     allTxns.push(...(page.transactions || []));
     cursor = page.next_cursor || "";
@@ -464,6 +575,57 @@ async function withNav(fn) {
 function lastPageIdx() {
   return Math.max(0, Math.ceil(allTxns.length / PAGE_SIZE) - 1);
 }
+
+function updateMeta() {
+  if (!metaEl) return;
+  if (filtersActive) metaEl.textContent = "已筛选";
+  else if (total !== null) metaEl.textContent = `共 ${total} 笔`;
+  else metaEl.textContent = "";
+}
+
+// Re-fetch from scratch under the currently committed `filters`. Cursor
+// pages must be replayed with the exact same filter args they started with
+// (see fetchNextChunk), so any filter change forces a clean restart.
+async function reloadWithFilters() {
+  if (navBusy) return;
+  navBusy = true;
+  filterApply.disabled = filterReset.disabled = true;
+  allTxns.length = 0;
+  cursor = "";
+  doneFetching = false;
+  pageIdx = 0;
+  filterToggle.classList.toggle("active", filtersActive);
+  filterBar.hidden = true;
+  updateMeta();
+  try {
+    await ensureFetched(PAGE_SIZE);
+  } finally {
+    navBusy = false;
+    filterApply.disabled = filterReset.disabled = false;
+    renderPage();
+  }
+}
+
+filterToggle.addEventListener("click", () => { filterBar.hidden = !filterBar.hidden; });
+filterApply.addEventListener("click", () => {
+  filters = {
+    source_id: filterSrc.value,
+    category_id: filterCat.value,
+    start_time: filterStart.value ? `${filterStart.value} 00:00:00` : "",
+    end_time: filterEnd.value ? `${filterEnd.value} 23:59:59` : "",
+  };
+  filtersActive = !!(filters.source_id || filters.category_id || filters.start_time || filters.end_time);
+  reloadWithFilters();
+});
+filterReset.addEventListener("click", () => {
+  filterStart.value = "";
+  filterEnd.value = "";
+  filterCat.value = "";
+  filterSrc.value = "";
+  filters = { source_id: "", category_id: "", start_time: "", end_time: "" };
+  filtersActive = false;
+  reloadWithFilters();
+});
 
 firstBtn.addEventListener("click", () => { if (!navBusy) { pageIdx = 0; renderPage(); } });
 prevBtn.addEventListener("click", () => { if (!navBusy && pageIdx > 0) { pageIdx -= 1; renderPage(); } });
@@ -509,7 +671,7 @@ app.ontoolresult = (result) => {
   const payload = extractFirstPagePayload(result);
   const txns = Array.isArray(payload.transactions) ? payload.transactions : [];
   total = typeof payload.total === "number" ? payload.total : null;
-  if (total !== null && metaEl) metaEl.textContent = `共 ${total} 笔`;
+  updateMeta();
 
   allTxns.length = 0;
   allTxns.push(...txns);
@@ -523,7 +685,10 @@ app.ontoolresult = (result) => {
   // Enrich rows with category / source names in the background; repaint the
   // current page once they arrive. A slow or missing lookup never blocks.
   loadLookups()
-    .then(() => { if (catById.size || srcById.size) renderPage(); })
+    .then(() => {
+      populateFilterOptions();
+      if (catById.size || srcById.size) renderPage();
+    })
     .catch(() => { /* names stay as ids */ });
 };
 
