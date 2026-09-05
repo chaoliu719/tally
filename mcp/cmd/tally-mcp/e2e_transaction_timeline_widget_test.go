@@ -48,6 +48,14 @@ func TestE2ETransactionTimelineWidgetResource(t *testing.T) {
 	if out.Total != 1 || len(out.Transactions) != 1 {
 		t.Errorf("structured output: total=%d rows=%d, want 1/1", out.Total, len(out.Transactions))
 	}
+	// The result carries the ledger's categories and sources inline so the
+	// widget needs no follow-up lookup call (change timeline-widget-local-filtering).
+	if len(out.Categories) != 1 || out.Categories[0].Name != "Dining" {
+		t.Errorf("inline categories = %+v, want one \"Dining\"", out.Categories)
+	}
+	if len(out.Sources) != 1 || out.Sources[0].Name != "Checking" {
+		t.Errorf("inline sources = %+v, want one \"Checking\"", out.Sources)
+	}
 
 	wantURI := widgets.URI("timeline")
 

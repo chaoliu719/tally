@@ -267,20 +267,51 @@ let cursor = "";              // search_transactions cursor for the next older c
 let doneFetching = false;     // server has no more transactions to give
 let fetching = false;
 let navBusy = false;          // serializes multi-chunk navigation (next / last)
-let total = null;             // total count reported by the tool result
+let draining = false;         // background "fetch the whole ledger" loop is running
+let total = null;             // ledger-wide count reported by the tool result
 let pageIdx = 0;              // 0-based current page
 const allTxns = [];           // every transaction fetched so far, newest -> oldest
 
-// active filters, committed only when the user hits "应用" — mid-edit input
-// values never leak into fetchNextChunk until then.
-let filters = { source_id: "", category_id: "", start_time: "", end_time: "" };
+// active filters, committed only when the user hits "应用". Filtering is
+// entirely local over allTxns -- start / end are bare "YYYY-MM-DD" strings
+// compared lexically against a row's date prefix (see design.md D2), no
+// search_transactions params, no network.
+let filters = { source_id: "", category_id: "", start: "", end: "" };
 let filtersActive = false;
 
-// id -> name lookups, loaded once from the ledger's own read-only tools so
-// rows can show category / source names instead of bare ids.
-const catById = new Map();   // id -> { name, parentId }
-const srcById = new Map();   // id -> name
+// id -> name lookups. Normally these arrive inside the open_transaction_timeline
+// result (D1); loadLookups() is only a fallback for an older server whose
+// result carries no categories/sources.
+const catById = new Map();        // id -> { name, parentId }
+const srcById = new Map();        // id -> name
+const childrenByParent = new Map(); // parentId -> [childId, ...], rebuilt on lookup load
 let lookupsLoaded = false;
+
+// Rebuild the parentId -> children adjacency from catById. Called whenever
+// catById is (re)populated, from either the inline result or the fallback.
+function rebuildCategoryTree() {
+  childrenByParent.clear();
+  for (const [id, c] of catById) {
+    const p = c.parentId && c.parentId !== "0" ? String(c.parentId) : "";
+    if (!p) continue;
+    if (!childrenByParent.has(p)) childrenByParent.set(p, []);
+    childrenByParent.get(p).push(String(id));
+  }
+}
+
+// Every id in the subtree rooted at catId, catId included -- the local
+// equivalent of search_transactions' include_descendants=true.
+function descendantIdsOf(catId) {
+  const out = new Set();
+  const stack = [String(catId)];
+  while (stack.length) {
+    const cur = stack.pop();
+    if (out.has(cur)) continue;
+    out.add(cur);
+    for (const kid of childrenByParent.get(cur) || []) stack.push(kid);
+  }
+  return out;
+}
 
 // t.time is a naive "YYYY-MM-DD HH:MM:SS" local date-time string with no
 // timezone marker (see design.md's D1/D5) -- it is never parsed through
@@ -327,6 +358,20 @@ function withTimeout(promise, ms) {
   ]);
 }
 
+// Ingest the categories / sources arrays that ride along in the
+// open_transaction_timeline result (D1). Returns true when it found usable
+// lookup data, so ontoolresult can skip the network fallback.
+function ingestInlineLookups(payload) {
+  const cats = payload && payload.categories;
+  const srcs = payload && payload.sources;
+  if (!Array.isArray(cats) && !Array.isArray(srcs)) return false;
+  for (const c of cats || []) catById.set(String(c.id), { name: c.name, parentId: c.parent_id });
+  for (const s of srcs || []) srcById.set(String(s.id), s.name);
+  rebuildCategoryTree();
+  lookupsLoaded = true;
+  return catById.size > 0 || srcById.size > 0;
+}
+
 async function loadLookups() {
   if (lookupsLoaded || !ledgerId) return;
   lookupsLoaded = true;
@@ -345,6 +390,7 @@ async function loadLookups() {
     pull("list_categories", "categories", (c) => catById.set(String(c.id), { name: c.name, parentId: c.parent_id })),
     pull("list_sources", "sources", (s) => srcById.set(String(s.id), s.name)),
   ]);
+  rebuildCategoryTree();
 }
 
 // Fill the filter dropdowns from the lookups above: top-level categories
@@ -386,11 +432,34 @@ function populateFilterOptions() {
   }
 }
 
-// Net income/expense per day over everything fetched so far, so a day label
-// shows the true day total even when that day is split across pages.
+// The current result set: every fetched transaction when no filter is
+// active, otherwise the locally filtered subset. Recomputed by refreshView()
+// and read by every rendering / paging function below.
+let view = allTxns;
+
+// Descendant id set for the active category filter (catId + its whole
+// subtree), recomputed only when the filter is committed -- the local
+// equivalent of search_transactions' include_descendants=true.
+let catFilterIds = null;
+
+function matchesFilters(t) {
+  if (filters.source_id && String(t.source_id) !== filters.source_id) return false;
+  if (catFilterIds && !catFilterIds.has(String(t.category_id))) return false;
+  const day = dayKeyOf(t.time); // "YYYY-MM-DD"; lexical order == chronological
+  if (filters.start && day < filters.start) return false;
+  if (filters.end && day > filters.end) return false;
+  return true;
+}
+
+function refreshView() {
+  view = filtersActive ? allTxns.filter(matchesFilters) : allTxns;
+}
+
+// Net income/expense per day over the current view, so a day label shows the
+// true day total even when that day is split across pages.
 function computeDayTotals() {
   const m = new Map();
-  for (const t of allTxns) {
+  for (const t of view) {
     const key = dayKeyOf(t.time);
     let cm = m.get(key);
     if (!cm) { cm = new Map(); m.set(key, cm); }
@@ -454,39 +523,39 @@ function makeRow(t) {
   return row;
 }
 
-// How many pages we know about: the tool's total count wins; otherwise derive
-// from what is fetched, plus one unknown page while more may still load.
+// How many pages the current view spans, plus one unknown page while the
+// background drain may still add older rows.
 function pageCount() {
-  // total is a ledger-wide stat from open_transaction_timeline; once filters
-  // are active it no longer describes the current result set.
   const byTotal = !filtersActive && total != null ? Math.ceil(total / PAGE_SIZE) : 0;
-  const byData = Math.ceil(allTxns.length / PAGE_SIZE) + (doneFetching ? 0 : 1);
+  const byData = Math.ceil(view.length / PAGE_SIZE) + (doneFetching ? 0 : 1);
   return Math.max(byTotal, byData, 1);
 }
 
 function hasNextPage() {
-  return (pageIdx + 1) * PAGE_SIZE < allTxns.length || !doneFetching;
+  return (pageIdx + 1) * PAGE_SIZE < view.length || !doneFetching;
 }
 
 function renderControls() {
+  refreshView();
   pagerEl.hidden = false;
   pageInfoEl.textContent = `第 ${pageIdx + 1} / ${pageCount()} 页`;
-  const busy = fetching || navBusy;
+  const busy = navBusy;
   firstBtn.disabled = prevBtn.disabled = busy || pageIdx === 0;
   nextBtn.disabled = lastBtn.disabled = busy || !hasNextPage();
 }
 
 function renderPage() {
+  refreshView();
   mainEl.innerHTML = "";
-  if (allTxns.length === 0) {
+  if (view.length === 0) {
     const empty = document.createElement("div");
     empty.className = "empty";
-    empty.textContent = filtersActive ? "没有符合条件的交易" : "这个账本还没有交易";
+    empty.textContent = filtersActive ? "没有符合当前条件的交易" : "这个账本还没有交易";
     mainEl.append(empty);
     pagerEl.hidden = true;
     return;
   }
-  const rows = allTxns.slice(pageIdx * PAGE_SIZE, pageIdx * PAGE_SIZE + PAGE_SIZE);
+  const rows = view.slice(pageIdx * PAGE_SIZE, pageIdx * PAGE_SIZE + PAGE_SIZE);
   const dayTotals = computeDayTotals();
   let curDayKey = null;
   let curBody = null;
@@ -526,20 +595,14 @@ function parseSearchResult(res) {
   return { transactions: [], next_cursor: "" };
 }
 
-// Fetch the next older chunk from the server into allTxns.
+// Fetch the next older chunk from the server into allTxns. Always unfiltered
+// -- filtering is done locally over allTxns, so the drain pulls the whole
+// ledger once and every later filter change is free.
 async function fetchNextChunk() {
   if (fetching || doneFetching || superseded || !ledgerId) return;
   fetching = true;
-  renderControls();
   try {
     const args = { ledger_id: ledgerId, newest_first: true, limit: 100, cursor };
-    if (filters.source_id) args.source_id = filters.source_id;
-    if (filters.category_id) {
-      args.category_id = filters.category_id;
-      args.include_descendants = true;
-    }
-    if (filters.start_time) args.start_time = filters.start_time;
-    if (filters.end_time) args.end_time = filters.end_time;
     const res = await app.callServerTool({ name: "search_transactions", arguments: args });
     const page = parseSearchResult(res);
     allTxns.push(...(page.transactions || []));
@@ -552,20 +615,30 @@ async function fetchNextChunk() {
   }
 }
 
-async function ensureFetched(count) {
-  while (allTxns.length < count && !doneFetching && !superseded) {
-    const before = allTxns.length;
-    await fetchNextChunk();
-    if (allTxns.length === before && !doneFetching) break; // no progress: stop
-  }
-}
-
-async function ensureAllFetched() {
-  while (!doneFetching && !superseded) {
-    const before = allTxns.length;
-    await fetchNextChunk();
-    if (allTxns.length === before && !doneFetching) break;
-  }
+// Pull every remaining older transaction into allTxns. Runs once in the
+// background right after the first paint, and is awaited on demand if the
+// user pages past what has arrived. Earlier pages never change as older rows
+// append, so mid-drain we only refresh the controls; the full repaint waits
+// for completion (or an explicit navigation).
+let drainPromise = null;
+function drainAll() {
+  if (drainPromise) return drainPromise; // already running — await the same run
+  draining = true;
+  drainPromise = (async () => {
+    try {
+      while (!doneFetching && !superseded) {
+        const before = allTxns.length;
+        await fetchNextChunk();
+        renderControls();
+        if (allTxns.length === before && !doneFetching) break;
+      }
+    } finally {
+      draining = false;
+      drainPromise = null;
+      renderPage();
+    }
+  })();
+  return drainPromise;
 }
 
 async function withNav(fn) {
@@ -576,69 +649,54 @@ async function withNav(fn) {
 }
 
 function lastPageIdx() {
-  return Math.max(0, Math.ceil(allTxns.length / PAGE_SIZE) - 1);
+  refreshView();
+  return Math.max(0, Math.ceil(view.length / PAGE_SIZE) - 1);
 }
 
 function updateMeta() {
   if (!metaEl) return;
-  if (filtersActive) metaEl.textContent = "已筛选";
+  if (filtersActive) { refreshView(); metaEl.textContent = `已筛选 · ${view.length} 笔`; }
   else if (total !== null) metaEl.textContent = `共 ${total} 笔`;
   else metaEl.textContent = "";
 }
 
-// Re-fetch from scratch under the currently committed `filters`. Cursor
-// pages must be replayed with the exact same filter args they started with
-// (see fetchNextChunk), so any filter change forces a clean restart.
-async function reloadWithFilters() {
-  if (navBusy) return;
-  navBusy = true;
-  filterApply.disabled = filterReset.disabled = true;
-  allTxns.length = 0;
-  cursor = "";
-  doneFetching = false;
-  pageIdx = 0;
-  filterToggle.classList.toggle("active", filtersActive);
-  filterBar.hidden = true;
-  updateMeta();
-  try {
-    await ensureFetched(PAGE_SIZE);
-  } finally {
-    navBusy = false;
-    filterApply.disabled = filterReset.disabled = false;
-    renderPage();
-  }
-}
-
-filterToggle.addEventListener("click", () => { filterBar.hidden = !filterBar.hidden; });
-filterApply.addEventListener("click", () => {
+// Commit the filter-bar inputs as the active filter and re-render locally.
+// No network: the whole ledger is (being) drained into allTxns already.
+function commitFilters() {
   filters = {
     source_id: filterSrc.value,
     category_id: filterCat.value,
-    start_time: filterStart.value ? `${filterStart.value} 00:00:00` : "",
-    end_time: filterEnd.value ? `${filterEnd.value} 23:59:59` : "",
+    start: filterStart.value, // "YYYY-MM-DD" or ""
+    end: filterEnd.value,
   };
-  filtersActive = !!(filters.source_id || filters.category_id || filters.start_time || filters.end_time);
-  reloadWithFilters();
-});
+  filtersActive = !!(filters.source_id || filters.category_id || filters.start || filters.end);
+  catFilterIds = filters.category_id ? descendantIdsOf(filters.category_id) : null;
+  filterToggle.classList.toggle("active", filtersActive);
+  filterBar.hidden = true;
+  pageIdx = 0;
+  refreshView();
+  updateMeta();
+  renderPage();
+}
+
+filterToggle.addEventListener("click", () => { filterBar.hidden = !filterBar.hidden; });
+filterApply.addEventListener("click", commitFilters);
 filterReset.addEventListener("click", () => {
   filterStart.value = "";
   filterEnd.value = "";
   filterCat.value = "";
   filterSrc.value = "";
-  filters = { source_id: "", category_id: "", start_time: "", end_time: "" };
-  filtersActive = false;
-  reloadWithFilters();
+  commitFilters();
 });
 
 firstBtn.addEventListener("click", () => { if (!navBusy) { pageIdx = 0; renderPage(); } });
 prevBtn.addEventListener("click", () => { if (!navBusy && pageIdx > 0) { pageIdx -= 1; renderPage(); } });
 nextBtn.addEventListener("click", () => withNav(async () => {
-  const target = pageIdx + 1;
-  await ensureFetched((target + 1) * PAGE_SIZE);
-  pageIdx = Math.min(target, lastPageIdx());
+  if (!doneFetching) await drainAll();
+  pageIdx = Math.min(pageIdx + 1, lastPageIdx());
 }));
 lastBtn.addEventListener("click", () => withNav(async () => {
-  await ensureAllFetched();
+  if (!doneFetching) await drainAll();
   pageIdx = lastPageIdx();
 }));
 
@@ -674,7 +732,6 @@ app.ontoolresult = (result) => {
   const payload = extractFirstPagePayload(result);
   const txns = Array.isArray(payload.transactions) ? payload.transactions : [];
   total = typeof payload.total === "number" ? payload.total : null;
-  updateMeta();
 
   allTxns.length = 0;
   allTxns.push(...txns);
@@ -682,17 +739,27 @@ app.ontoolresult = (result) => {
   doneFetching = !cursor || txns.length === 0;
   pageIdx = 0;
 
-  // Paint page 1 right away — do not wait on the name lookups.
+  // Category / source names ride along in the result (D1): populate the
+  // lookups and filter dropdowns synchronously so the first paint already
+  // shows names, with no extra request.
+  const haveInline = ingestInlineLookups(payload);
+  if (haveInline) populateFilterOptions();
+  updateMeta();
   renderPage();
 
-  // Enrich rows with category / source names in the background; repaint the
-  // current page once they arrive. A slow or missing lookup never blocks.
-  loadLookups()
-    .then(() => {
-      populateFilterOptions();
-      if (catById.size || srcById.size) renderPage();
-    })
-    .catch(() => { /* names stay as ids */ });
+  if (!haveInline) {
+    // Older server without the inline lookups — fall back to fetching them.
+    loadLookups()
+      .then(() => {
+        populateFilterOptions();
+        if (catById.size || srcById.size) renderPage();
+      })
+      .catch(() => { /* names stay as ids */ });
+  }
+
+  // Drain the rest of the ledger into allTxns so paging and filtering become
+  // local. A newer widget instance flips `superseded` and stops this loop.
+  if (!doneFetching) void drainAll();
 };
 
 boot("连接中…");

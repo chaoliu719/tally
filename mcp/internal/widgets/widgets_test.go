@@ -36,11 +36,16 @@ func TestTimelineWidgetBehaviours(t *testing.T) {
 		"callServerTool",       // widget fetches its own pages
 		"newest_first",         // ... in descending order
 		"search_transactions",  // ... from this tool
-		"list_categories",      // one-time id->name lookup for row labels
-		"list_sources",         // one-time id->name lookup for row labels
+		"list_categories",      // fallback id->name lookup for an older server
+		"list_sources",         // fallback id->name lookup for an older server
+		"ingestInlineLookups",  // categories/sources ride along in the tool result
+		"drainAll",             // background: pull the whole ledger for local paging/filtering
+		"descendantIdsOf",      // local include-descendants for the category filter
+		"matchesFilters",       // filtering is local, no search_transactions params
 		"上一页",                  // pager control
 		"页尾",                   // jump-to-last-page control
 		"这个账本还没有交易",            // empty state
+		"没有符合当前条件的交易",          // filtered-empty state, distinct from empty ledger
 		"BroadcastChannel",     // supersession guard
 		"onhostcontextchanged", // live theme follow
 		":root.dark",           // dark palette

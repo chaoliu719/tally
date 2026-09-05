@@ -66,9 +66,16 @@ type OpenTransactionTimelineOutput struct {
 	Total        int64             `json:"total" jsonschema:"total number of transactions in the ledger"`
 	Transactions []TransactionInfo `json:"transactions" jsonschema:"the most recent page of transactions, newest first"`
 	NextCursor   string            `json:"next_cursor,omitempty" jsonschema:"pass to search_transactions (newest_first=true) to load the next, older page"`
+	Categories   []CategoryInfo    `json:"categories" jsonschema:"every transaction category in the ledger, so the widget can show category names and populate its filter without a second request"`
+	Sources      []SourceInfo      `json:"sources" jsonschema:"every source in the ledger, so the widget can show source names and populate its filter without a second request"`
 }
 
-const timelineFirstPageSize = 50
+// timelineFirstPageSize is how many transactions the tool returns inline on
+// the first paint. It is deliberately larger than the widget's on-screen
+// page size: the widget drains the rest in the background and then filters
+// and pages entirely locally, so a bigger first page just means fewer
+// background round trips before that is done.
+const timelineFirstPageSize = 200
 
 func openTransactionTimeline(ctx context.Context, deps Deps, in OpenTransactionTimelineInput) (*mcp.CallToolResult, OpenTransactionTimelineOutput, error) {
 	if in.LedgerID == "" {
@@ -115,7 +122,31 @@ func openTransactionTimeline(ctx context.Context, deps Deps, in OpenTransactionT
 		infos = append(infos, info)
 	}
 
-	out := OpenTransactionTimelineOutput{Total: stats.Count, Transactions: infos, NextCursor: nextCursor}
+	catRows, err := deps.Q.ListCategories(ctx, ledgerID)
+	if err != nil {
+		return nil, OpenTransactionTimelineOutput{}, err
+	}
+	categories := make([]CategoryInfo, 0, len(catRows))
+	for _, c := range catRows {
+		categories = append(categories, toCategoryInfo(c))
+	}
+
+	srcRows, err := deps.Q.ListSources(ctx, ledgerID)
+	if err != nil {
+		return nil, OpenTransactionTimelineOutput{}, err
+	}
+	sources := make([]SourceInfo, 0, len(srcRows))
+	for _, s := range srcRows {
+		sources = append(sources, toSourceInfo(s))
+	}
+
+	out := OpenTransactionTimelineOutput{
+		Total:        stats.Count,
+		Transactions: infos,
+		NextCursor:   nextCursor,
+		Categories:   categories,
+		Sources:      sources,
+	}
 
 	// Text content doubles as the graceful-degradation answer for hosts that
 	// don't render the widget: a summary (total count, date span) plus the
