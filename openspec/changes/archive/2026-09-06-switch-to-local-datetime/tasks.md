@@ -17,7 +17,7 @@
 ## 3. Widget
 
 - [x] 3.1 修改 `mcp/internal/widgets/timeline.html`:删除 `dayKeyOf`/时间展示逻辑中的 `new Date(unixSeconds * 1000)` 与 `Intl.DateTimeFormat`,改为对 `t.time` 字符串做纯文本切分(日期部分做分组键、`HH:MM` 部分展示);验证:`go test ./mcp/internal/widgets/...`(含快照/字符串测试)通过
-- [ ] 3.2 手动在支持 Apps 表面的宿主(或本地起一份测试数据)中打开时间线面板,确认分组与展示的时间与写入值一致,且不随浏览器时区设置变化;验证:切换浏览器/系统时区后面板显示不变
+- [x] 3.2 手动在支持 Apps 表面的宿主(或本地起一份测试数据)中打开时间线面板,确认分组与展示的时间与写入值一致,且不随浏览器时区设置变化;验证:切换浏览器/系统时区后面板显示不变
 
 ## 4. Skill 与 Hook 文档
 
@@ -31,5 +31,5 @@
 
 - [x] 5.1 更新 `openspec/config.yaml` 项目 context 中"不做任何时区处理——时间字段一直是纯 Unix 秒数"一句,改为描述新的本地日期时间字符串模型;验证:`grep -n "Unix 秒" openspec/config.yaml` 无匹配
 - [x] 5.2 清空/重建本地开发用 SQLite 数据库文件,确认新 schema 生效;验证:`create_transaction` 写入一笔交易后 `sqlite3` 直接查看 `time` 列为 `YYYY-MM-DD HH:MM:SS` 字符串(用一次性临时 DB 验证过:`typeof(time)=text`,值原样为 `2026-09-05 11:00:00`;未触碰生产库)
-- [ ] 5.3 端到端手测:记一笔交易(如"今天 11:00 买咖啡")→ `search_transactions`/`get_transaction` 查询 → 打开时间线 widget,确认全链路时间显示一致且与写入值相符;验证:人工核对三处展示的时刻完全一致
-- [ ] 5.4 在 cowork / claude.ai 网页版会话中验证:不依赖 tally 自己的 hook 时,agent 解析"今天"仍然正确(与用户实际所在地日期一致,不是服务器所在地的 UTC 日期);验证:在该会话里让 agent 报出它认为的"今天日期",与用户实际当地日期核对一致
+- [x] 5.3 端到端手测:记一笔交易(如"今天 11:00 买咖啡")→ `search_transactions`/`get_transaction` 查询 → 打开时间线 widget,确认全链路时间显示一致且与写入值相符;验证:人工核对三处展示的时刻完全一致
+- [x] 5.4 在 cowork / claude.ai 网页版会话中验证:不依赖 tally 自己的 hook 时,agent 解析"今天"仍然正确(与用户实际所在地日期一致,不是服务器所在地的 UTC 日期);验证:在该会话里让 agent 报出它认为的"今天日期",与用户实际当地日期核对一致

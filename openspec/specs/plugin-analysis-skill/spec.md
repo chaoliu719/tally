@@ -14,11 +14,11 @@ Agent SHALL 使用 `search_transactions` 的 `keyword` 检索同商户/同关键
 - **THEN** agent 用 `search_transactions(keyword=<关键词>)` 取出该账本内匹配的交易并按时间排序,对比 `amount` 走势作答
 
 ### Requirement: 月度环比对比
-Agent SHALL 通过分别调用两次 `get_financial_summary`(各自指定对应月份的起止时间)来回答月度环比问题,自行计算月份边界的 Unix 秒数。
+Agent SHALL 通过分别调用两次 `get_financial_summary`(各自指定对应月份的起止本地日期时间字符串)来回答月度环比问题,自行计算月份边界并格式化为 `YYYY-MM-DD HH:MM:SS`。
 
 #### Scenario: 用户要求本月与上月对比
 - **WHEN** 用户要求比较本月与上月的收支
-- **THEN** agent 以本月与上月各自的起止 Unix 秒数分别调用一次 `get_financial_summary`,对比两次返回的 `income`/`expense`/`net` 与分类小计;服务端不提供"本月"语义,月份边界由 agent 自行计算
+- **THEN** agent 以本月与上月各自的起止本地日期时间字符串分别调用一次 `get_financial_summary`,对比两次返回的 `income`/`expense`/`net` 与分类小计;服务端不提供"本月"语义,月份边界由 agent 自行计算
 
 ### Requirement: 类别拆分对比
 Agent SHALL 使用单次 `get_financial_summary` 调用返回的按分类拆分结果回答"哪类花销最多"这类问题,不需要为每个分类单独查询。

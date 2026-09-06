@@ -7,7 +7,7 @@
 ## Requirements
 
 ### Requirement: 按时间范围统计财务汇总
-用户 SHALL 能够通过 `get_financial_summary` 工具,指定 `ledger_id` 与一个可选的时间范围(`start_time`/`end_time`,unix 秒,语义与 `search_transactions` 一致),获得该账本内该范围内 `income`/`expense` 类型交易的总收入、总支出、净额(总收入减总支出),以及按分类、按来源拆分的收入/支出小计。金额按币种分组返回,不做任何汇率换算,不做跨账本汇总。`income`/`expense`/`net` 均以十进制字符串表示该分组 `currency` 主单位下的金额,精度由该币种在 ISO 4217 下的标准精度决定(与 `create_transaction` 的 `amount` 字段同一套精度规则);`net` 为负(净支出)时字符串带负号(如 `"-50.00"`),`income`/`expense` 恒为非负。
+用户 SHALL 能够通过 `get_financial_summary` 工具,指定 `ledger_id` 与一个可选的时间范围(`start_time`/`end_time`,本地日期时间字符串,格式 `YYYY-MM-DD HH:MM:SS`,不带时区,语义与 `search_transactions` 一致),获得该账本内该范围内 `income`/`expense` 类型交易的总收入、总支出、净额(总收入减总支出),以及按分类、按来源拆分的收入/支出小计。金额按币种分组返回,不做任何汇率换算,不做跨账本汇总。`income`/`expense`/`net` 均以十进制字符串表示该分组 `currency` 主单位下的金额,精度由该币种在 ISO 4217 下的标准精度决定(与 `create_transaction` 的 `amount` 字段同一套精度规则);`net` 为负(净支出)时字符串带负号(如 `"-50.00"`),`income`/`expense` 恒为非负。
 
 #### Scenario: 提供时间范围统计
 - **WHEN** 调用 `get_financial_summary`,指定一个已存在的账本并指定 `start_time`/`end_time`
@@ -32,6 +32,10 @@
 #### Scenario: 指定的账本不存在
 - **WHEN** 调用 `get_financial_summary`,指定的 `ledger_id` 不对应任何已存在的账本
 - **THEN** 请求被拒绝,返回说明账本不存在的错误
+
+#### Scenario: start_time 或 end_time 格式非法
+- **WHEN** 调用 `get_financial_summary` 提供的 `start_time` 或 `end_time` 不符合 `YYYY-MM-DD HH:MM:SS` 格式
+- **THEN** 请求被拒绝,返回说明时间格式非法的错误
 
 ### Requirement: 按分类拆分收支
 `get_financial_summary` 的返回结果 SHALL 包含按分类拆分的收入/支出小计:对指定账本统计范围内每个出现过 `income` 或 `expense` 交易的分类,给出该分类下的收入小计与支出小计(同样按币种分组),不包含其他账本的分类。`income`/`expense` 小计均以十进制字符串表示,精度规则与总收入/总支出字段一致。
