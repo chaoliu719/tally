@@ -98,10 +98,17 @@ function mountWidget(opts) {
   // The "全屏" button only makes sense while inline: show it when the host
   // offers a fullscreen mode and we are not already in it, hide it otherwise
   // (the host provides its own way back out of fullscreen).
+  //
+  // The context that arrives when leaving fullscreen can omit
+  // `availableDisplayModes` (just like it can omit `theme`). Latch the last
+  // known "fullscreen is available" so a partial context doesn't permanently
+  // hide the button after the user closes fullscreen once.
+  let canFullscreen = false;
   function syncDisplayMode(ctx) {
     if (!expandBtn) return;
-    const canFullscreen = !!ctx && Array.isArray(ctx.availableDisplayModes)
-      && ctx.availableDisplayModes.includes("fullscreen");
+    if (!!ctx && Array.isArray(ctx.availableDisplayModes)) {
+      canFullscreen = ctx.availableDisplayModes.includes("fullscreen");
+    }
     const inFullscreen = !!ctx && (ctx.displayMode === "fullscreen" || ctx.mode === "fullscreen");
     expandBtn.hidden = !canFullscreen || inFullscreen;
   }
