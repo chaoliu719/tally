@@ -6,12 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"tally/internal/store"
-	"tally/internal/widgets"
 )
 
 func init() {
@@ -25,45 +23,15 @@ func init() {
 // widget fetches older pages itself via search_transactions (newest_first).
 // See openspec change add-transaction-timeline-widget.
 func registerTimelineTools(s *mcp.Server, deps Deps) {
-	timelineURI := widgets.URI("timeline")
-
-	s.AddResource(&mcp.Resource{
-		Name:        "Transaction timeline",
-		URI:         timelineURI,
-		MIMEType:    widgets.MIMEType,
-		Description: "Interactive, scrollable day-grouped view of a ledger's transactions, newest first.",
-	}, func(_ context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
-		html, ok := widgets.HTML("timeline")
-		if !ok {
-			return nil, mcp.ResourceNotFoundError(req.Params.URI)
-		}
-		res := &mcp.ReadResourceResult{
-			Contents: []*mcp.ResourceContents{{
-				URI:      timelineURI,
-				MIMEType: widgets.MIMEType,
-				Text:     html,
-			}},
-		}
-		// The widget HTML (~380KB with the inlined ext-apps runtime) is
-		// identical for everyone and only changes on deploy. Without a TTL
-		// the SDK default is "immediately stale", so the host refetches the
-		// whole payload on every panel open and every page reload -- the
-		// ~10s "loading" the user sees. A few minutes of freshness kills the
-		// repeated refetch within a working session while still letting a
-		// new deploy propagate quickly.
-		res.TTLMs = int(widgetResourceTTL / time.Millisecond)
-		res.CacheScope = "public"
-		return res, nil
-	})
+	registerWidgetResource(s, "timeline", "Transaction timeline",
+		"Interactive, scrollable day-grouped view of a ledger's transactions, newest first.")
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "open_transaction_timeline",
 		Description: "Open an interactive, scrollable timeline of a ledger's transactions -- grouped by day, newest first, " +
 			"scroll down to load older transactions all the way back to the earliest one. Use this when the user wants to " +
 			"browse or scroll through their transaction history rather than get a summary or a specific lookup. Read-only.",
-		Meta: mcp.Meta{
-			"ui": map[string]any{"resourceUri": timelineURI},
-		},
+		Meta: widgetToolMeta("timeline"),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in OpenTransactionTimelineInput) (*mcp.CallToolResult, OpenTransactionTimelineOutput, error) {
 		return openTransactionTimeline(ctx, deps, in)
 	})
@@ -87,12 +55,6 @@ type OpenTransactionTimelineOutput struct {
 // and pages entirely locally, so a bigger first page just means fewer
 // background round trips before that is done.
 const timelineFirstPageSize = 200
-
-// widgetResourceTTL is the freshness hint on the timeline widget's ui://
-// resource read: how long a host may reuse a cached copy before refetching.
-// Trade-off: larger = fewer ~380KB refetches, but a new deploy takes this
-// long to reach an already-open client.
-const widgetResourceTTL = 5 * time.Minute
 
 func openTransactionTimeline(ctx context.Context, deps Deps, in OpenTransactionTimelineInput) (*mcp.CallToolResult, OpenTransactionTimelineOutput, error) {
 	if in.LedgerID == "" {

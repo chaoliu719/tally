@@ -24,6 +24,24 @@ account to create or log into.
 | `update_transaction` | Replace every field of an existing transaction by id (same validation rules as `create_transaction`). Full replacement, not a partial update; no confirmation required. |
 | `delete_transaction` | Delete a transaction by id. Two-step preview → apply confirmation (see below); unlike source/category deletion, any existing transaction can be deleted. |
 | `get_financial_summary` | Aggregate income/expense/net totals over an optional time range within one ledger, grouped by currency, and broken down by category and by source. Read-only. |
+| `open_transaction_timeline` | Open an interactive, scrollable timeline of one ledger's transactions (day-grouped, newest first) as an inline MCP App panel on hosts that support it; falls back to a text summary elsewhere. Read-only. |
+
+### Interactive widgets
+
+Hosts that support the MCP Apps surface (e.g. claude.ai) can render inline `ui://` panels.
+Each widget is a directory under `internal/widgets/src/<name>/`:
+
+- `index.html` — one self-contained document with a single `/*__EXT_APPS_BUNDLE__*/`
+  placeholder; at load time it is replaced with the vendored ext-apps browser runtime plus
+  the shared frontend runtime (`internal/widgets/runtime.js`, `globalThis.Tally`). The
+  directory name is the widget name and its resource URI is `ui://widgets/<name>.html`.
+- `preview.js` (optional) — demo data for the local preview harness
+  (`TALLY_DEV_WIDGET_PREVIEW=1`, then open `/widget-preview/<name>` in a browser).
+
+To add a widget: drop the directory, then in a `internal/tools/<name>.go` call
+`registerWidgetResource(...)` for the resource and set `Meta: widgetToolMeta("<name>")` on
+the launcher tool. `internal/widgets/` is embedded whole (`//go:embed all:src`) — keep no
+secrets or large assets under `src/`.
 
 Every source, category, and transaction belongs to exactly one ledger, and every tool above (other
 than `list_ledgers`/`manage_ledger` themselves) takes a required `ledger_id` — there's no notion of

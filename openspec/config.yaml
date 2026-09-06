@@ -98,7 +98,9 @@ context: |
     一次性快照,数据要能直接喂给模板。交易历史这类"无上界列表 + 滚动分页 + 零推理"的
     浏览走 MCP widget(Apps SDK):tally-mcp 破例托管自包含的 `ui://` 资源,widget 通过
     `callServerTool` 增量拉取,数据不进 Agent 上下文;widget 只读、不写、不加载任何外部
-    资源。第三种形态 elicitation 不用于可视化(对话已是唯一 UI)。
+    资源。第三种形态 elicitation 不用于可视化(对话已是唯一 UI)。多个 widget 走目录约定
+    (`internal/widgets/src/<name>/`)+ 一个共享的、embed 进二进制的前端 runtime
+    (见 mcp-app-widget-framework),仍不引构建步骤。
 
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.

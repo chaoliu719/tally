@@ -1,9 +1,11 @@
 // Package widgets serves the HTML for tally-mcp's MCP Apps (interactive UI
 // widgets rendered inline by hosts that support the apps surface, e.g.
-// claude.ai). Each widget is a single self-contained HTML file under this
-// directory with a /*__EXT_APPS_BUNDLE__*/ placeholder; at load time the
-// placeholder is replaced with the vendored ext-apps browser runtime rewritten
-// to expose globalThis.ExtApps, because the iframe CSP blocks module imports.
+// claude.ai). Each widget is a directory under src/ holding an index.html
+// with a single /*__EXT_APPS_BUNDLE__*/ placeholder; at load time the
+// placeholder is replaced with the vendored ext-apps browser runtime
+// (rewritten to expose globalThis.ExtApps, because the iframe CSP blocks
+// module imports) followed by the shared frontend runtime. The directory
+// name is the widget name.
 //
 // This is a deliberate, scoped exception to "tally-mcp is a pure fact core
 // that serves no frontend UI" -- see openspec change add-transaction-timeline-
@@ -12,26 +14,43 @@
 package widgets
 
 import (
+	"embed"
 	"fmt"
+	"io/fs"
+	"path"
 	"regexp"
+	"sort"
 	"strings"
-
-	_ "embed"
 )
 
 // MIMEType is the mime type a host uses to recognize a resource as an
 // interactive MCP App widget rather than plain HTML source.
 const MIMEType = "text/html;profile=mcp-app"
 
-// BundlePlaceholder is the token each widget HTML file contains where the
-// ext-apps browser runtime is spliced in.
+// BundlePlaceholder is the token each widget index.html contains where the
+// ext-apps browser runtime plus the shared frontend runtime are spliced in.
 const BundlePlaceholder = "/*__EXT_APPS_BUNDLE__*/"
 
 //go:embed vendor/ext-apps-app-with-deps.js
 var extAppsBundle string
 
-//go:embed timeline.html
-var timelineHTML string
+// runtimeJS is the shared frontend runtime (globalThis.Tally), spliced into
+// every widget right after the ext-apps browser bundle.
+//
+//go:embed runtime.js
+var runtimeJS string
+
+// previewShim is the generic fake host (globalThis.ExtApps) used by
+// PreviewHTML in place of the real ext-apps runtime.
+//
+//go:embed preview-shim.js
+var previewShim string
+
+// all:src pulls every widget directory (index.html plus sidecars like
+// preview.js) into the binary. Keep src/ free of secrets and large assets.
+//
+//go:embed all:src
+var widgetFS embed.FS
 
 // exportRewrite matches the trailing `export{a as B,c as D};` of the ES-module
 // bundle so it can be turned into a `globalThis.ExtApps={B:a,D:c}` assignment.
@@ -58,75 +77,93 @@ func browserBundle() string {
 	})
 }
 
-// rendered holds each widget's HTML with the bundle already spliced in,
-// built once at package init.
-var rendered = func() map[string]string {
-	bundle := browserBundle()
-	splice := func(html string) string {
-		return strings.Replace(html, BundlePlaceholder, bundle, 1)
+// splicePayload is what replaces BundlePlaceholder in a rendered widget: the
+// host runtime followed by the shared frontend runtime, so Tally is present
+// wherever globalThis.ExtApps is.
+func splicePayload(host string) string {
+	return host + "\n" + runtimeJS
+}
+
+type widgetSet struct {
+	rendered map[string]string // widget name -> HTML for a real host
+	preview  map[string]string // widget name -> HTML wired to the fake preview host
+}
+
+// buildRegistry walks fsys (rooted so that "src/<name>/index.html" resolves)
+// and renders every widget. It is pure so tests can feed a synthetic fs.FS
+// with several widgets. host is the already-rewritten ext-apps browser
+// bundle.
+func buildRegistry(fsys fs.FS, host string) (widgetSet, error) {
+	entries, err := fs.ReadDir(fsys, "src")
+	if err != nil {
+		return widgetSet{}, fmt.Errorf("widgets: reading src/: %w", err)
 	}
-	return map[string]string{
-		"timeline": splice(timelineHTML),
+	ws := widgetSet{rendered: map[string]string{}, preview: map[string]string{}}
+	payload := splicePayload(host)
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		indexPath := path.Join("src", name, "index.html")
+		htmlBytes, err := fs.ReadFile(fsys, indexPath)
+		if err != nil {
+			return widgetSet{}, fmt.Errorf("widgets: %s has no index.html: %w", name, err)
+		}
+		html := string(htmlBytes)
+		if n := strings.Count(html, BundlePlaceholder); n != 1 {
+			return widgetSet{}, fmt.Errorf("widgets: %s/index.html must contain exactly one %s, found %d",
+				name, BundlePlaceholder, n)
+		}
+
+		var fixture string
+		if fx, err := fs.ReadFile(fsys, path.Join("src", name, "preview.js")); err == nil {
+			fixture = string(fx)
+		}
+		previewPayload := previewShim + "\n" + fixture + "\n" + runtimeJS
+
+		ws.rendered[name] = strings.Replace(html, BundlePlaceholder, payload, 1)
+		ws.preview[name] = strings.Replace(html, BundlePlaceholder, previewPayload, 1)
 	}
+	if len(ws.rendered) == 0 {
+		return widgetSet{}, fmt.Errorf("widgets: no widget directories found under src/")
+	}
+	return ws, nil
+}
+
+// registry holds every widget rendered once at package init. A malformed
+// widget panics here -- the same loud failure style as before, so go test
+// and startup catch it rather than shipping a raw placeholder.
+var registry = func() widgetSet {
+	ws, err := buildRegistry(widgetFS, browserBundle())
+	if err != nil {
+		panic(err)
+	}
+	return ws
 }()
 
 // HTML returns the fully rendered HTML for the named widget. The second
 // return is false if no widget by that name exists.
 func HTML(name string) (string, bool) {
-	html, ok := rendered[name]
+	html, ok := registry.rendered[name]
 	return html, ok
 }
 
-// previewShim is a stand-in for globalThis.ExtApps used by PreviewHTML: it
-// lets a widget be opened in an ordinary browser tab (no host, no iframe
-// bridge) for styling work. It fires ontoolresult from a ?payload= query
-// param and logs the widget->host calls instead of performing them.
-const previewShim = `globalThis.ExtApps={App:class{
-  constructor(){this._h={}}
-  set ontoolresult(f){this._h.result=f} get ontoolresult(){return this._h.result}
-  set ontoolinput(f){this._h.input=f} get ontoolinput(){return this._h.input}
-  set onhostcontextchanged(f){this._h.ctx=f} get onhostcontextchanged(){return this._h.ctx}
-  _demoBatch(seed,n,cursor){
-    const now=Math.floor(Date.now()/1000);
-    const notes=["麦当劳麦辣鸡腿堡","便利店 可乐一瓶","超市采购 蔬菜水果","和朋友喝咖啡,备注写得比较长用来测试换行显示效果","",
-      "地铁充值","美团外卖","停车费","工资","话费充值","网购 数据线","AWS 账单","药店","水电费","打车"];
-    const t=[];
-    for(let i=0;i<n;i++){const k=seed+i;
-      t.push({id:String(1000-k),type:k%9===0?"income":"expense",source_id:String((k%2)+1),
-        category_id:String((k%2)+1),amount:(k%9===0?"8000.00":((k*7%400)+3+".00")),
-        currency:k%13===0?"USD":"CNY",time:now-k*7000,comment:notes[k%notes.length]});}
-    return{structuredContent:{next_cursor:cursor,transactions:t}};
-  }
-  async connect(){
-    const q=new URLSearchParams(location.search);
-    const demo=q.get("payload")||JSON.stringify(Object.assign({total:47},this._demoBatch(0,20,"c1").structuredContent));
-    this._page=0;
-    if(this._h.input)this._h.input({arguments:{ledger_id:q.get("ledger_id")||"1"}});
-    if(this._h.result)this._h.result({content:[{type:"text",text:"preview\n\n"+demo}]});
-  }
-  getHostContext(){return{theme:new URLSearchParams(location.search).get("theme")||"light",availableDisplayModes:[]}}
-  async callServerTool(a){console.log("callServerTool",a);
-    if(a&&a.name==="list_categories")return{structuredContent:{categories:[{id:"1",name:"餐饮",parent_id:"0"},{id:"2",name:"外卖",parent_id:"1"}]}};
-    if(a&&a.name==="list_sources")return{structuredContent:{sources:[{id:"1",name:"招行储蓄卡"},{id:"2",name:"支付宝"}]}};
-    if(a&&a.name==="search_transactions"){this._page=(this._page||0)+1;
-      if(this._page===1)return this._demoBatch(20,20,"c2");
-      return this._demoBatch(40,7,"");}
-    return{structuredContent:{transactions:[],next_cursor:""}};
-  }
-  sendMessage(m){console.log("sendMessage",m)}
-  updateModelContext(m){console.log("updateModelContext",m)}
-  requestDisplayMode(m){console.log("requestDisplayMode",m)}
-  openLink(l){console.log("openLink",l)}
-}};`
-
-// PreviewHTML returns the named widget wired to previewShim instead of the
-// real ext-apps runtime, for opening in a plain browser tab.
+// PreviewHTML returns the named widget wired to the fake preview host instead
+// of the real ext-apps runtime, for opening in a plain browser tab.
 func PreviewHTML(name string) (string, bool) {
-	html, ok := map[string]string{"timeline": timelineHTML}[name]
-	if !ok {
-		return "", false
+	html, ok := registry.preview[name]
+	return html, ok
+}
+
+// Names returns every widget name, sorted.
+func Names() []string {
+	out := make([]string, 0, len(registry.rendered))
+	for name := range registry.rendered {
+		out = append(out, name)
 	}
-	return strings.Replace(html, BundlePlaceholder, previewShim, 1), true
+	sort.Strings(out)
+	return out
 }
 
 // URI returns the ui:// resource URI for the named widget.

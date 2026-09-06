@@ -231,14 +231,8 @@
 // short identifiers (e.g. `io`), so leaking top-level `const`s breaks the
 // whole document write. Keep all names local.
 (async () => {
-const { App } = globalThis.ExtApps;
-
 const mainEl = document.getElementById("main");
-const bootEl = document.getElementById("boot");
-function boot(msg) { if (bootEl) bootEl.textContent = msg; }
-function fatal(msg) { mainEl.innerHTML = '<div class="empty">' + msg + "</div>"; }
 const metaEl = document.getElementById("meta");
-const expandBtn = document.getElementById("expand");
 const filterToggle = document.getElementById("filterToggle");
 const filterBar = document.getElementById("filterBar");
 const filterStart = document.getElementById("filterStart");
@@ -255,39 +249,18 @@ const lastBtn = document.getElementById("lastBtn");
 
 const PAGE_SIZE = 15;
 
-const app = new App({ name: "TransactionTimeline", version: "1.0.0" }, {}, { autoResize: true });
-
-// --- supersession: a newer instance of this widget makes older ones stop
-// fetching, so a stale panel does not keep hammering the server. ---
-let superseded = false;
-const seq = Date.now() + Math.random();
-try {
-  const bc = new BroadcastChannel("tally-transaction-timeline");
-  bc.onmessage = (e) => { if (e.data && e.data.seq > seq) superseded = true; };
-  bc.postMessage({ seq });
-} catch { /* BroadcastChannel unavailable — non-fatal */ }
-
-// --- theme ---
-// The host fires onhostcontextchanged for display-mode changes too (entering
-// / leaving fullscreen), and that context can arrive without a `theme`
-// field. Treat only "light" / "dark" as authoritative and ignore anything
-// else, so a partial context never silently drops us back to light.
-function applyTheme(theme) {
-  if (theme !== "light" && theme !== "dark") return;
-  document.documentElement.classList.toggle("dark", theme === "dark");
-}
-
-// The "全屏" button only makes sense while inline: show it when the host
-// offers a fullscreen mode and we are not already in it, hide it otherwise
-// (the host provides its own way back out of fullscreen).
-function syncDisplayMode(ctx) {
-  const canFullscreen = !!ctx && Array.isArray(ctx.availableDisplayModes)
-    && ctx.availableDisplayModes.includes("fullscreen");
-  const inFullscreen = !!ctx && (ctx.displayMode === "fullscreen" || ctx.mode === "fullscreen");
-  expandBtn.hidden = !canFullscreen || inFullscreen;
-}
-
-app.onhostcontextchanged = (ctx) => { if (ctx) { applyTheme(ctx.theme); syncDisplayMode(ctx); } };
+// The shared runtime (globalThis.Tally) owns the host bridge, theme,
+// fullscreen button and supersession. It is created synchronously here so
+// w.app is reachable from onToolResult even when the host delivers the first
+// result during connect(); w.connect() is awaited at the end of this IIFE.
+const w = Tally.mountWidget({
+  name: "TransactionTimeline",
+  version: "1.0.0",
+  channel: "tally-transaction-timeline",
+  onToolInput,
+  onToolResult,
+});
+function superseded() { return w.isSuperseded(); }
 
 // --- state ---
 let ledgerId = null;
@@ -380,13 +353,6 @@ function catLabel(id) {
   return parent ? `${parent.name} / ${c.name}` : c.name;
 }
 
-function withTimeout(promise, ms) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), ms)),
-  ]);
-}
-
 // Ingest the categories / sources arrays that ride along in the
 // open_transaction_timeline result (D1). Returns true when it found usable
 // lookup data, so ontoolresult can skip the network fallback.
@@ -406,7 +372,7 @@ async function loadLookups() {
   lookupsLoaded = true;
   const pull = async (name, key, apply) => {
     try {
-      const res = await withTimeout(app.callServerTool({ name, arguments: { ledger_id: ledgerId } }), 4000);
+      const res = await w.withTimeout(w.app.callServerTool({ name, arguments: { ledger_id: ledgerId } }), 4000);
       let data = res && res.structuredContent;
       if (!data || !Array.isArray(data[key])) {
         const text = res && res.content && res.content[0] && res.content[0].text;
@@ -613,27 +579,16 @@ function renderPage() {
   renderControls();
 }
 
-function parseSearchResult(res) {
-  if (res && res.structuredContent && Array.isArray(res.structuredContent.transactions)) {
-    return res.structuredContent;
-  }
-  const text = res && res.content && res.content[0] && res.content[0].text;
-  if (text) {
-    try { return JSON.parse(text); } catch { /* fall through */ }
-  }
-  return { transactions: [], next_cursor: "" };
-}
-
 // Fetch the next older chunk from the server into allTxns. Always unfiltered
 // -- filtering is done locally over allTxns, so the drain pulls the whole
 // ledger once and every later filter change is free.
 async function fetchNextChunk() {
-  if (fetching || doneFetching || superseded || !ledgerId) return;
+  if (fetching || doneFetching || superseded() || !ledgerId) return;
   fetching = true;
   try {
     const args = { ledger_id: ledgerId, newest_first: true, limit: 100, cursor };
-    const res = await app.callServerTool({ name: "search_transactions", arguments: args });
-    const page = parseSearchResult(res);
+    const res = await w.app.callServerTool({ name: "search_transactions", arguments: args });
+    const page = w.parseSearchResult(res);
     allTxns.push(...(page.transactions || []));
     cursor = page.next_cursor || "";
     if (!cursor) doneFetching = true;
@@ -655,7 +610,7 @@ function drainAll() {
   draining = true;
   drainPromise = (async () => {
     try {
-      while (!doneFetching && !superseded) {
+      while (!doneFetching && !superseded()) {
         const before = allTxns.length;
         await fetchNextChunk();
         renderControls();
@@ -735,35 +690,12 @@ lastBtn.addEventListener("click", () => withNav(async () => {
 }));
 
 // --- first paint from the tool result ---
-app.ontoolinput = ({ arguments: args }) => {
+function onToolInput({ arguments: args }) {
   if (args && args.ledger_id) ledgerId = String(args.ledger_id);
-};
-
-// The open_transaction_timeline result can reach the widget a few different
-// ways depending on the host: as structuredContent, as a text block that is
-// "<summary>\n\n<json>", or as bare JSON. Try all of them.
-function extractFirstPagePayload(result) {
-  const sc = result && result.structuredContent;
-  if (sc && (Array.isArray(sc.transactions) || typeof sc.total === "number")) return sc;
-  const content = result && result.content;
-  const text = content && content[0] && content[0].text;
-  if (typeof text === "string") {
-    const i = text.indexOf("\n\n");
-    const tries = i >= 0 ? [text.slice(i + 2), text] : [text];
-    const m = text.match(/\{[\s\S]*\}/);
-    if (m) tries.push(m[0]);
-    for (const c of tries) {
-      try {
-        const o = JSON.parse(c);
-        if (o && (Array.isArray(o.transactions) || typeof o.total === "number")) return o;
-      } catch { /* next candidate */ }
-    }
-  }
-  return { transactions: [] };
 }
 
-app.ontoolresult = (result) => {
-  const payload = extractFirstPagePayload(result);
+function onToolResult(result) {
+  const payload = w.extractFirstPagePayload(result);
   const txns = Array.isArray(payload.transactions) ? payload.transactions : [];
   total = typeof payload.total === "number" ? payload.total : null;
 
@@ -792,21 +724,17 @@ app.ontoolresult = (result) => {
   }
 
   // Drain the rest of the ledger into allTxns so paging and filtering become
-  // local. A newer widget instance flips `superseded` and stops this loop.
+  // local. A newer widget instance flips supersession and stops this loop.
   if (!doneFetching) void drainAll();
-};
+}
 
-boot("连接中…");
+// Bridge callbacks are already installed (mountWidget, above); connecting now
+// -- after all wiring -- lets the host deliver the first tool result straight
+// into onToolResult. A connect failure has already painted its own message.
 try {
-  await app.connect();
-} catch (err) {
-  fatal("连接宿主失败:" + (err && err.message ? err.message : err));
+  await w.connect();
+} catch {
   return;
 }
-boot("已连接,等待数据…");
-applyTheme(app.getHostContext()?.theme);
-
-expandBtn.addEventListener("click", () => app.requestDisplayMode({ mode: "fullscreen" }));
-syncDisplayMode(app.getHostContext());
 })();
 </script>

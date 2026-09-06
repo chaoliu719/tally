@@ -3,30 +3,107 @@ package widgets
 import (
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
-func TestTimelineHTMLRendered(t *testing.T) {
-	html, ok := HTML("timeline")
-	if !ok {
-		t.Fatal("timeline widget not found")
+func TestEveryWidgetRenders(t *testing.T) {
+	names := Names()
+	if len(names) == 0 {
+		t.Fatal("no widgets registered")
 	}
-	if strings.Contains(html, BundlePlaceholder) {
-		t.Error("bundle placeholder not substituted")
+	for _, name := range names {
+		html, ok := HTML(name)
+		if !ok {
+			t.Fatalf("%s: registered name has no rendered HTML", name)
+		}
+		if strings.Contains(html, BundlePlaceholder) {
+			t.Errorf("%s: bundle placeholder not substituted", name)
+		}
+		if !strings.Contains(html, "globalThis.ExtApps={") {
+			t.Errorf("%s: export{} not rewritten to globalThis.ExtApps assignment", name)
+		}
+		if strings.Contains(html, "export{") {
+			t.Errorf("%s: leftover ES-module export{} in browser-served bundle", name)
+		}
+		if !strings.Contains(html, "globalThis.Tally =") {
+			t.Errorf("%s: shared runtime not spliced in", name)
+		}
+		if !strings.Contains(html, "<!doctype html>") {
+			t.Errorf("%s: not a complete HTML document", name)
+		}
 	}
-	if !strings.Contains(html, "globalThis.ExtApps={") {
-		t.Error("export{} not rewritten to globalThis.ExtApps assignment")
+}
+
+func TestEveryWidgetSelfContained(t *testing.T) {
+	for _, name := range Names() {
+		html, _ := HTML(name)
+		for _, marker := range []string{
+			`src="http`, `src='http`, `href="http`, `href='http`,
+			"<link ", "@import", "//esm.sh", "//unpkg", "//cdn",
+		} {
+			if strings.Contains(html, marker) {
+				t.Errorf("%s: references external resource %q", name, marker)
+			}
+		}
 	}
-	if strings.Contains(html, "export{") {
-		t.Error("leftover ES-module export{} in browser-served bundle")
+}
+
+func TestEveryWidgetScopeIsolated(t *testing.T) {
+	for _, name := range Names() {
+		html, _ := HTML(name)
+		if !strings.Contains(html, "(async () => {") && !strings.Contains(html, "(function") {
+			t.Errorf("%s: widget script is not wrapped in an IIFE", name)
+		}
+		if strings.Contains(html, "\nconst io ") || strings.Contains(html, "\nconst io=") {
+			t.Errorf("%s: declares `io` — collides with the claude.ai apps sandbox", name)
+		}
 	}
-	if !strings.Contains(html, "App:") {
-		t.Error("App export missing from globalThis.ExtApps")
+}
+
+func TestEveryWidgetPreviewUsesShim(t *testing.T) {
+	for _, name := range Names() {
+		html, ok := PreviewHTML(name)
+		if !ok {
+			t.Fatalf("%s: no preview HTML", name)
+		}
+		if strings.Contains(html, BundlePlaceholder) {
+			t.Errorf("%s: placeholder not substituted in preview", name)
+		}
+		if !strings.Contains(html, "TallyPreviewHost") {
+			t.Errorf("%s: preview not wired to the fake host shim", name)
+		}
+		if strings.Contains(html, "class eI extends") {
+			t.Errorf("%s: preview must not embed the real ext-apps runtime", name)
+		}
 	}
 }
 
 func TestUnknownWidget(t *testing.T) {
 	if _, ok := HTML("nope"); ok {
 		t.Error("expected unknown widget to report not found")
+	}
+	if _, ok := PreviewHTML("nope"); ok {
+		t.Error("expected unknown preview to report not found")
+	}
+}
+
+func TestRuntimeScopeIsolated(t *testing.T) {
+	if !strings.HasPrefix(strings.TrimSpace(runtimeJS), "globalThis.Tally = (function") {
+		t.Error("runtime.js does not open with the namespace-IIFE assignment")
+	}
+	for _, line := range strings.Split(runtimeJS, "\n") {
+		if strings.HasPrefix(line, "const ") || strings.HasPrefix(line, "let ") || strings.HasPrefix(line, "var ") {
+			t.Errorf("runtime.js leaks a top-level binding: %q", line)
+		}
+	}
+}
+
+func TestRuntimePresentInEveryRenderedWidget(t *testing.T) {
+	for _, name := range Names() {
+		html, _ := HTML(name)
+		if !strings.Contains(html, "globalThis.Tally =") || !strings.Contains(html, "extractFirstPagePayload") {
+			t.Errorf("%s: shared runtime helpers not present in rendered HTML", name)
+		}
 	}
 }
 
@@ -105,10 +182,62 @@ func TestPreviewHTMLUsesShim(t *testing.T) {
 	if strings.Contains(html, BundlePlaceholder) {
 		t.Error("placeholder not substituted in preview")
 	}
-	if !strings.Contains(html, "previewShim") && !strings.Contains(html, "callServerTool(a){console.log") {
+	if !strings.Contains(html, "TallyPreviewHost") && !strings.Contains(html, `console.log("callServerTool"`) {
 		t.Error("preview not wired to the fake host shim")
 	}
 	if strings.Contains(html, "class eI extends") {
 		t.Error("preview must not embed the real ext-apps runtime")
+	}
+	// The timeline supplies its own demo fixture.
+	if !strings.Contains(html, "TallyPreviewFixture") {
+		t.Error("timeline preview is missing its demo fixture")
+	}
+}
+
+const placeholderWidget = `<!doctype html>
+<main id="main"></main>
+<script type="module">
+/*__EXT_APPS_BUNDLE__*/
+(async () => { await Tally.mountWidget({ name: "x", version: "1" }); })();
+</script>`
+
+func TestRegistryWalksMultipleWidgets(t *testing.T) {
+	fsys := fstest.MapFS{
+		"src/a/index.html": {Data: []byte(placeholderWidget)},
+		"src/b/index.html": {Data: []byte(placeholderWidget)},
+		"src/b/preview.js": {Data: []byte(`globalThis.TallyPreviewFixture = { marker: "b-fixture" };`)},
+	}
+	ws, err := buildRegistry(fsys, "globalThis.ExtApps={App:1};")
+	if err != nil {
+		t.Fatalf("buildRegistry: %v", err)
+	}
+	for _, name := range []string{"a", "b"} {
+		if _, ok := ws.rendered[name]; !ok {
+			t.Errorf("widget %q not rendered", name)
+		}
+		if _, ok := ws.preview[name]; !ok {
+			t.Errorf("widget %q has no preview", name)
+		}
+		if strings.Contains(ws.rendered[name], BundlePlaceholder) {
+			t.Errorf("widget %q placeholder not substituted", name)
+		}
+	}
+	if strings.Contains(ws.preview["a"], "b-fixture") {
+		t.Error("widget b's fixture leaked into widget a's preview")
+	}
+	if !strings.Contains(ws.preview["b"], "b-fixture") {
+		t.Error("widget b's preview is missing its fixture")
+	}
+}
+
+func TestRegistryRejectsMissingPlaceholder(t *testing.T) {
+	for _, body := range []string{
+		"<!doctype html><main></main>",                                  // zero
+		"<!doctype html>/*__EXT_APPS_BUNDLE__*//*__EXT_APPS_BUNDLE__*/", // two
+	} {
+		fsys := fstest.MapFS{"src/x/index.html": {Data: []byte(body)}}
+		if _, err := buildRegistry(fsys, "x"); err == nil {
+			t.Errorf("expected error for placeholder count in %q", body)
+		}
 	}
 }
