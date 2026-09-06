@@ -99,18 +99,30 @@ function mountWidget(opts) {
   // offers a fullscreen mode and we are not already in it, hide it otherwise
   // (the host provides its own way back out of fullscreen).
   //
-  // The context that arrives when leaving fullscreen can omit
-  // `availableDisplayModes` (just like it can omit `theme`). Latch the last
-  // known "fullscreen is available" so a partial context doesn't permanently
-  // hide the button after the user closes fullscreen once.
+  // Both facts arrive piecemeal and unreliably: the context that fires when
+  // the display mode changes can omit `availableDisplayModes` (just like it
+  // can omit `theme`), and some hosts report a fullscreen switch *only* in
+  // the reply to requestDisplayMode, never as a context-changed event. So we
+  // latch both: `canFullscreen` from whatever context first advertises it,
+  // and `inFullscreen` from every signal we get (context events in either
+  // direction, plus the requestDisplayMode reply).
   let canFullscreen = false;
+  let inFullscreen = false;
+  function renderExpandBtn() {
+    if (expandBtn) expandBtn.hidden = !canFullscreen || inFullscreen;
+  }
+  function noteDisplayMode(mode) {
+    if (mode === "fullscreen" || mode === "inline" || mode === "pip") {
+      inFullscreen = mode === "fullscreen";
+      renderExpandBtn();
+    }
+  }
   function syncDisplayMode(ctx) {
-    if (!expandBtn) return;
-    if (!!ctx && Array.isArray(ctx.availableDisplayModes)) {
+    if (ctx && Array.isArray(ctx.availableDisplayModes)) {
       canFullscreen = ctx.availableDisplayModes.includes("fullscreen");
     }
-    const inFullscreen = !!ctx && (ctx.displayMode === "fullscreen" || ctx.mode === "fullscreen");
-    expandBtn.hidden = !canFullscreen || inFullscreen;
+    if (ctx) noteDisplayMode(ctx.displayMode || ctx.mode);
+    renderExpandBtn();
   }
 
   app.onhostcontextchanged = (ctx) => { if (ctx) { applyTheme(ctx.theme); syncDisplayMode(ctx); } };
@@ -129,7 +141,12 @@ function mountWidget(opts) {
     applyTheme(app.getHostContext()?.theme);
 
     if (expandBtn) {
-      expandBtn.addEventListener("click", () => app.requestDisplayMode({ mode: "fullscreen" }));
+      expandBtn.addEventListener("click", async () => {
+        try {
+          const res = await app.requestDisplayMode({ mode: "fullscreen" });
+          noteDisplayMode(res && (res.mode || res.displayMode));
+        } catch { /* host refused / unsupported -- leave button as is */ }
+      });
     }
     syncDisplayMode(app.getHostContext());
   }
