@@ -8,6 +8,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"tally/internal/assets"
 	"tally/internal/authn"
 	"tally/internal/bootstrap"
 	"tally/internal/mcpserver"
@@ -19,7 +22,9 @@ import (
 
 const (
 	serverName    = "tally-mcp"
-	serverVersion = "0.1.3"
+	serverVersion = "0.1.5"
+	serverTitle   = "Tally"
+	serverWebsite = "https://github.com/chaoliu719/tally"
 )
 
 func main() {
@@ -46,7 +51,17 @@ func main() {
 // unauthenticated /healthz check. Split out from main so it can be exercised
 // directly with httptest, without binding a real network port.
 func buildMux(cfg *bootstrap.Config, db *sql.DB) *http.ServeMux {
-	server := mcpserver.New(serverName, serverVersion)
+	server := mcpserver.New(&mcp.Implementation{
+		Name:       serverName,
+		Version:    serverVersion,
+		Title:      serverTitle,
+		WebsiteURL: serverWebsite,
+		Icons: []mcp.Icon{{
+			Source:   cfg.PublicBaseURL + "/icon.png",
+			MIMEType: "image/png",
+			Sizes:    []string{"512x512"},
+		}},
+	})
 	tools.RegisterAll(server, tools.Deps{
 		DB:            db,
 		Q:             store.New(db),
@@ -66,6 +81,12 @@ func buildMux(cfg *bootstrap.Config, db *sql.DB) *http.ServeMux {
 		w.WriteHeader(http.StatusOK)
 	})
 
+	// Brand assets: the server icon advertised in the initialize response and
+	// the site favicon. Public, like /healthz and /.well-known/* -- hosts and
+	// browsers fetch these with a plain unauthenticated GET.
+	mux.HandleFunc("/icon.png", serveAsset("icon.png"))
+	mux.HandleFunc("/favicon.ico", serveAsset("favicon.ico"))
+
 	// Opt-in dev aid: serve widget HTML wired to a fake host so it can be
 	// styled in a plain browser tab. Off unless TALLY_DEV_WIDGET_PREVIEW=1;
 	// never enabled in the production deployment.
@@ -83,4 +104,19 @@ func buildMux(cfg *bootstrap.Config, db *sql.DB) *http.ServeMux {
 	}
 
 	return mux
+}
+
+// serveAsset returns a handler that writes the named embedded brand asset with
+// its Content-Type and a day-long cache hint.
+func serveAsset(name string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		data, contentType, ok := assets.Bytes(name)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		_, _ = w.Write(data)
+	}
 }

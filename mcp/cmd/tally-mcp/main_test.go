@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -52,7 +53,7 @@ func (t *bearerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 func TestMCPHandshakeFlow(t *testing.T) {
 	const token = "test-token"
 
-	cfg := &bootstrap.Config{MCPToken: token, DBPath: filepath.Join(t.TempDir(), "tally.db")}
+	cfg := &bootstrap.Config{MCPToken: token, PublicBaseURL: testBaseURL, DBPath: filepath.Join(t.TempDir(), "tally.db")}
 	db, err := bootstrap.InitDataStore(cfg)
 	if err != nil {
 		t.Fatalf("InitDataStore failed: %v", err)
@@ -78,6 +79,25 @@ func TestMCPHandshakeFlow(t *testing.T) {
 		t.Fatalf("initialize handshake failed: %v", err)
 	}
 	defer session.Close()
+
+	if info := session.InitializeResult().ServerInfo; info == nil {
+		t.Error("initialize result has no serverInfo")
+	} else {
+		if info.Title != "Tally" {
+			t.Errorf("serverInfo.title = %q, want %q", info.Title, "Tally")
+		}
+		if !strings.HasPrefix(info.WebsiteURL, "https://") {
+			t.Errorf("serverInfo.websiteUrl = %q, want an https:// URL", info.WebsiteURL)
+		}
+		if len(info.Icons) == 0 {
+			t.Error("serverInfo.icons is empty")
+		} else {
+			src := info.Icons[0].Source
+			if !strings.HasPrefix(src, "https://") || !strings.HasSuffix(src, "/icon.png") {
+				t.Errorf("serverInfo.icons[0].src = %q, want an https:// URL ending in /icon.png", src)
+			}
+		}
+	}
 
 	if _, err := session.ListTools(ctx, nil); err != nil {
 		t.Fatalf("tools/list failed: %v", err)
@@ -244,5 +264,45 @@ func TestWellKnownEndpointsAreServedUnauthenticated(t *testing.T) {
 		if code := getStatus(t, httpServer.URL+path); code != http.StatusOK {
 			t.Errorf("GET %s = %d, want 200", path, code)
 		}
+	}
+}
+
+// TestBrandAssetsAreServedUnauthenticated checks the icon and favicon are
+// reachable without credentials and carry an image Content-Type, and that
+// their public nature does not loosen the auth requirement on /mcp.
+func TestBrandAssetsAreServedUnauthenticated(t *testing.T) {
+	cfg := newTestConfig(t)
+	db, err := bootstrap.InitDataStore(cfg)
+	if err != nil {
+		t.Fatalf("InitDataStore failed: %v", err)
+	}
+	defer db.Close()
+
+	httpServer := httptest.NewServer(buildMux(cfg, db))
+	defer httpServer.Close()
+
+	for path, wantCT := range map[string]string{
+		"/icon.png":    "image/png",
+		"/favicon.ico": "image/x-icon",
+	} {
+		resp, err := http.Get(httpServer.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s failed: %v", path, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("GET %s = %d, want 200", path, resp.StatusCode)
+		}
+		if ct := resp.Header.Get("Content-Type"); ct != wantCT {
+			t.Errorf("GET %s Content-Type = %q, want %q", path, ct, wantCT)
+		}
+		if len(body) == 0 {
+			t.Errorf("GET %s returned an empty body", path)
+		}
+	}
+
+	if code := getStatus(t, httpServer.URL+"/mcp"); code != http.StatusUnauthorized {
+		t.Errorf("GET /mcp = %d, want 401 (brand-asset routes must not loosen /mcp auth)", code)
 	}
 }

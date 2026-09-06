@@ -57,7 +57,7 @@ func newTestSessionWithStore(t *testing.T) (*mcp.ClientSession, string, *store.Q
 	t.Cleanup(func() { db.Close() })
 
 	q := store.New(db)
-	server := mcpserver.New("tally-mcp-test", "0.0.0")
+	server := mcpserver.New(&mcp.Implementation{Name: "tally-mcp-test", Version: "0.0.0"})
 	tools.RegisterAll(server, tools.Deps{DB: db, Q: q, ConfirmSecret: cfg.ConfirmationSecret})
 
 	httpServer := httptest.NewServer(mcpserver.HTTPHandler(server))

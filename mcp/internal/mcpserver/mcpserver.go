@@ -7,11 +7,13 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// New creates an MCP server with the given implementation name/version.
-// Tools are registered onto it separately (see internal/tools), keeping this
+// New creates an MCP server advertising the given implementation info (name,
+// version, and any branding fields such as Title/WebsiteURL/Icons). The value
+// is handed to the SDK as-is and surfaces in the initialize response. Tools are
+// registered onto the server separately (see internal/tools), keeping this
 // package limited to transport/protocol concerns.
-func New(name, version string) *mcp.Server {
-	return mcp.NewServer(&mcp.Implementation{Name: name, Version: version}, nil)
+func New(impl *mcp.Implementation) *mcp.Server {
+	return mcp.NewServer(impl, nil)
 }
 
 // HTTPHandler returns an http.Handler that serves the MCP streamable-HTTP
