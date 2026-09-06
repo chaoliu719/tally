@@ -60,7 +60,7 @@
   `initialize` 的 serverInfo 含 `title: "Tally"` / `websiteUrl` / `icons[0].src =
   https://tally.liuchao.life/icon.png`,且无凭据 `/mcp` 仍 401。
 - [x] 6.3 `openspec validate add-server-branding-icon --strict` 通过。
-- [ ] 6.4 部署(见 memory: tally-mcp deploy flow):build 镜像推 GHCR `:latest` → `ssh aliyun`
+- [x] 6.4 部署(见 memory: tally-mcp deploy flow):build 镜像推 GHCR `:latest` → `ssh aliyun`
   `cd ~/tally-mcp && docker compose pull && docker compose up -d` → `curl https://tally.liuchao.life/healthz`
   → `curl -s https://tally.liuchao.life/icon.png -o /tmp/icon.png && file /tmp/icon.png` 确认是 PNG。
 - [x] 6.5 归档:`openspec-archive-change`,把 delta 同步进
