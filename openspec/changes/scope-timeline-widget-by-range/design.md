@@ -78,6 +78,8 @@ type TimelineScope struct {
 
 文本内容改为:生效范围的可读描述、范围内条数、按币种的收入合计与支出合计,并提示"需要明细可用带同样范围的 `search_transactions`"。**不再拼接 JSON 载荷**;交易、`scope`、查找表只走结构化结果(`OpenTransactionTimelineOutput`)。范围内无交易时摘要说明"该范围内没有交易"并带上范围。
 
+**验证结论(任务 1.1)**:`runtime.js` 的 `extractFirstPagePayload` 先读 `structuredContent`(含 `transactions` 数组或数值型 `total` 即采用),仅在结构化结果缺失时才回退解析文本块;用 node 直接加载 `runtime.js`,喂入"只有结构化结果、文本不含 JSON"的结果,首屏载荷读取正常。因此去掉文本里的 JSON 不影响面板。唯一残余风险是"只投递文本、不投递 `structuredContent`"的宿主,MCP Apps 规范下宿主应下发完整的工具结果,本地无法对真实宿主复验,需在部署后于 Claude app 里实际打开一次确认。另外,结果里的 `total` 字段保留,语义改为范围内条数(与 `scope` 一致,旧面板读它也不会出错),因此 `scope` 里不再单独放 `Count`。
+
 **验证门槛(实现第一步)**:先确认面板在目标宿主上通过结构化结果拿到数据,不依赖文本块里的 JSON。若验证发现存在只投递文本的宿主,则本决定降级为"文本里仍保留 JSON 但不含在摘要段",并把该事实记入 spec 的降级说明后再继续——这是唯一会改变任务拆分的未知项,故放在 tasks 第 1 组且先于其余改动。
 
 ### D5: 面板的范围展示、只读标签与日期约束
