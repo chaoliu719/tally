@@ -61,9 +61,10 @@ type TimelineScope struct {
     StartTime, EndTime string // 实际用于查询的定宽字符串(空表示未设)
     CategoryID, SourceID string
     IncludeDescendants bool   // 有 category_id 时恒为 true
-    Count int64               // 范围内交易总条数
 }
 ```
+
+范围内交易总条数放在结果原有的 `total` 字段里(语义由"账本总数"改为"范围内条数",不传范围时二者相同)。
 
 面板后台取数时,直接用 `scope.StartTime` / `EndTime` / `CategoryID` / `SourceID` / `IncludeDescendants` 作为每页 `search_transactions` 的参数,**不自己重新拼接日期**,从而保证与游标指纹逐字一致,也避免面板与服务端各算一遍日期边界。
 

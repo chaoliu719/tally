@@ -7,7 +7,7 @@
 - [x] 2.1 `queries.sql` 新增 `SummarizeTimelineScope`(`ledger_id` / `source_id` / `category_ids_json` / `start_time` / `end_time`,按 `currency` 分组返回 `COUNT(*)`、收入合计、支出合计),重新生成 sqlc 代码。验证:`go build ./...` 通过;`internal/store` 层测试覆盖按时间、按来源、按分类集合、多币种分组、空范围。
 - [x] 2.2 `OpenTransactionTimelineInput` 新增 `start_date` / `end_date` / `category_id` / `source_id`;实现严格日期解析(`2006-01-02`)、`start_date > end_date` 报错、`GetCategory` / `GetSource` 校验属于该账本;日期换算成 `00:00:00` / `23:59:59` 的 `start_time` / `end_time`;`category_id` 用 `ListCategoryDescendantIDs` 展开。验证:`timeline_test.go` 覆盖非法日期格式、开始晚于结束、分类/来源不属于该账本、只传一端日期、不传任何范围参数(行为与此前一致)。
 - [x] 2.3 首屏查询 `SearchTransactionsDesc` 与游标指纹(`searchTransactionsFilterFields`)带上范围条件,与 `searchTransactions` 组装指纹的方式一致。验证:`timeline_test.go` 断言带范围时首屏只含范围内交易(含 9 月 30 日 23:59:59、不含 10 月 1 日 00:00:00),且用返回的 `next_cursor` 加同样参数调用 `search_transactions` 能续页、改动任一范围参数则被拒。
-- [x] 2.4 结果新增 `scope`(见 design D2),用 `SummarizeTimelineScope` 填 `Count` 并得到按币种收支合计;不再调用 `TransactionStats` 作为展示用总数。验证:`timeline_test.go` 断言 `scope` 回显各字段、`Count` 等于范围内实际条数、范围外交易不计入。
+- [x] 2.4 结果新增 `scope`(见 design D2),用 `SummarizeTimelineScope` 得到范围内条数(填入结果的 `total`)与按币种收支合计;不再调用 `TransactionStats` 作为展示用总数。验证:`timeline_test.go` 断言 `scope` 回显各字段、`total` 等于范围内实际条数、范围外交易不计入。
 - [x] 2.5 文本摘要重写:生效范围描述、范围内条数、按币种(`currency.FormatMajor`)的收入与支出合计、"需要明细可用带同样范围的 `search_transactions`"提示;不再拼接交易 JSON(按第 1 组结论);范围内无交易时说明"该范围内没有交易"并带上范围。验证:`timeline_test.go` 断言文本不含任何单笔明细、多币种分列不相加、空范围文案正确。
 - [x] 2.6 更新工具 `Description` 与各输入字段的 `jsonschema` 说明,写成给 Agent 看的规则(只加载指定范围、范围外不加载、不传即不限制、换范围需重新打开、日期含当天)。验证:`go test ./internal/tools/` 通过;`mcp/README.md` 中该工具的说明同步更新,文中示例参数可对照代码核对。
 
@@ -22,13 +22,13 @@
 
 ## 4. skill:使用说明与默认行为
 
-- [ ] 4.1 `plugin/skills/query/SKILL.md` 新增"用时间线浏览"一节(见 design D6 与 `plugin-query-skill` delta),并在 `description` 里补上"打开时间线 / 翻翻账本"一类触发说法。验证:通读该节,对照 delta 的每个 Scenario(本月、无范围默认 30 天、明确要全部、分类/来源先查 id、换范围重新打开、`date` 换算)逐条能在文字里找到对应规则;文中 `date` 示例命令在本机能跑出 `YYYY-MM-DD`。
-- [ ] 4.2 `plugin/README.md` 如有 skill 触发说明或工具清单提及时间线,同步更新。验证:`Grep` 该 README 中相关处与新行为一致。
+- [x] 4.1 `plugin/skills/query/SKILL.md` 新增"用时间线浏览"一节(见 design D6 与 `plugin-query-skill` delta),并在 `description` 里补上"打开时间线 / 翻翻账本"一类触发说法。验证:通读该节,对照 delta 的每个 Scenario(本月、无范围默认 30 天、明确要全部、分类/来源先查 id、换范围重新打开、`date` 换算)逐条能在文字里找到对应规则;文中 `date` 示例命令在本机能跑出 `YYYY-MM-DD`。
+- [x] 4.2 `plugin/README.md` 如有 skill 触发说明或工具清单提及时间线,同步更新。验证:`Grep` 该 README 中相关处与新行为一致。
 
 ## 5. 校验与收尾
 
-- [ ] 5.1 `go test ./...` 全绿,`openspec validate scope-timeline-widget-by-range --strict` 通过。验证:两条命令均退出码 0。
-- [ ] 5.2 用本机 stdio/HTTP 方式起服务,依次以(a)只传 `ledger_id`、(b)9 月范围、(c)9 月 + 分类、(d)非法范围 调用 `open_transaction_timeline`,检查文本摘要与结构化结果。验证:四种结果与 spec 的对应 Scenario 一致,(d)返回明确错误。
+- [x] 5.1 `go test ./...` 全绿,`openspec validate scope-timeline-widget-by-range --strict` 通过。验证:两条命令均退出码 0。
+- [x] 5.2 用本机 stdio/HTTP 方式起服务,依次以(a)只传 `ledger_id`、(b)9 月范围、(c)9 月 + 分类、(d)非法范围 调用 `open_transaction_timeline`,检查文本摘要与结构化结果。验证:四种结果与 spec 的对应 Scenario 一致,(d)返回明确错误。
 
 ## Workflow follow-up
 
