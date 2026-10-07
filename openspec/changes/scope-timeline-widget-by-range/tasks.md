@@ -13,12 +13,12 @@
 
 ## 3. widget:范围展示、取数与筛选约束
 
-- [ ] 3.1 面板读取 `scope`:后台 `drainAll` 每一页 `search_transactions` 的参数用 `scope` 回传的 `start_time` / `end_time` / `category_id` / `source_id` / `include_descendants`(不自行拼日期);缺 `scope` 时按"全部"处理。验证:`widgets_test.go` 断言 HTML 含对 `scope` 的读取;e2e 构造 9 月范围且账本含范围外交易,断言面板取回的交易恰为范围内交易(`e2e_transaction_timeline_paging_test.go`)。
-- [ ] 3.2 顶部改为"范围 + 条数"(见 design D5):无筛选时显示范围内条数,有活跃筛选时条数改为本地匹配数、范围描述不变;不再使用账本总数 `total`。验证:`widgets_test.go` 断言新文案与对 `total` 的移除;手动在预览页(`preview.js`)检查两种状态。
-- [ ] 3.3 预置的分类/来源显示为只读标签(分类附"含子分类"),隐藏对应下拉;未预置的保持下拉;`filterReset` 只清用户设置的输入、不动预置范围。验证:`widgets_test.go` 断言存在只读标签逻辑与重置不清范围;预览页分别以"预置分类""预置来源""都不预置"三种 `scope` 手动核对。
-- [ ] 3.4 日期输入的 `min` / `max` 取自 `scope.start_date` / `end_date`(某端未设则不加)。验证:`widgets_test.go` 断言该约束逻辑;预览页手动核对范围外日期不可选。
-- [ ] 3.5 空状态三分:账本为空、范围内为空(`该范围内没有交易` + 范围)、筛选后为空。验证:`widgets_test.go` 断言三种文案都在 HTML 中;`go test ./internal/widgets/` 通过。
-- [ ] 3.6 同步 e2e:`e2e_transaction_timeline_widget_test.go` 覆盖带范围打开、结果含 `scope`、旧式无 `scope` 结果的降级。验证:`go test ./cmd/tally-mcp/` 全绿。
+- [x] 3.1 面板读取 `scope`:后台 `drainAll` 每一页 `search_transactions` 的参数用 `scope` 回传的 `start_time` / `end_time` / `category_id` / `source_id` / `include_descendants`(不自行拼日期);缺 `scope` 时按"全部"处理。验证:`widgets_test.go` 断言 HTML 含对 `scope` 的读取;e2e 构造 9 月范围且账本含范围外交易,断言面板取回的交易恰为范围内交易(`e2e_transaction_timeline_paging_test.go`)。
+- [x] 3.2 顶部改为"范围 + 条数"(见 design D5):无筛选时显示范围内条数,有活跃筛选时条数改为本地匹配数、范围描述不变;不再使用账本总数 `total`。验证:`widgets_test.go` 断言新文案与对 `total` 的移除;手动在预览页(`preview.js`)检查两种状态。
+- [x] 3.3 预置的分类/来源显示为只读标签(分类附"含子分类"),隐藏对应下拉;未预置的保持下拉;`filterReset` 只清用户设置的输入、不动预置范围。验证:`widgets_test.go` 断言存在只读标签逻辑与重置不清范围;预览页分别以"预置分类""预置来源""都不预置"三种 `scope` 手动核对。
+- [x] 3.4 日期输入的 `min` / `max` 取自 `scope.start_date` / `end_date`(某端未设则不加)。验证:`widgets_test.go` 断言该约束逻辑;预览页手动核对范围外日期不可选。
+- [x] 3.5 空状态三分:账本为空、范围内为空(`该范围内没有交易` + 范围)、筛选后为空。验证:`widgets_test.go` 断言三种文案都在 HTML 中;`go test ./internal/widgets/` 通过。
+- [x] 3.6 同步 e2e:`e2e_transaction_timeline_widget_test.go` 覆盖带范围打开、结果含 `scope`、旧式无 `scope` 结果的降级。验证:`go test ./cmd/tally-mcp/` 全绿。
 
 ## 4. skill:使用说明与默认行为
 

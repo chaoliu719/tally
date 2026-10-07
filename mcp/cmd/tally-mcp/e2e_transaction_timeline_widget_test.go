@@ -122,3 +122,76 @@ func TestE2ETransactionTimelineEmptyAndMissing(t *testing.T) {
 	// Nonexistent ledger: tool-level error.
 	callExpectError(t, session, "open_transaction_timeline", tools.OpenTransactionTimelineInput{LedgerID: "999999"})
 }
+
+// TestE2ETransactionTimelineScopedOpen covers opening the timeline with a
+// scope over real HTTP wiring (scope-timeline-widget-by-range): the result
+// echoes the effective scope for the panel, counts only what is inside it,
+// keeps the lookups, and its text is a summary that lists no transaction.
+// Malformed scopes are rejected before any panel would render.
+func TestE2ETransactionTimelineScopedOpen(t *testing.T) {
+	session, ledgerID := newE2ESession(t)
+
+	var wallet tools.ManageSourceOutput
+	call(t, session, "manage_source", tools.ManageSourceInput{LedgerID: ledgerID, Operation: "create", Name: "Checking"}, &wallet)
+	var cat tools.ManageCategoryOutput
+	call(t, session, "manage_category", tools.ManageCategoryInput{LedgerID: ledgerID, Operation: "create", Name: "Dining"}, &cat)
+	for _, c := range []struct{ at, note string }{
+		{"2026-08-31 23:59:59", "before the scope"},
+		{"2026-09-15 09:30:00", "STARBUCKS inside the scope"},
+		{"2026-10-01 00:00:00", "after the scope"},
+	} {
+		call(t, session, "create_transaction", tools.CreateTransactionInput{LedgerID: ledgerID,
+			Type: "expense", SourceID: wallet.Source.ID, CategoryID: cat.Category.ID,
+			Amount: cnyAmount(1234), Currency: "CNY", Time: c.at, Comment: c.note,
+		}, &tools.CreateTransactionOutput{})
+	}
+
+	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "open_transaction_timeline",
+		Arguments: tools.OpenTransactionTimelineInput{
+			LedgerID: ledgerID, StartDate: "2026-09-01", EndDate: "2026-09-30", CategoryID: cat.Category.ID,
+		},
+	})
+	if err != nil || res.IsError {
+		t.Fatalf("scoped open failed: err=%v isError=%v", err, res.IsError)
+	}
+	var out tools.OpenTransactionTimelineOutput
+	raw, _ := json.Marshal(res.StructuredContent)
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode structured result: %v", err)
+	}
+	if out.Total != 1 || len(out.Transactions) != 1 || out.Transactions[0].Comment != "STARBUCKS inside the scope" {
+		t.Errorf("scoped result: total=%d rows=%+v, want just the in-scope row", out.Total, out.Transactions)
+	}
+	want := tools.TimelineScope{
+		StartDate: "2026-09-01", EndDate: "2026-09-30",
+		StartTime: "2026-09-01 00:00:00", EndTime: "2026-09-30 23:59:59",
+		CategoryID: cat.Category.ID, IncludeDescendants: true,
+	}
+	if out.Scope != want {
+		t.Errorf("scope = %+v, want %+v", out.Scope, want)
+	}
+	if len(out.Categories) != 1 || len(out.Sources) != 1 {
+		t.Errorf("lookups must still ride along: categories=%d sources=%d", len(out.Categories), len(out.Sources))
+	}
+
+	text := contentText(res)
+	if !strings.Contains(text, "1 transaction(s) in scope") || !strings.Contains(text, "CNY: income 0.00, expense 12.34") {
+		t.Errorf("summary = %q", text)
+	}
+	for _, leaked := range []string{"STARBUCKS", "before the scope", "after the scope", `"transactions"`} {
+		if strings.Contains(text, leaked) {
+			t.Errorf("text result leaks %q; the transactions belong in the structured result only: %q", leaked, text)
+		}
+	}
+
+	// An unscoped open still sees the whole ledger (the tool applies no default range).
+	var all tools.OpenTransactionTimelineOutput
+	call(t, session, "open_transaction_timeline", tools.OpenTransactionTimelineInput{LedgerID: ledgerID}, &all)
+	if all.Total != 3 || len(all.Transactions) != 3 {
+		t.Errorf("unscoped: total=%d rows=%d, want 3/3", all.Total, len(all.Transactions))
+	}
+
+	callExpectError(t, session, "open_transaction_timeline", tools.OpenTransactionTimelineInput{LedgerID: ledgerID, StartDate: "2026-09-30", EndDate: "2026-09-01"})
+	callExpectError(t, session, "open_transaction_timeline", tools.OpenTransactionTimelineInput{LedgerID: ledgerID, StartDate: "09/01/2026"})
+}
