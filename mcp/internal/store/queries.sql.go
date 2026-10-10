@@ -672,6 +672,79 @@ func (q *Queries) SearchTransactionsDesc(ctx context.Context, arg SearchTransact
 	return items, nil
 }
 
+const summarizeTimelineScope = `-- name: SummarizeTimelineScope :many
+SELECT
+    t.currency AS currency,
+    COUNT(*) AS count,
+    CAST(COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) AS INTEGER) AS income,
+    CAST(COALESCE(SUM(CASE WHEN t.type = 'expense' THEN -t.amount ELSE 0 END), 0) AS INTEGER) AS expense
+FROM transactions t
+WHERE t.ledger_id = ?1
+  AND (?2   IS NULL OR t.source_id = ?2)
+  AND (
+    ?3 IS NULL
+    OR t.category_id IN (SELECT value FROM json_each(?3))
+  )
+  AND (?4  IS NULL OR t.time >= ?4)
+  AND (?5    IS NULL OR t.time <= ?5)
+GROUP BY t.currency
+ORDER BY t.currency
+`
+
+type SummarizeTimelineScopeParams struct {
+	LedgerID        int64
+	SourceID        interface{}
+	CategoryIdsJson interface{}
+	StartTime       interface{}
+	EndTime         interface{}
+}
+
+type SummarizeTimelineScopeRow struct {
+	Currency string
+	Count    int64
+	Income   int64
+	Expense  int64
+}
+
+// Count and income/expense totals grouped by currency over the scope an
+// open_transaction_timeline call was opened with. The filters mirror the
+// range part of SearchTransactionsDesc so the count and totals describe
+// exactly the rows the widget will page through. Sum of count over the
+// returned rows is the scope's total transaction count.
+func (q *Queries) SummarizeTimelineScope(ctx context.Context, arg SummarizeTimelineScopeParams) ([]SummarizeTimelineScopeRow, error) {
+	rows, err := q.db.QueryContext(ctx, summarizeTimelineScope,
+		arg.LedgerID,
+		arg.SourceID,
+		arg.CategoryIdsJson,
+		arg.StartTime,
+		arg.EndTime,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SummarizeTimelineScopeRow{}
+	for rows.Next() {
+		var i SummarizeTimelineScopeRow
+		if err := rows.Scan(
+			&i.Currency,
+			&i.Count,
+			&i.Income,
+			&i.Expense,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const summarizeTransactionsByCategory = `-- name: SummarizeTransactionsByCategory :many
 SELECT
     t.category_id AS category_id,

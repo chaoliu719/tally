@@ -24,7 +24,7 @@ account to create or log into.
 | `update_transaction` | Replace every field of an existing transaction by id (same validation rules as `create_transaction`). Full replacement, not a partial update; no confirmation required. |
 | `delete_transaction` | Delete a transaction by id. Two-step preview → apply confirmation (see below); unlike source/category deletion, any existing transaction can be deleted. |
 | `get_financial_summary` | Aggregate income/expense/net totals over an optional time range within one ledger, grouped by currency, and broken down by category and by source. Read-only. |
-| `open_transaction_timeline` | Open an interactive, scrollable timeline of one ledger's transactions (day-grouped, newest first) as an inline MCP App panel on hosts that support it; falls back to a text summary elsewhere. Read-only. |
+| `open_transaction_timeline` | Open an interactive, scrollable timeline of one ledger's transactions (day-grouped, newest first) as an inline MCP App panel on hosts that support it; falls back to a text summary elsewhere. Optional `start_date` / `end_date` (`YYYY-MM-DD`, whole days included), `category_id` (with all its descendant categories) and `source_id` fix the panel's scope when it opens — only transactions inside the scope are loaded and the panel cannot widen it, so a different period, category or source means calling the tool again. Omitting a parameter restricts nothing: with only `ledger_id` the panel covers the ledger's whole history. The text result is a summary only (scope, transaction count, income/expense totals per currency) and lists no transactions. Read-only. |
 
 ### Interactive widgets
 

@@ -116,12 +116,13 @@ func TestTimelineWidgetBehaviours(t *testing.T) {
 		"list_categories",      // fallback id->name lookup for an older server
 		"list_sources",         // fallback id->name lookup for an older server
 		"ingestInlineLookups",  // categories/sources ride along in the tool result
-		"drainAll",             // background: pull the whole ledger for local paging/filtering
+		"drainAll",             // background: pull the whole scope for local paging/filtering
 		"descendantIdsOf",      // local include-descendants for the category filter
 		"matchesFilters",       // filtering is local, no search_transactions params
 		"上一页",                  // pager control
 		"页尾",                   // jump-to-last-page control
-		"这个账本还没有交易",            // empty state
+		"这个账本还没有交易",            // empty state: the ledger itself has nothing
+		"该范围内没有交易",             // empty state: the scope has nothing, distinct from the two others
 		"没有符合当前条件的交易",          // filtered-empty state, distinct from empty ledger
 		"BroadcastChannel",     // supersession guard
 		"onhostcontextchanged", // live theme follow
@@ -159,6 +160,44 @@ func TestTimelineWidgetBehaviours(t *testing.T) {
 	// The "全屏" button hides once the panel is in fullscreen.
 	if !strings.Contains(html, "syncDisplayMode") {
 		t.Error("expand button visibility is not synced to the display mode")
+	}
+}
+
+// TestTimelineWidgetScope pins the scope handling added by
+// scope-timeline-widget-by-range: the panel shows the scope it was opened
+// with, repeats the scope's filters on every background page, swaps the
+// dropdowns the scope fixed for read-only tags, and keeps the date inputs
+// inside the scope. The behaviour itself is exercised in a real browser via
+// the preview harness; these guard that the wiring is not lost.
+func TestTimelineWidgetScope(t *testing.T) {
+	html, _ := HTML("timeline")
+	for _, want := range []string{
+		"scopeArgs",                              // background pages repeat the scope's filters verbatim
+		"...scopeArgs()",                         // ... on every search_transactions call
+		"scope.start_time",                       // dates are taken from the result, never re-derived
+		"scope.include_descendants",              // the category scope's descendants flag rides along too
+		"renderScope",                            // scope bar, read-only tags, date bounds
+		`setBound(input, "min"`,                  // date inputs cannot go before the scope...
+		`setBound(input, "max"`,                  // ... or past it
+		"--scopebar-h",                           // sticky day labels stack under the scope bar
+		"catTagField",                            // read-only stand-in for the fixed category dropdown
+		"srcTagField",                            // read-only stand-in for the fixed source dropdown
+		"（含子分类）",                                 // a category scope includes its descendants
+		"范围：",                                    // scope bar text
+		"payload.scope",                          // older servers send none: handled as "whole ledger"
+		`[hidden] { display: none !important; }`, // el.hidden must really hide (pager on empty scope)
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("timeline widget missing %q", want)
+		}
+	}
+	// The account-wide total is gone from the header: only the scope's count.
+	if strings.Contains(html, "账本总数") {
+		t.Error("timeline widget still refers to a ledger-wide total")
+	}
+	// The scope is never part of the user's local filters, so "重置" cannot widen it.
+	if strings.Contains(html, "filters.scope") {
+		t.Error("scope must not be folded into the user-editable filters")
 	}
 }
 

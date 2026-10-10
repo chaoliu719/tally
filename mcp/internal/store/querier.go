@@ -37,6 +37,12 @@ type Querier interface {
 	// Used by search_transactions when newest_first is set (see
 	// add-transaction-timeline-widget).
 	SearchTransactionsDesc(ctx context.Context, arg SearchTransactionsDescParams) ([]Transaction, error)
+	// Count and income/expense totals grouped by currency over the scope an
+	// open_transaction_timeline call was opened with. The filters mirror the
+	// range part of SearchTransactionsDesc so the count and totals describe
+	// exactly the rows the widget will page through. Sum of count over the
+	// returned rows is the scope's total transaction count.
+	SummarizeTimelineScope(ctx context.Context, arg SummarizeTimelineScopeParams) ([]SummarizeTimelineScopeRow, error)
 	// Aggregates income/expense totals grouped by category and currency, within
 	// one ledger, over an optional [start_time, end_time] window.
 	SummarizeTransactionsByCategory(ctx context.Context, arg SummarizeTransactionsByCategoryParams) ([]SummarizeTransactionsByCategoryRow, error)

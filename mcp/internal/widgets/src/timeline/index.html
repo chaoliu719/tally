@@ -23,6 +23,9 @@
     color-scheme: dark;
   }
   * { box-sizing: border-box; }
+  /* An author `display` (e.g. .pager's flex) otherwise beats the UA's
+     [hidden] rule, so `el.hidden = true` would silently not hide it. */
+  [hidden] { display: none !important; }
   body {
     font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
     margin: 0;
@@ -53,10 +56,27 @@
     cursor: pointer;
   }
   header button:hover { color: var(--fg); }
+  /* The scope this panel was opened with -- always visible, sticky under the
+     header. Its height is published as --scopebar-h so day labels stack below. */
+  .scopebar {
+    position: sticky;
+    top: 41px;
+    z-index: 1;
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 12px;
+    padding: 5px 16px;
+    overflow-wrap: anywhere;
+  }
+  .scopebar:empty { display: none; }
+  /* Never rely on the [hidden] attribute for anything an author rule sets
+     `display` on (see .filterbar below) -- use this class instead. */
+  .is-hidden { display: none !important; }
   .day { padding: 0 16px; }
   .day-label {
     position: sticky;
-    top: 41px;
+    top: calc(41px + var(--scopebar-h, 0px));
     background: var(--bg);
     color: var(--muted);
     font-size: 12px;
@@ -182,6 +202,16 @@
     padding: 4px 6px;
     max-width: 10em;
   }
+  /* Read-only stand-in for a dropdown whose value the scope has fixed. */
+  .filterbar .tag {
+    font-size: 12px;
+    color: var(--fg);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 4px 8px;
+    max-width: 14em;
+    overflow-wrap: anywhere;
+  }
   .filterbar .actions {
     display: flex;
     gap: 8px;
@@ -206,11 +236,14 @@
   <button id="filterToggle" type="button" aria-expanded="false" aria-controls="filterBar">筛选</button>
   <button id="expand" hidden>全屏</button>
 </header>
+<div class="scopebar" id="scopeBar"></div>
 <div class="filterbar" id="filterBar">
   <label class="field">从<input type="date" id="filterStart"></label>
   <label class="field">到<input type="date" id="filterEnd"></label>
-  <label class="field">分类<select id="filterCat"><option value="">不限分类</option></select></label>
-  <label class="field">来源<select id="filterSrc"><option value="">不限来源</option></select></label>
+  <label class="field" id="catField">分类<select id="filterCat"><option value="">不限分类</option></select></label>
+  <div class="field is-hidden" id="catTagField">分类<span class="tag" id="catTag"></span></div>
+  <label class="field" id="srcField">来源<select id="filterSrc"><option value="">不限来源</option></select></label>
+  <div class="field is-hidden" id="srcTagField">来源<span class="tag" id="srcTag"></span></div>
   <div class="actions">
     <button type="button" id="filterReset">重置</button>
   </div>
@@ -240,6 +273,13 @@ const filterEnd = document.getElementById("filterEnd");
 const filterCat = document.getElementById("filterCat");
 const filterSrc = document.getElementById("filterSrc");
 const filterReset = document.getElementById("filterReset");
+const scopeBar = document.getElementById("scopeBar");
+const catField = document.getElementById("catField");
+const catTagField = document.getElementById("catTagField");
+const catTag = document.getElementById("catTag");
+const srcField = document.getElementById("srcField");
+const srcTagField = document.getElementById("srcTagField");
+const srcTag = document.getElementById("srcTag");
 const pagerEl = document.getElementById("pager");
 const pageInfoEl = document.getElementById("pageinfo");
 const firstBtn = document.getElementById("firstBtn");
@@ -268,16 +308,21 @@ let cursor = "";              // search_transactions cursor for the next older c
 let doneFetching = false;     // server has no more transactions to give
 let fetching = false;
 let navBusy = false;          // serializes multi-chunk navigation (next / last)
-let draining = false;         // background "fetch the whole ledger" loop is running
-let total = null;             // ledger-wide count reported by the tool result
+let draining = false;         // background "fetch the whole scope" loop is running
+let total = null;             // count of transactions in the scope, reported by the tool result
+// The scope this panel was opened with (result.scope), or null when the server
+// predates scoping. It is fixed for the life of the panel: only transactions
+// inside it are ever loaded, and the filter bar can only narrow within it.
+let scope = null;
 let pageIdx = 0;              // 0-based current page
 const allTxns = [];           // every transaction fetched so far, newest -> oldest
 
 // active filters, re-committed on every filter-input change (no "应用"
-// button). Filtering is entirely local over allTxns -- start / end are bare
-// "YYYY-MM-DD" strings
-// compared lexically against a row's date prefix (see design.md D2), no
-// search_transactions params, no network.
+// button). Filtering is entirely local over allTxns (the scope's transactions)
+// -- start / end are bare "YYYY-MM-DD" strings compared lexically against a
+// row's date prefix (see design.md D2), no search_transactions params, no
+// network. These are only what the user set in the filter bar; the scope
+// itself is never part of them.
 let filters = { source_id: "", category_id: "", start: "", end: "" };
 let filtersActive = false;
 
@@ -346,6 +391,72 @@ function fracDigits(s) {
 function fmtAmount(a, currency) {
   return `${a} ${currency}`;
 }
+function scopeIsSet() {
+  return !!scope && !!(scope.start_date || scope.end_date || scope.category_id || scope.source_id);
+}
+
+// The scope's filters as search_transactions arguments, taken verbatim from
+// the result: the first-page cursor is fingerprinted with exactly these, so
+// every later page must repeat them unchanged (and the dates are never
+// re-derived here).
+function scopeArgs() {
+  const a = {};
+  if (!scope) return a;
+  if (scope.start_time) a.start_time = scope.start_time;
+  if (scope.end_time) a.end_time = scope.end_time;
+  if (scope.category_id) {
+    a.category_id = String(scope.category_id);
+    a.include_descendants = !!scope.include_descendants;
+  }
+  if (scope.source_id) a.source_id = String(scope.source_id);
+  return a;
+}
+
+function scopeCatText() {
+  return `${catLabel(scope.category_id) || `分类 #${scope.category_id}`}（含子分类）`;
+}
+function scopeSrcText() {
+  return srcById.get(String(scope.source_id)) || `来源 #${scope.source_id}`;
+}
+function scopeText() {
+  const parts = [];
+  if (scope.start_date && scope.end_date) parts.push(`${scope.start_date} 至 ${scope.end_date}`);
+  else if (scope.start_date) parts.push(`${scope.start_date} 起`);
+  else if (scope.end_date) parts.push(`截至 ${scope.end_date}`);
+  if (scope.category_id) parts.push(scopeCatText());
+  if (scope.source_id) parts.push(scopeSrcText());
+  return parts.length ? parts.join(" · ") : "全部交易";
+}
+
+function setBound(input, attr, value) {
+  if (value) input.setAttribute(attr, value); else input.removeAttribute(attr);
+}
+function syncScopeBarHeight() {
+  document.documentElement.style.setProperty("--scopebar-h", scopeBar.textContent ? `${scopeBar.offsetHeight}px` : "0px");
+}
+
+// Show the scope: the bar under the header, read-only tags in place of the
+// dropdowns the scope has already fixed, and date inputs that cannot leave
+// the scope. Safe to call again once the (fallback) lookups arrive, since the
+// names in the bar and tags come from them.
+function renderScope() {
+  scopeBar.textContent = scope ? `范围：${scopeText()}` : "";
+  const catLocked = !!(scope && scope.category_id);
+  catField.classList.toggle("is-hidden", catLocked);
+  catTagField.classList.toggle("is-hidden", !catLocked);
+  catTag.textContent = catLocked ? scopeCatText() : "";
+  const srcLocked = !!(scope && scope.source_id);
+  srcField.classList.toggle("is-hidden", srcLocked);
+  srcTagField.classList.toggle("is-hidden", !srcLocked);
+  srcTag.textContent = srcLocked ? scopeSrcText() : "";
+  for (const input of [filterStart, filterEnd]) {
+    setBound(input, "min", scope && scope.start_date);
+    setBound(input, "max", scope && scope.end_date);
+  }
+  syncScopeBarHeight();
+}
+window.addEventListener("resize", syncScopeBarHeight);
+
 function catLabel(id) {
   const c = catById.get(String(id));
   if (!c) return "";
@@ -545,7 +656,9 @@ function renderPage() {
   if (view.length === 0) {
     const empty = document.createElement("div");
     empty.className = "empty";
-    empty.textContent = filtersActive ? "没有符合当前条件的交易" : "这个账本还没有交易";
+    if (filtersActive) empty.textContent = "没有符合当前条件的交易";
+    else if (scopeIsSet()) empty.textContent = `该范围内没有交易（${scopeText()}）`;
+    else empty.textContent = "这个账本还没有交易";
     mainEl.append(empty);
     pagerEl.hidden = true;
     return;
@@ -579,14 +692,15 @@ function renderPage() {
   renderControls();
 }
 
-// Fetch the next older chunk from the server into allTxns. Always unfiltered
-// -- filtering is done locally over allTxns, so the drain pulls the whole
-// ledger once and every later filter change is free.
+// Fetch the next older chunk of the scope from the server into allTxns. It
+// carries the scope's own filters and nothing else -- the filter bar is
+// applied locally over allTxns, so the drain pulls the scope once and every
+// later filter change is free. Nothing outside the scope is ever requested.
 async function fetchNextChunk() {
   if (fetching || doneFetching || superseded() || !ledgerId) return;
   fetching = true;
   try {
-    const args = { ledger_id: ledgerId, newest_first: true, limit: 100, cursor };
+    const args = { ledger_id: ledgerId, newest_first: true, limit: 100, cursor, ...scopeArgs() };
     const res = await w.app.callServerTool({ name: "search_transactions", arguments: args });
     const page = w.parseSearchResult(res);
     allTxns.push(...(page.transactions || []));
@@ -599,7 +713,7 @@ async function fetchNextChunk() {
   }
 }
 
-// Pull every remaining older transaction into allTxns. Runs once in the
+// Pull every remaining older transaction of the scope into allTxns. Runs once in the
 // background right after the first paint, and is awaited on demand if the
 // user pages past what has arrived. Earlier pages never change as older rows
 // append, so mid-drain we only refresh the controls; the full repaint waits
@@ -645,7 +759,7 @@ function updateMeta() {
 }
 
 // Re-read the filter-bar inputs and re-render locally. Called on every
-// input change -- there is no "应用" button. No network: the whole ledger is
+// input change -- there is no "应用" button. No network: the whole scope is
 // (being) drained into allTxns already, so a filter pass is instant.
 function commitFilters() {
   filters = {
@@ -698,6 +812,9 @@ function onToolResult(result) {
   const payload = w.extractFirstPagePayload(result);
   const txns = Array.isArray(payload.transactions) ? payload.transactions : [];
   total = typeof payload.total === "number" ? payload.total : null;
+  // A server that predates scoping sends no scope: treat it as "the whole
+  // ledger" and show no scope bar.
+  scope = payload.scope && typeof payload.scope === "object" ? payload.scope : null;
 
   allTxns.length = 0;
   allTxns.push(...txns);
@@ -710,6 +827,7 @@ function onToolResult(result) {
   // shows names, with no extra request.
   const haveInline = ingestInlineLookups(payload);
   if (haveInline) populateFilterOptions();
+  renderScope();
   updateMeta();
   renderPage();
 
@@ -718,12 +836,13 @@ function onToolResult(result) {
     loadLookups()
       .then(() => {
         populateFilterOptions();
+        renderScope();
         if (catById.size || srcById.size) renderPage();
       })
       .catch(() => { /* names stay as ids */ });
   }
 
-  // Drain the rest of the ledger into allTxns so paging and filtering become
+  // Drain the rest of the scope into allTxns so paging and filtering become
   // local. A newer widget instance flips supersession and stops this loop.
   if (!doneFetching) void drainAll();
 }

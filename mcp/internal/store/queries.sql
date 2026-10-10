@@ -206,6 +206,29 @@ WHERE t.ledger_id = sqlc.arg('ledger_id')
 GROUP BY t.currency
 ORDER BY t.currency;
 
+-- name: SummarizeTimelineScope :many
+-- Count and income/expense totals grouped by currency over the scope an
+-- open_transaction_timeline call was opened with. The filters mirror the
+-- range part of SearchTransactionsDesc so the count and totals describe
+-- exactly the rows the widget will page through. Sum of count over the
+-- returned rows is the scope's total transaction count.
+SELECT
+    t.currency AS currency,
+    COUNT(*) AS count,
+    CAST(COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) AS INTEGER) AS income,
+    CAST(COALESCE(SUM(CASE WHEN t.type = 'expense' THEN -t.amount ELSE 0 END), 0) AS INTEGER) AS expense
+FROM transactions t
+WHERE t.ledger_id = sqlc.arg('ledger_id')
+  AND (sqlc.narg('source_id')   IS NULL OR t.source_id = sqlc.narg('source_id'))
+  AND (
+    sqlc.narg('category_ids_json') IS NULL
+    OR t.category_id IN (SELECT value FROM json_each(sqlc.narg('category_ids_json')))
+  )
+  AND (sqlc.narg('start_time')  IS NULL OR t.time >= sqlc.narg('start_time'))
+  AND (sqlc.narg('end_time')    IS NULL OR t.time <= sqlc.narg('end_time'))
+GROUP BY t.currency
+ORDER BY t.currency;
+
 -- name: SummarizeTransactionsByCategory :many
 -- Aggregates income/expense totals grouped by category and currency, within
 -- one ledger, over an optional [start_time, end_time] window.
