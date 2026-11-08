@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "tally",
-  "description": "Personal bookkeeping for your agent — tally-mcp plus the skills and hooks that make it useful in conversation.",
+  "description": "Personal bookkeeping for your agent — tally-mcp plus the skills that make it useful in conversation.",
   "owner": {
     "name": "chaoliu719"
   },
@@ -9,7 +9,7 @@
     {
       "name": "tally",
       "source": "./plugin",
-      "description": "Record and analyse a personal ledger through the tally MCP server, with precedent lookup, a conversational preview before every write, and a time-context hook.",
+      "description": "Record, query, analyse and export a personal ledger through the tally MCP server, with precedent lookup, a conversational preview before every write, and category split/merge hygiene.",
       "author": {
         "name": "chaoliu719"
       },

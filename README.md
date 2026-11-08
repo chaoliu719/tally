@@ -6,8 +6,9 @@ A personal bookkeeping capability, packaged for an agent to carry: **tally = tal
   backed by its own SQLite schema: ledgers, sources, categories, transactions. No REST API, no web
   UI, no third-party bookkeeping library underneath.
 - `plugin/` — the practice layer. The skills, commands, agents, and hooks that turn the raw MCP
-  tools into a bookkeeping workflow inside a conversation. Skeleton only for now; content lands as
-  it's built.
+  tools into a bookkeeping workflow inside a conversation. Five skills ship today — `record`,
+  `query`, `analysis`, `optimize`, `export` — while commands, agents, and hooks are still
+  unbuilt.
 
 One-line boundary: tally tracks what your money became, not what kind of person you are. Your
 money is a file you can take with you (a single SQLite database).

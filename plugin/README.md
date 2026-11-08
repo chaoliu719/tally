@@ -69,14 +69,14 @@ For example, via `openclaw config patch --stdin`:
 } } } }
 ```
 
-### The three skills need to be added to your agent's allowlist
+### The five skills need to be added to your agent's allowlist
 
 An agent's `skills` list is an explicit allowlist — a freshly installed plugin's skills aren't on
 it, so `openclaw skills info record --agent <id>` reports `Excluded by agent allowlist` even
-though the plugin itself installed fine. Add `record`, `analysis`, and `optimize` to the target
-agent's `skills` array (`agents.list[].skills` in `openclaw.json`, e.g. via `openclaw config
-patch --stdin` with the agent's full `skills` array including the three new entries — patching an
-array replaces it wholesale, so include the existing entries too).
+though the plugin itself installed fine. Add `record`, `query`, `analysis`, `optimize`, and
+`export` to the target agent's `skills` array (`agents.list[].skills` in `openclaw.json`, e.g. via
+`openclaw config patch --stdin` with the agent's full `skills` array including the five new
+entries — patching an array replaces it wholesale, so include the existing entries too).
 
 ## Verifying the connection
 
