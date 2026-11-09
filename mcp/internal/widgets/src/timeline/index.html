@@ -602,13 +602,21 @@ function makeRow(t) {
   bodyEl.className = "body";
   const desc = document.createElement("div");
   desc.className = "desc";
-  const descIsCat = !t.comment && !!cName;
-  desc.textContent = t.comment || cName || `#${t.id}`;
+  // Main line: merchant first, then the user's own note, then the category,
+  // then the transaction id as a last resort. Historical rows have no
+  // merchant and fall back to their comment naturally.
+  const merchant = t.merchant || "";
+  const note = t.comment || "";
+  const primary = merchant || note || cName || `#${t.id}`;
+  desc.textContent = primary;
   bodyEl.append(desc);
-  if (cName && !descIsCat) {
+  const subs = [];
+  if (merchant && note) subs.push(note);
+  if (cName && primary !== cName) subs.push(cName);
+  for (const text of subs) {
     const sub = document.createElement("div");
     sub.className = "sub";
-    sub.textContent = cName;
+    sub.textContent = text;
     bodyEl.append(sub);
   }
 

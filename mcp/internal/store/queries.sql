@@ -115,12 +115,12 @@ WITH RECURSIVE descendants(id) AS (
 SELECT id FROM descendants;
 
 -- name: CreateTransaction :one
-INSERT INTO transactions (ledger_id, type, source_id, category_id, currency, amount, time, comment, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO transactions (ledger_id, type, source_id, category_id, currency, amount, time, merchant, comment, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: GetTransaction :one
-SELECT id, ledger_id, type, source_id, category_id, currency, amount, time, comment, created_at, updated_at
+SELECT id, ledger_id, type, source_id, category_id, currency, amount, time, merchant, comment, created_at, updated_at
 FROM transactions
 WHERE id = ? AND ledger_id = ?;
 
@@ -136,7 +136,7 @@ FROM transactions
 WHERE ledger_id = sqlc.arg('ledger_id');
 
 -- name: SearchTransactions :many
-SELECT id, ledger_id, type, source_id, category_id, currency, amount, time, comment, created_at, updated_at
+SELECT id, ledger_id, type, source_id, category_id, currency, amount, time, merchant, comment, created_at, updated_at
 FROM transactions
 WHERE ledger_id = sqlc.arg('ledger_id')
   AND (sqlc.narg('source_id')   IS NULL OR source_id = sqlc.narg('source_id'))
@@ -146,7 +146,7 @@ WHERE ledger_id = sqlc.arg('ledger_id')
   )
   AND (sqlc.narg('start_time')  IS NULL OR time >= sqlc.narg('start_time'))
   AND (sqlc.narg('end_time')    IS NULL OR time <= sqlc.narg('end_time'))
-  AND (sqlc.narg('keyword')     IS NULL OR (LOWER(comment) LIKE '%' || LOWER(sqlc.narg('keyword')) || '%' ESCAPE '\'))
+  AND (sqlc.narg('keyword')     IS NULL OR (LOWER(merchant) LIKE '%' || LOWER(sqlc.narg('keyword')) || '%' ESCAPE '\') OR (LOWER(comment) LIKE '%' || LOWER(sqlc.narg('keyword')) || '%' ESCAPE '\'))
   AND (
     sqlc.narg('after_time') IS NULL
     OR time > sqlc.narg('after_time')
@@ -160,7 +160,7 @@ LIMIT sqlc.arg('limit');
 -- keyset comparison flipped so next_cursor pages toward earlier transactions.
 -- Used by search_transactions when newest_first is set (see
 -- add-transaction-timeline-widget).
-SELECT id, ledger_id, type, source_id, category_id, currency, amount, time, comment, created_at, updated_at
+SELECT id, ledger_id, type, source_id, category_id, currency, amount, time, merchant, comment, created_at, updated_at
 FROM transactions
 WHERE ledger_id = sqlc.arg('ledger_id')
   AND (sqlc.narg('source_id')   IS NULL OR source_id = sqlc.narg('source_id'))
@@ -170,7 +170,7 @@ WHERE ledger_id = sqlc.arg('ledger_id')
   )
   AND (sqlc.narg('start_time')  IS NULL OR time >= sqlc.narg('start_time'))
   AND (sqlc.narg('end_time')    IS NULL OR time <= sqlc.narg('end_time'))
-  AND (sqlc.narg('keyword')     IS NULL OR (LOWER(comment) LIKE '%' || LOWER(sqlc.narg('keyword')) || '%' ESCAPE '\'))
+  AND (sqlc.narg('keyword')     IS NULL OR (LOWER(merchant) LIKE '%' || LOWER(sqlc.narg('keyword')) || '%' ESCAPE '\') OR (LOWER(comment) LIKE '%' || LOWER(sqlc.narg('keyword')) || '%' ESCAPE '\'))
   AND (
     sqlc.narg('after_time') IS NULL
     OR time < sqlc.narg('after_time')
@@ -181,7 +181,7 @@ LIMIT sqlc.arg('limit');
 
 -- name: UpdateTransaction :one
 UPDATE transactions
-SET type = ?, source_id = ?, category_id = ?, currency = ?, amount = ?, time = ?, comment = ?, updated_at = ?
+SET type = ?, source_id = ?, category_id = ?, currency = ?, amount = ?, time = ?, merchant = ?, comment = ?, updated_at = ?
 WHERE id = ?
 RETURNING *;
 

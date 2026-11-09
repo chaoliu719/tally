@@ -25,7 +25,7 @@ func init() {
 func registerTransactionTools(s *mcp.Server, deps Deps) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "create_transaction",
-		Description: "Record one income or expense transaction. Requires an existing category_id (any category in the ledger).",
+		Description: "Record one income or expense transaction. Requires an existing category_id (any category in the ledger). merchant is the optional raw merchant/payee name as stated on the bank statement or by the user; comment is the user's own note, independent of merchant.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in CreateTransactionInput) (*mcp.CallToolResult, CreateTransactionOutput, error) {
 		return createTransaction(ctx, deps, in)
 	})
@@ -39,7 +39,7 @@ func registerTransactionTools(s *mcp.Server, deps Deps) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "search_transactions",
-		Description: "List transactions, optionally filtered by time range, source, category, and/or a case-insensitive comment keyword. Sorted oldest first by default, or newest first when newest_first is true. Results are paginated: " +
+		Description: "List transactions, optionally filtered by time range, source, category, and/or a case-insensitive keyword matched against both merchant and comment. Sorted oldest first by default, or newest first when newest_first is true. Results are paginated: " +
 			"each call returns at most limit transactions (default 50, max 200); if more match, the response includes next_cursor -- pass it back " +
 			"as cursor on the next call (with the same filters and the same newest_first value) to keep paging until next_cursor is no longer returned. With no filters, pages through every transaction in the ledger.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in SearchTransactionsInput) (*mcp.CallToolResult, SearchTransactionsOutput, error) {
@@ -48,7 +48,7 @@ func registerTransactionTools(s *mcp.Server, deps Deps) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "update_transaction",
-		Description: "Replace a transaction's fields (type, source, category, amount, currency, time, comment) by id. This is a full replacement, not a partial update -- all fields must be provided, and the same validation rules as create_transaction apply. Does not require confirmation.",
+		Description: "Replace a transaction's fields (type, source, category, amount, currency, time, merchant, comment) by id. This is a full replacement, not a partial update -- all fields must be provided, and the same validation rules as create_transaction apply. Omitting merchant or comment stores an empty string, clearing any existing value. Does not require confirmation.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in UpdateTransactionInput) (*mcp.CallToolResult, UpdateTransactionOutput, error) {
 		return updateTransaction(ctx, deps, in)
 	})
@@ -103,7 +103,8 @@ type TransactionInfo struct {
 	Amount     string `json:"amount" jsonschema:"the transaction amount, as a decimal string in the currency's major unit; how many fractional digits that allows varies by currency (e.g. \"50.00\" for CNY, \"5000\" for JPY, \"5.000\" for BHD). Positive for both income and expense"`
 	Currency   string `json:"currency" jsonschema:"the transaction's currency, as an ISO 4217 code"`
 	Time       string `json:"time" jsonschema:"when the transaction occurred, as a local date-time string in the form YYYY-MM-DD HH:MM:SS (24-hour, zero-padded); no timezone -- stored and returned exactly as given, never converted"`
-	Comment    string `json:"comment,omitempty" jsonschema:"an optional note about the transaction"`
+	Merchant   string `json:"merchant,omitempty" jsonschema:"the optional merchant/payee name exactly as stated on the bank statement or by the user; empty when the transaction has none"`
+	Comment    string `json:"comment,omitempty" jsonschema:"an optional note the user wants to keep about the transaction, independent of merchant"`
 }
 
 type CreateTransactionInput struct {
@@ -114,7 +115,8 @@ type CreateTransactionInput struct {
 	Amount     string `json:"amount" jsonschema:"the transaction amount, as a decimal string in the currency's major unit; how many fractional digits that allows varies by currency (e.g. \"50.00\" for CNY, \"5000\" for JPY, \"5.000\" for BHD); must be positive"`
 	Currency   string `json:"currency" jsonschema:"the transaction's currency, as an ISO 4217 code, e.g. CNY, USD"`
 	Time       string `json:"time" jsonschema:"when the transaction occurred, as a local date-time string in the form YYYY-MM-DD HH:MM:SS (24-hour, zero-padded); no timezone -- stored and returned exactly as given, never converted"`
-	Comment    string `json:"comment,omitempty" jsonschema:"an optional note about the transaction"`
+	Merchant   string `json:"merchant,omitempty" jsonschema:"the optional merchant/payee name exactly as stated on the bank statement or by the user; empty when the transaction has none"`
+	Comment    string `json:"comment,omitempty" jsonschema:"an optional note the user wants to keep about the transaction, independent of merchant"`
 }
 
 type CreateTransactionOutput struct {
@@ -235,6 +237,7 @@ func createTransaction(ctx context.Context, deps Deps, in CreateTransactionInput
 		Currency:   fields.Currency,
 		Amount:     fields.Amount,
 		Time:       in.Time,
+		Merchant:   in.Merchant,
 		Comment:    in.Comment,
 		CreatedAt:  now,
 		UpdatedAt:  now,
@@ -299,7 +302,8 @@ type UpdateTransactionInput struct {
 	Amount     string `json:"amount" jsonschema:"the transaction amount, as a decimal string in the currency's major unit; how many fractional digits that allows varies by currency (e.g. \"50.00\" for CNY, \"5000\" for JPY, \"5.000\" for BHD); must be positive"`
 	Currency   string `json:"currency" jsonschema:"the transaction's currency, as an ISO 4217 code, e.g. CNY, USD"`
 	Time       string `json:"time" jsonschema:"when the transaction occurred, as a local date-time string in the form YYYY-MM-DD HH:MM:SS (24-hour, zero-padded); no timezone -- stored and returned exactly as given, never converted"`
-	Comment    string `json:"comment,omitempty" jsonschema:"an optional note about the transaction"`
+	Merchant   string `json:"merchant,omitempty" jsonschema:"the optional merchant/payee name exactly as stated on the bank statement or by the user; empty when the transaction has none"`
+	Comment    string `json:"comment,omitempty" jsonschema:"an optional note the user wants to keep about the transaction, independent of merchant"`
 }
 
 type UpdateTransactionOutput struct {
@@ -347,6 +351,7 @@ func updateTransaction(ctx context.Context, deps Deps, in UpdateTransactionInput
 		Currency:   fields.Currency,
 		Amount:     fields.Amount,
 		Time:       in.Time,
+		Merchant:   in.Merchant,
 		Comment:    in.Comment,
 		UpdatedAt:  time.Now().Unix(),
 		ID:         id,
@@ -375,6 +380,7 @@ type transactionDeletionRevisionFields struct {
 	Currency   string
 	Amount     int64
 	Time       string
+	Merchant   string
 	Comment    string
 }
 
@@ -386,6 +392,7 @@ func transactionDeletionRevision(t store.Transaction) string {
 		Currency:   t.Currency,
 		Amount:     t.Amount,
 		Time:       t.Time,
+		Merchant:   t.Merchant,
 		Comment:    t.Comment,
 	}
 	// Marshaling a fixed struct of plain strings/ints never fails.
@@ -657,7 +664,7 @@ type SearchTransactionsInput struct {
 	IncludeDescendants bool   `json:"include_descendants,omitempty" jsonschema:"when true, also include transactions in any descendant of category_id (recursively); has no effect if category_id is not set. Defaults to false (exact match only)"`
 	StartTime          string `json:"start_time,omitempty" jsonschema:"only include transactions at or after this local date-time (format YYYY-MM-DD HH:MM:SS, no timezone)"`
 	EndTime            string `json:"end_time,omitempty" jsonschema:"only include transactions at or before this local date-time (format YYYY-MM-DD HH:MM:SS, no timezone)"`
-	Keyword            string `json:"keyword,omitempty" jsonschema:"only include transactions whose comment contains this substring, case-insensitively; % and _ are matched literally, not as wildcards. Blank (empty or whitespace-only) is treated as not provided"`
+	Keyword            string `json:"keyword,omitempty" jsonschema:"only include transactions whose merchant OR comment contains this substring, case-insensitively; % and _ are matched literally, not as wildcards. Blank (empty or whitespace-only) is treated as not provided"`
 	Limit              int64  `json:"limit,omitempty" jsonschema:"maximum number of transactions to return in this page; defaults to 50 when omitted, must be between 1 and 200 (requests over 200 are rejected, not truncated)"`
 	Cursor             string `json:"cursor,omitempty" jsonschema:"opaque pagination cursor from a previous response's next_cursor; omit to fetch the first page. Must be paired with the exact same ledger_id/source_id/category_id/start_time/end_time/keyword filters and the same newest_first value used to obtain it"`
 	NewestFirst        bool   `json:"newest_first,omitempty" jsonschema:"when false (default), results are ordered oldest-first and next_cursor pages toward later transactions; when true, results are ordered newest-first and next_cursor pages toward earlier transactions. Must match the value the cursor was issued under"`
@@ -809,6 +816,7 @@ func toTransactionInfo(t store.Transaction) (TransactionInfo, error) {
 		Amount:     amount,
 		Currency:   t.Currency,
 		Time:       t.Time,
+		Merchant:   t.Merchant,
 		Comment:    t.Comment,
 	}, nil
 }

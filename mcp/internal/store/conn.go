@@ -33,5 +33,49 @@ func Open(path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
 
+	if err := ensureTransactionMerchantColumn(context.Background(), db); err != nil {
+		db.Close()
+		return nil, err
+	}
+
 	return db, nil
+}
+
+// ensureTransactionMerchantColumn adds the merchant column to databases that
+// were created before it existed. schema.sql only runs CREATE TABLE IF NOT
+// EXISTS, which leaves an existing transactions table untouched, and tally has
+// no migration framework. This single additive migration is applied
+// idempotently at startup: it only inspects the table and adds the column when
+// it is missing, never dropping or rewriting existing rows.
+func ensureTransactionMerchantColumn(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx, `PRAGMA table_info(transactions)`)
+	if err != nil {
+		return fmt.Errorf("inspect transactions columns: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			colType    string
+			notNull    int
+			defaultV   sql.NullString
+			primaryKey int
+		)
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &defaultV, &primaryKey); err != nil {
+			return fmt.Errorf("inspect transactions columns: %w", err)
+		}
+		if name == "merchant" {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("inspect transactions columns: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, `ALTER TABLE transactions ADD COLUMN merchant TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("add transactions.merchant column: %w", err)
+	}
+	return nil
 }

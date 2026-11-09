@@ -185,9 +185,9 @@ func (q *Queries) CreateSource(ctx context.Context, arg CreateSourceParams) (Sou
 }
 
 const createTransaction = `-- name: CreateTransaction :one
-INSERT INTO transactions (ledger_id, type, source_id, category_id, currency, amount, time, comment, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, ledger_id, type, source_id, category_id, currency, amount, time, comment, created_at, updated_at
+INSERT INTO transactions (ledger_id, type, source_id, category_id, currency, amount, time, merchant, comment, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, ledger_id, type, source_id, category_id, currency, amount, time, merchant, comment, created_at, updated_at
 `
 
 type CreateTransactionParams struct {
@@ -198,6 +198,7 @@ type CreateTransactionParams struct {
 	Currency   string
 	Amount     int64
 	Time       string
+	Merchant   string
 	Comment    string
 	CreatedAt  int64
 	UpdatedAt  int64
@@ -212,6 +213,7 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 		arg.Currency,
 		arg.Amount,
 		arg.Time,
+		arg.Merchant,
 		arg.Comment,
 		arg.CreatedAt,
 		arg.UpdatedAt,
@@ -226,6 +228,7 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 		&i.Currency,
 		&i.Amount,
 		&i.Time,
+		&i.Merchant,
 		&i.Comment,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -342,7 +345,7 @@ func (q *Queries) GetSource(ctx context.Context, arg GetSourceParams) (Source, e
 }
 
 const getTransaction = `-- name: GetTransaction :one
-SELECT id, ledger_id, type, source_id, category_id, currency, amount, time, comment, created_at, updated_at
+SELECT id, ledger_id, type, source_id, category_id, currency, amount, time, merchant, comment, created_at, updated_at
 FROM transactions
 WHERE id = ? AND ledger_id = ?
 `
@@ -364,6 +367,7 @@ func (q *Queries) GetTransaction(ctx context.Context, arg GetTransactionParams) 
 		&i.Currency,
 		&i.Amount,
 		&i.Time,
+		&i.Merchant,
 		&i.Comment,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -513,7 +517,7 @@ func (q *Queries) ListSources(ctx context.Context, ledgerID int64) ([]Source, er
 }
 
 const searchTransactions = `-- name: SearchTransactions :many
-SELECT id, ledger_id, type, source_id, category_id, currency, amount, time, comment, created_at, updated_at
+SELECT id, ledger_id, type, source_id, category_id, currency, amount, time, merchant, comment, created_at, updated_at
 FROM transactions
 WHERE ledger_id = ?1
   AND (?2   IS NULL OR source_id = ?2)
@@ -523,7 +527,7 @@ WHERE ledger_id = ?1
   )
   AND (?4  IS NULL OR time >= ?4)
   AND (?5    IS NULL OR time <= ?5)
-  AND (?6     IS NULL OR (LOWER(comment) LIKE '%' || LOWER(?6) || '%' ESCAPE '\'))
+  AND (?6     IS NULL OR (LOWER(merchant) LIKE '%' || LOWER(?6) || '%' ESCAPE '\') OR (LOWER(comment) LIKE '%' || LOWER(?6) || '%' ESCAPE '\'))
   AND (
     ?7 IS NULL
     OR time > ?7
@@ -573,6 +577,7 @@ func (q *Queries) SearchTransactions(ctx context.Context, arg SearchTransactions
 			&i.Currency,
 			&i.Amount,
 			&i.Time,
+			&i.Merchant,
 			&i.Comment,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -591,7 +596,7 @@ func (q *Queries) SearchTransactions(ctx context.Context, arg SearchTransactions
 }
 
 const searchTransactionsDesc = `-- name: SearchTransactionsDesc :many
-SELECT id, ledger_id, type, source_id, category_id, currency, amount, time, comment, created_at, updated_at
+SELECT id, ledger_id, type, source_id, category_id, currency, amount, time, merchant, comment, created_at, updated_at
 FROM transactions
 WHERE ledger_id = ?1
   AND (?2   IS NULL OR source_id = ?2)
@@ -601,7 +606,7 @@ WHERE ledger_id = ?1
   )
   AND (?4  IS NULL OR time >= ?4)
   AND (?5    IS NULL OR time <= ?5)
-  AND (?6     IS NULL OR (LOWER(comment) LIKE '%' || LOWER(?6) || '%' ESCAPE '\'))
+  AND (?6     IS NULL OR (LOWER(merchant) LIKE '%' || LOWER(?6) || '%' ESCAPE '\') OR (LOWER(comment) LIKE '%' || LOWER(?6) || '%' ESCAPE '\'))
   AND (
     ?7 IS NULL
     OR time < ?7
@@ -655,6 +660,7 @@ func (q *Queries) SearchTransactionsDesc(ctx context.Context, arg SearchTransact
 			&i.Currency,
 			&i.Amount,
 			&i.Time,
+			&i.Merchant,
 			&i.Comment,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -1030,9 +1036,9 @@ func (q *Queries) UpdateSource(ctx context.Context, arg UpdateSourceParams) (Sou
 
 const updateTransaction = `-- name: UpdateTransaction :one
 UPDATE transactions
-SET type = ?, source_id = ?, category_id = ?, currency = ?, amount = ?, time = ?, comment = ?, updated_at = ?
+SET type = ?, source_id = ?, category_id = ?, currency = ?, amount = ?, time = ?, merchant = ?, comment = ?, updated_at = ?
 WHERE id = ?
-RETURNING id, ledger_id, type, source_id, category_id, currency, amount, time, comment, created_at, updated_at
+RETURNING id, ledger_id, type, source_id, category_id, currency, amount, time, merchant, comment, created_at, updated_at
 `
 
 type UpdateTransactionParams struct {
@@ -1042,6 +1048,7 @@ type UpdateTransactionParams struct {
 	Currency   string
 	Amount     int64
 	Time       string
+	Merchant   string
 	Comment    string
 	UpdatedAt  int64
 	ID         int64
@@ -1055,6 +1062,7 @@ func (q *Queries) UpdateTransaction(ctx context.Context, arg UpdateTransactionPa
 		arg.Currency,
 		arg.Amount,
 		arg.Time,
+		arg.Merchant,
 		arg.Comment,
 		arg.UpdatedAt,
 		arg.ID,
@@ -1069,6 +1077,7 @@ func (q *Queries) UpdateTransaction(ctx context.Context, arg UpdateTransactionPa
 		&i.Currency,
 		&i.Amount,
 		&i.Time,
+		&i.Merchant,
 		&i.Comment,
 		&i.CreatedAt,
 		&i.UpdatedAt,

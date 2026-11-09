@@ -1990,3 +1990,120 @@ func TestSearchTransactionsCursorRejectedWhenDirectionChanges(t *testing.T) {
 		Cursor:      page.NextCursor,
 	})
 }
+
+func TestCreateTransactionMerchantAndCommentAreSeparate(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+
+	var created tools.CreateTransactionOutput
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID, Type: "expense", SourceID: sourceID, CategoryID: categoryID,
+		Amount: cnyAmount(3200), Currency: "CNY", Time: futureTime(),
+		Merchant: "星巴克(南京西路店)", Comment: "和同事下午茶",
+	}, &created)
+
+	if created.Transaction.Merchant != "星巴克(南京西路店)" {
+		t.Errorf("Merchant = %q, want the raw merchant name", created.Transaction.Merchant)
+	}
+	if created.Transaction.Comment != "和同事下午茶" {
+		t.Errorf("Comment = %q, want the user's own note", created.Transaction.Comment)
+	}
+
+	var got tools.GetTransactionOutput
+	callTool(t, session, "get_transaction", tools.GetTransactionInput{LedgerID: ledgerID, ID: created.Transaction.ID}, &got)
+	if got.Transaction.Merchant != "星巴克(南京西路店)" || got.Transaction.Comment != "和同事下午茶" {
+		t.Errorf("get_transaction = merchant %q / comment %q, want both preserved", got.Transaction.Merchant, got.Transaction.Comment)
+	}
+
+	var noMerchant tools.CreateTransactionOutput
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID, Type: "expense", SourceID: sourceID, CategoryID: categoryID,
+		Amount: cnyAmount(500), Currency: "CNY", Time: futureTime(),
+		Comment: "现金买水",
+	}, &noMerchant)
+	if noMerchant.Transaction.Merchant != "" {
+		t.Errorf("Merchant = %q, want empty when omitted", noMerchant.Transaction.Merchant)
+	}
+	if noMerchant.Transaction.Comment != "现金买水" {
+		t.Errorf("Comment = %q, want it kept when merchant is omitted", noMerchant.Transaction.Comment)
+	}
+}
+
+func TestUpdateTransactionMerchantIsFullReplacement(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+
+	var created tools.CreateTransactionOutput
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID, Type: "expense", SourceID: sourceID, CategoryID: categoryID,
+		Amount: cnyAmount(1000), Currency: "CNY", Time: futureTime(),
+		Merchant: "old merchant", Comment: "old note",
+	}, &created)
+
+	var updated tools.UpdateTransactionOutput
+	callTool(t, session, "update_transaction", tools.UpdateTransactionInput{
+		LedgerID: ledgerID, ID: created.Transaction.ID, Type: "expense", SourceID: sourceID, CategoryID: categoryID,
+		Amount: cnyAmount(1000), Currency: "CNY", Time: futureTime(),
+		Merchant: "new merchant", Comment: "new note",
+	}, &updated)
+	if updated.Transaction.Merchant != "new merchant" || updated.Transaction.Comment != "new note" {
+		t.Errorf("updated = merchant %q / comment %q, want both replaced", updated.Transaction.Merchant, updated.Transaction.Comment)
+	}
+
+	// Full replacement: omitting merchant clears it, exactly like comment.
+	var cleared tools.UpdateTransactionOutput
+	callTool(t, session, "update_transaction", tools.UpdateTransactionInput{
+		LedgerID: ledgerID, ID: created.Transaction.ID, Type: "expense", SourceID: sourceID, CategoryID: categoryID,
+		Amount: cnyAmount(1000), Currency: "CNY", Time: futureTime(),
+		Comment: "note kept",
+	}, &cleared)
+	if cleared.Transaction.Merchant != "" {
+		t.Errorf("Merchant = %q, want it cleared when omitted", cleared.Transaction.Merchant)
+	}
+	if cleared.Transaction.Comment != "note kept" {
+		t.Errorf("Comment = %q, want it kept", cleared.Transaction.Comment)
+	}
+}
+
+func TestSearchTransactionsKeywordMatchesMerchantOrComment(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+
+	var merchantOnly, commentOnly, both tools.CreateTransactionOutput
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID, Type: "expense", SourceID: sourceID, CategoryID: categoryID,
+		Amount: cnyAmount(100), Currency: "CNY", Time: futureTime(),
+		Merchant: "STARBUCKS #4821",
+	}, &merchantOnly)
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID, Type: "expense", SourceID: sourceID, CategoryID: categoryID,
+		Amount: cnyAmount(200), Currency: "CNY", Time: timeString(futureUnix() + 10),
+		Comment: "starbucks coffee",
+	}, &commentOnly)
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID, Type: "expense", SourceID: sourceID, CategoryID: categoryID,
+		Amount: cnyAmount(300), Currency: "CNY", Time: timeString(futureUnix() + 20),
+		Merchant: "starbucks", Comment: "starbucks latte",
+	}, &both)
+
+	var out tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Keyword: "starbucks"}, &out)
+
+	counts := map[string]int{}
+	for _, tx := range out.Transactions {
+		counts[tx.ID]++
+	}
+	for _, want := range []tools.CreateTransactionOutput{merchantOnly, commentOnly, both} {
+		if counts[want.Transaction.ID] != 1 {
+			t.Errorf("keyword hit id=%s %d times, want exactly 1", want.Transaction.ID, counts[want.Transaction.ID])
+		}
+	}
+	if len(out.Transactions) != 3 {
+		t.Errorf("keyword starbucks returned %d transactions, want 3", len(out.Transactions))
+	}
+
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{LedgerID: ledgerID, Keyword: "4821"}, &out)
+	if len(out.Transactions) != 1 || out.Transactions[0].ID != merchantOnly.Transaction.ID {
+		t.Errorf("keyword 4821 = %+v, want only the merchant-only transaction", out.Transactions)
+	}
+}

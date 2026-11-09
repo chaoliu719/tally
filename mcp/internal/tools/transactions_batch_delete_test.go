@@ -283,3 +283,42 @@ func TestBatchDeleteTransactionsConfirmRejectsMismatchedIDSet(t *testing.T) {
 
 	callTool(t, session, "get_transaction", tools.GetTransactionInput{LedgerID: ledgerID, ID: t1.Transaction.ID}, &tools.GetTransactionOutput{})
 }
+
+func TestBatchDeleteTransactionsRevisionChangesWithMerchant(t *testing.T) {
+	session, ledgerID := newTestSession(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+
+	var created tools.CreateTransactionOutput
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID, Type: "expense", SourceID: sourceID, CategoryID: categoryID,
+		Amount: cnyAmount(100), Currency: "CNY", Time: futureTime(),
+		Merchant: "before",
+	}, &created)
+
+	var preview tools.BatchDeleteTransactionsOutput
+	callTool(t, session, "batch_delete_transactions", tools.BatchDeleteTransactionsInput{
+		LedgerID: ledgerID, IDs: []string{created.Transaction.ID},
+	}, &preview)
+
+	// Change only merchant; the previewed revision must notice it.
+	callTool(t, session, "update_transaction", tools.UpdateTransactionInput{
+		LedgerID: ledgerID, ID: created.Transaction.ID, Type: "expense", SourceID: sourceID, CategoryID: categoryID,
+		Amount: cnyAmount(100), Currency: "CNY", Time: futureTime(),
+		Merchant: "after",
+	}, &tools.UpdateTransactionOutput{})
+
+	var confirmed tools.BatchDeleteTransactionsOutput
+	callTool(t, session, "batch_delete_transactions", tools.BatchDeleteTransactionsInput{
+		LedgerID: ledgerID, IDs: []string{created.Transaction.ID}, ConfirmationToken: preview.ConfirmationToken,
+	}, &confirmed)
+
+	if len(confirmed.Results) != 1 || confirmed.Results[0].Status != "revision_changed" {
+		t.Fatalf("results = %+v, want a single revision_changed", confirmed.Results)
+	}
+
+	var got tools.GetTransactionOutput
+	callTool(t, session, "get_transaction", tools.GetTransactionInput{LedgerID: ledgerID, ID: created.Transaction.ID}, &got)
+	if got.Transaction.Merchant != "after" {
+		t.Errorf("Merchant = %q, want the transaction to survive with its new merchant", got.Transaction.Merchant)
+	}
+}

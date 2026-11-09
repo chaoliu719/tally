@@ -33,9 +33,9 @@ description: 分析记账数据时候必须看——用户要的是"合计/对�
 ## 四种标准分析角度
 
 **同类交易价格对比。** 用户想知道"这家店是不是又贵了"之类的问题:用
-`search_transactions(ledger_id, keyword=<商户名/关键词>)` 把同商户/同关键词的历史
-交易按时间取出来,直接对比 `amount` 走势作答。不需要 `get_financial_summary`——这是
-单个商户级别的对比,汇总工具给不出这个粒度。
+`search_transactions(ledger_id, keyword=<商户名/关键词>)`(keyword 同时匹配 `merchant`
+与 `comment`)把同商户/同关键词的历史交易按时间取出来,直接对比 `amount` 走势作答。
+不需要 `get_financial_summary`——这是单个商户级别的对比,汇总工具给不出这个粒度。
 
 **月度环比。** 用户想知道"这个月比上个月花多了没":`get_financial_summary` 本身
 没有"环比"能力,一次调用只给一个时间段的汇总。分两次调用——本月一次、上月一次,

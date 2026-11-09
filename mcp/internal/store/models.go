@@ -38,6 +38,7 @@ type Transaction struct {
 	Currency   string
 	Amount     int64
 	Time       string
+	Merchant   string
 	Comment    string
 	CreatedAt  int64
 	UpdatedAt  int64

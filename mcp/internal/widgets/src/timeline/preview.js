@@ -22,15 +22,34 @@ globalThis.TallyPreviewFixture = (function () {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:00`;
   }
   function demoBatch(seed, n, cursor) {
-    const notes = ["麦当劳麦辣鸡腿堡", "便利店 可乐一瓶", "超市采购 蔬菜水果", "和朋友喝咖啡,备注写得比较长用来测试换行显示效果", "",
-      "地铁充值", "美团外卖", "停车费", "工资", "话费充值", "网购 数据线", "AWS 账单", "药店", "水电费", "打车"];
+    // Covers all four row shapes: merchant + note, note only, merchant only,
+    // and neither (falls back to the category name / id).
+    const samples = [
+      { merchant: "星巴克(南京西路店)", comment: "和同事喝咖啡,备注写得比较长用来测试换行显示效果" },
+      { merchant: "", comment: "便利店 可乐一瓶" },
+      { merchant: "麦当劳", comment: "" },
+      { merchant: "", comment: "" },
+      { merchant: "盒马鲜生", comment: "蔬菜水果" },
+      { merchant: "滴滴出行", comment: "" },
+      { merchant: "", comment: "地铁充值" },
+      { merchant: "美团外卖", comment: "午餐" },
+      { merchant: "公司", comment: "工资" },
+      { merchant: "", comment: "" },
+      { merchant: "中国移动", comment: "话费充值" },
+      { merchant: "淘宝", comment: "网购 数据线" },
+      { merchant: "AWS", comment: "云服务账单" },
+      { merchant: "", comment: "药店" },
+      { merchant: "国家电网", comment: "水电费" },
+    ];
     const t = [];
     for (let i = 0; i < n; i++) {
       const k = seed + i;
+      const sample = samples[k % samples.length];
       t.push({
         id: String(1000 - k), type: k % 9 === 0 ? "income" : "expense", source_id: String((k % 2) + 1),
         category_id: String((k % 2) + 1), amount: (k % 9 === 0 ? "8000.00" : ((k * 7 % 400) + 3 + ".00")),
-        currency: k % 13 === 0 ? "USD" : "CNY", time: timeOf(k), comment: notes[k % notes.length],
+        currency: k % 13 === 0 ? "USD" : "CNY", time: timeOf(k),
+        merchant: sample.merchant, comment: sample.comment,
       });
     }
     return { structuredContent: { next_cursor: cursor, transactions: t } };

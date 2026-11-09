@@ -221,3 +221,72 @@ func TestSummarizeTimelineScope(t *testing.T) {
 }
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+
+func TestSearchTransactionsKeywordMatchesMerchantOrComment(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	q := New(db)
+
+	now := time.Now().Unix()
+	ledger, err := q.CreateLedger(ctx, CreateLedgerParams{Name: "Personal", CreatedAt: now, UpdatedAt: now})
+	if err != nil {
+		t.Fatalf("CreateLedger failed: %v", err)
+	}
+	source, err := q.CreateSource(ctx, CreateSourceParams{LedgerID: ledger.ID, Name: "Card", CreatedAt: now, UpdatedAt: now})
+	if err != nil {
+		t.Fatalf("CreateSource failed: %v", err)
+	}
+	category, err := q.CreateCategory(ctx, CreateCategoryParams{LedgerID: ledger.ID, Name: "Food", CreatedAt: now, UpdatedAt: now})
+	if err != nil {
+		t.Fatalf("CreateCategory failed: %v", err)
+	}
+
+	mk := func(merchant, comment, at string) Transaction {
+		t.Helper()
+		tx, err := q.CreateTransaction(ctx, CreateTransactionParams{
+			LedgerID: ledger.ID, Type: "expense", SourceID: source.ID, CategoryID: category.ID,
+			Currency: "CNY", Amount: -1000, Time: at, Merchant: merchant, Comment: comment,
+			CreatedAt: now, UpdatedAt: now,
+		})
+		if err != nil {
+			t.Fatalf("CreateTransaction failed: %v", err)
+		}
+		return tx
+	}
+
+	merchantOnly := mk("STARBUCKS #4821", "", "2026-01-01 10:00:00")
+	commentOnly := mk("", "starbucks coffee", "2026-01-02 10:00:00")
+	both := mk("starbucks", "starbucks latte", "2026-01-03 10:00:00")
+
+	search := func(keyword string) []Transaction {
+		t.Helper()
+		rows, err := q.SearchTransactions(ctx, SearchTransactionsParams{LedgerID: ledger.ID, Keyword: keyword, Limit: 50})
+		if err != nil {
+			t.Fatalf("SearchTransactions(%q) failed: %v", keyword, err)
+		}
+		return rows
+	}
+
+	got := search("starbucks")
+	ids := map[int64]int{}
+	for _, tx := range got {
+		ids[tx.ID]++
+	}
+	for _, want := range []Transaction{merchantOnly, commentOnly, both} {
+		if ids[want.ID] != 1 {
+			t.Errorf("keyword hit id=%d %d times, want exactly 1", want.ID, ids[want.ID])
+		}
+	}
+	if len(got) != 3 {
+		t.Errorf("keyword starbucks returned %d rows, want 3", len(got))
+	}
+
+	got = search("LATTE")
+	if len(got) != 1 || got[0].ID != both.ID {
+		t.Errorf("keyword LATTE returned %+v, want only the both-fields transaction", got)
+	}
+
+	if got = search("4821"); len(got) != 1 || got[0].ID != merchantOnly.ID {
+		t.Errorf("keyword 4821 returned %+v, want only the merchant-only transaction", got)
+	}
+}

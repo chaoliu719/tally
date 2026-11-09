@@ -44,7 +44,9 @@ CREATE TABLE IF NOT EXISTS transactions (
                                              -- never interpreted or converted, compared only as a
                                              -- string (lexicographic order equals chronological
                                              -- order for this fixed-width, zero-padded format)
-    comment      TEXT NOT NULL DEFAULT '',
+    merchant     TEXT NOT NULL DEFAULT '',  -- merchant/payee name exactly as the bank statement or
+                                             -- user stated it; empty when the transaction has none
+    comment      TEXT NOT NULL DEFAULT '',  -- the user's own note, independent of merchant
     created_at   INTEGER NOT NULL,
     updated_at   INTEGER NOT NULL
 );
