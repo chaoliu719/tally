@@ -22,7 +22,7 @@ import (
 
 const (
 	serverName    = "tally-mcp"
-	serverVersion = "0.1.5"
+	serverVersion = "0.1.6"
 	serverTitle   = "Tally"
 	serverWebsite = "https://github.com/chaoliu719/tally"
 )
