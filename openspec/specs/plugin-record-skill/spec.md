@@ -7,44 +7,45 @@
 ## Requirements
 
 ### Requirement: 记录前必须检索先例
-Agent SHALL 在为一笔新交易选择来源与分类之前,先用 `search_transactions` 按商户/关键词检索该账本内 `comment` 命中的历史交易,并把命中先例的 `source_id`/`category_id` 作为默认选择。
+Agent SHALL 在为一笔新交易选择来源与分类之前,先用 `search_transactions` 按商户/关键词检索该账本内 `merchant` 或 `comment` 命中的历史交易,并把命中先例的 `source_id`/`category_id` 作为默认选择。
 
 #### Scenario: 存在同关键词历史交易
-- **WHEN** 该账本内存在 `comment` 命中同商户/关键词的历史交易
+- **WHEN** 该账本内存在 `merchant` 或 `comment` 命中同商户/关键词的历史交易
 - **THEN** agent 使用这些历史交易的 `source_id`/`category_id` 作为默认选择,不要求用户重新提供
+
+#### Scenario: 先例只命中商户名
+- **WHEN** 历史交易的 `merchant` 命中关键词,`comment` 没有命中
+- **THEN** agent 仍然把该交易视为先例,采用它的 `source_id`/`category_id`
 
 #### Scenario: 未搜到先例
 - **WHEN** 关键词检索没有命中任何历史交易
 - **THEN** agent 向用户询问来源与分类,而不是凭空猜测
 
 ### Requirement: 写入前必须给出对话预览
-Agent SHALL 在调用 `create_transaction` 或 `update_transaction` 之前,先在对话中给出包含全部字段的结构化预览,等待用户确认或修改。
+Agent SHALL 在调用 `create_transaction` 或 `update_transaction` 之前,先在对话中给出包含全部字段的结构化预览,等待用户确认或修改。预览 SHALL 把 `merchant` 与 `comment` 分两行展示,不得合并成一段文本。
 
 #### Scenario: 预览包含完整字段
-- **WHEN** agent 已经确定好一笔新交易的金额、来源、分类、时间与 `comment`,准备写入
-- **THEN** agent 先展示这些字段的结构化预览,用户确认后才调用 `create_transaction`
+- **WHEN** agent 已经确定好一笔新交易的金额、来源、分类、时间、商户名与备注,准备写入
+- **THEN** agent 先展示这些字段的结构化预览(商户名与备注分别列出),用户确认后才调用 `create_transaction`
+
+#### Scenario: 预览中的商户名与备注
+- **WHEN** 一笔交易同时有 `merchant` 与 `comment`
+- **THEN** 预览分别标明"商户/收款方"和"备注"两个字段的值,不让用户误以为它们会被合并保存
 
 #### Scenario: 用户要求修改预览
 - **WHEN** 用户在预览阶段要求修改某个字段
 - **THEN** agent 更新预览内容并重新等待确认,不跳过确认直接写入
 
-### Requirement: comment 必须保留原始凭据文本
-Agent SHALL 保证 `comment` 字段记录的是用户原始表达或账单/商户原名,而不是 agent 自己归类后的解释性文字;修正一笔已有交易时,除非用户明确要求修改原文本身,`comment` SHALL 保持不变。
-
-#### Scenario: 新建交易写入 comment
-- **WHEN** 记录一笔新交易
-- **THEN** `comment` 字段是用户表达的原始文本或账单/商户原名,不是 agent 归类后的解释
-
-#### Scenario: 修正交易时保留 comment
-- **WHEN** 因为分类/来源/金额判断错误而调用 `update_transaction` 修正一笔已有交易,且用户没有明确要求修改 `comment` 本身
-- **THEN** agent 保持 `comment` 与修正前一致,不省略也不改写该字段
-
 ### Requirement: 修正交易前必须读出当前完整记录
-Agent SHALL 在调用 `update_transaction` 之前,先用 `get_transaction` 获取该交易当前的完整字段值,并在 `update_transaction` 调用中带上全部未变更字段的原值。
+Agent SHALL 在调用 `update_transaction` 之前,先用 `get_transaction` 获取该交易当前的完整字段值,并在 `update_transaction` 调用中带上全部未变更字段的原值,包括 `merchant` 与 `comment`。
 
 #### Scenario: 调用 update_transaction 前
 - **WHEN** agent 准备调用 `update_transaction` 修正一笔交易的任意字段
-- **THEN** agent 先调用 `get_transaction` 读出当前完整记录,并把其余未变更的字段(包括 `comment`)原样带入本次调用,避免遗漏字段被服务端静默清空
+- **THEN** agent 先调用 `get_transaction` 读出当前完整记录,并把其余未变更的字段(包括 `merchant` 与 `comment`)原样带入本次调用,避免遗漏字段被服务端静默清空
+
+#### Scenario: 只改分类但漏带商户名
+- **WHEN** agent 因为分类判断错误而修正一笔有商户名的交易
+- **THEN** agent 在调用前读出原 `merchant`,并在本次调用中原样带上,不用空值覆盖它
 
 ### Requirement: 无合适分类时可在预览中提议新建
 Agent SHALL 在先例检索与现有分类均无匹配选项时,于对话预览中向用户提议创建新分类,用户确认后再创建并引用。
@@ -81,7 +82,7 @@ Agent SHALL 在记录一笔涵盖多个商品子类的商户消费(典型场景:
 
 #### Scenario: 一张小票涵盖多个品类
 - **WHEN** 用户提供的一笔消费明细里含有分属不同分类的商品(如食材、日用、零食混在一次超市结账)
-- **THEN** agent 在对话预览中给出按子类拆分的建议方案(每笔的金额、分类、来源、comment),询问用户是否按此拆分或如何调整
+- **THEN** agent 在对话预览中给出按子类拆分的建议方案(每笔的金额、分类、来源、`merchant` 与 `comment`),询问用户是否按此拆分或如何调整
 
 #### Scenario: 用户选择不拆分
 - **WHEN** 用户在预览阶段表示这笔不需要拆分
@@ -89,7 +90,7 @@ Agent SHALL 在记录一笔涵盖多个商品子类的商户消费(典型场景:
 
 #### Scenario: 拆分后逐笔写入
 - **WHEN** 用户确认了拆分方案
-- **THEN** agent 为每个子类分别调用 `create_transaction`,每笔各自带上该子类对应的分类、来源与 comment
+- **THEN** agent 为每个子类分别调用 `create_transaction`,每笔带上相同的 `merchant` 与该子类对应的 `comment`
 
 ### Requirement: 退款冲回原支出的分类与来源
 Agent SHALL 在记录一笔退款时,通过先例检索定位被退的原始支出交易,并将退款记入与原支出相同的分类与来源,而不是新建「退款」类目。退款金额的方向按 tally 既有数据模型表示,并在对话预览中呈现。
@@ -101,17 +102,6 @@ Agent SHALL 在记录一笔退款时,通过先例检索定位被退的原始支�
 #### Scenario: 无法定位原始支出
 - **WHEN** 关键词检索无法命中被退的原始支出交易
 - **THEN** agent 向用户询问该退款应冲回哪个分类与来源,不擅自新建「退款」分类
-
-### Requirement: comment 同时承载商户原名与商品明细
-Agent SHALL 保证写入的 `comment` 既包含商户原名、也包含足以区分该笔的商品明细,因为 tally 没有独立的商户字段,`search_transactions` 只能在 `comment` 上做子串匹配。当一笔消费被拆分为多笔时,每一笔的 `comment` SHALL 各自带上商户原名与该笔对应的商品明细,使每笔都能被单独检索命中。
-
-#### Scenario: 单笔消费写入 comment
-- **WHEN** 记录一笔普通消费
-- **THEN** `comment` 中同时出现商户原名与用户表达的商品/事由明细,而非只有其中一项
-
-#### Scenario: 拆分消费的每一笔
-- **WHEN** 一笔超市消费被拆分为多笔写入
-- **THEN** 每一笔的 `comment` 都以商户原名开头,并附上该笔对应的具体商品明细,任取一笔都能通过商户名或商品名被 `search_transactions` 命中
 
 ### Requirement: keyword 检索按字面子串匹配
 Agent SHALL 将 `search_transactions` 的 `keyword` 参数中的 `%`、`_` 视为字面字符,不依赖它们实现模糊/通配匹配。
@@ -130,3 +120,18 @@ Agent SHALL 将商户→分类/来源这类账本数据的投影关系交给先�
 #### Scenario: 用户本人的记账偏好
 - **WHEN** agent 了解到用户本人的记账语言、分类粒度偏好等个人习惯
 - **THEN** agent 可以将其写入 Agent 侧持久记忆,因为该信息描述的是用户本人而非账本数据
+
+### Requirement: 商户名与备注分开写入
+Agent SHALL 把「这笔钱付给了谁 / 谁付的钱」写入 `merchant`,把用户自己想补充的话写入 `comment`。`merchant` SHALL 是银行账单或用户口述中的商户原名,原样写入,不做归一化、缩写、大小写整理或别名替换;没有商户的交易 SHALL 允许 `merchant` 为空。`comment` SHALL NOT 再被要求承载商户名,只在用户提供了想记的内容时才写入。
+
+#### Scenario: 用户提供商户与自己的说明
+- **WHEN** 用户说"星巴克 32 块,和同事下午茶",准备记录一笔支出
+- **THEN** Agent 把"星巴克"写入 `merchant`,把"和同事下午茶"写入 `comment`,分别放入对话预览
+
+#### Scenario: 银行账单里的商户原名
+- **WHEN** 银行流水上的商户名是 `STARBUCKS #4821 TAIPEI`,用户没有额外说明
+- **THEN** Agent 原样把该字符串写入 `merchant`,`comment` 留空,不改写成"星巴克"或其他整理后的名字
+
+#### Scenario: 没有商户的交易
+- **WHEN** 一笔现金或个人往来交易没有可识别的商户
+- **THEN** Agent 不编造 `merchant`,该字段留空,只按用户提供的内容写 `comment`
