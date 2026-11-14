@@ -13,6 +13,7 @@ import (
 
 	"tally/internal/bootstrap"
 	"tally/internal/currency"
+	"tally/internal/store"
 	"tally/internal/tools"
 )
 
@@ -55,6 +56,12 @@ func cnyAmount(minorUnits int64) string {
 // server and client are torn down via t.Cleanup.
 func newE2ESession(t *testing.T) (*mcp.ClientSession, string) {
 	t.Helper()
+	session, ledgerID, _ := newE2ESessionWithStore(t)
+	return session, ledgerID
+}
+
+func newE2ESessionWithStore(t *testing.T) (*mcp.ClientSession, string, *store.Queries) {
+	t.Helper()
 
 	const token = "e2e-test-token"
 
@@ -92,7 +99,7 @@ func newE2ESession(t *testing.T) (*mcp.ClientSession, string) {
 	var ledgerOut tools.ManageLedgerOutput
 	call(t, session, "manage_ledger", tools.ManageLedgerInput{Operation: "create", Name: "Test Ledger"}, &ledgerOut)
 
-	return session, ledgerOut.Ledger.ID
+	return session, ledgerOut.Ledger.ID, store.New(db)
 }
 
 // call invokes an MCP tool and unmarshals its structured output into out. It
@@ -100,6 +107,7 @@ func newE2ESession(t *testing.T) (*mcp.ClientSession, string) {
 // level; use callExpectError for scenarios that expect a tool-level error.
 func call(t *testing.T, session *mcp.ClientSession, name string, args any, out any) {
 	t.Helper()
+	args = injectDefaultE2EBudget(t, session, args)
 
 	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: args})
 	if err != nil {
@@ -117,6 +125,42 @@ func call(t *testing.T, session *mcp.ClientSession, name string, args any, out a
 			t.Fatalf("unmarshal into %T: %v", out, err)
 		}
 	}
+}
+
+func injectDefaultE2EBudget(t *testing.T, session *mcp.ClientSession, args any) any {
+	t.Helper()
+	switch v := args.(type) {
+	case tools.CreateTransactionInput:
+		if v.BudgetID == "" && v.LedgerID != "" {
+			v.BudgetID = lookupFirstE2EBudgetID(session, v.LedgerID)
+			return v
+		}
+	case tools.UpdateTransactionInput:
+		if v.BudgetID == "" && v.LedgerID != "" {
+			v.BudgetID = lookupFirstE2EBudgetID(session, v.LedgerID)
+			return v
+		}
+	}
+	return args
+}
+
+func lookupFirstE2EBudgetID(session *mcp.ClientSession, ledgerID string) string {
+	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "list_budgets",
+		Arguments: tools.ListBudgetsInput{LedgerID: ledgerID},
+	})
+	if err != nil || res.IsError {
+		return ""
+	}
+	raw, err := json.Marshal(res.StructuredContent)
+	if err != nil {
+		return ""
+	}
+	var out tools.ListBudgetsOutput
+	if err := json.Unmarshal(raw, &out); err != nil || len(out.Budgets) == 0 {
+		return ""
+	}
+	return out.Budgets[0].ID
 }
 
 // callExpectError invokes an MCP tool expecting a tool-level error

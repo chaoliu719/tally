@@ -18,12 +18,15 @@ account to create or log into.
 | `manage_source` | Create, update, or delete a source within one ledger, via `operation=create/update/delete`. Delete is a two-step preview → apply confirmation (see below). |
 | `list_categories` | List every transaction category (name, parent id) in one ledger. |
 | `manage_category` | Create, update, or delete a transaction category within one ledger, via `operation=create/update/delete`. Categories nest to any depth. Delete is a two-step preview → apply confirmation (see below). |
-| `create_transaction` | Record one income or expense transaction in one ledger, referencing an existing source and category (any category in that ledger). |
+| `list_budgets` | List every budget (id, name) in one ledger — the financial-structure label a transaction carries (e.g. `固定`, `专项`, `突发`, `日常`). |
+| `manage_budget` | Create, update, or delete a budget within one ledger, via `operation=create/update/delete`. Delete is a two-step preview → apply confirmation (see below); a budget referenced by any transaction cannot be deleted. |
+| `create_transaction` | Record one income or expense transaction in one ledger, referencing an existing source, category (any category in that ledger), and budget. |
 | `get_transaction` | Fetch one transaction by id (and its ledger id). |
-| `search_transactions` | List transactions in one ledger, optionally filtered by time range, source, and/or category, sorted oldest first. Paginated via `limit` (default 50, max 200) and `cursor`; the response includes `next_cursor` when more results remain. |
+| `search_transactions` | List transactions in one ledger, optionally filtered by time range, source, category, and/or budget (pass `budget_id="0"` for legacy transactions with no budget yet), sorted oldest first. Paginated via `limit` (default 50, max 200) and `cursor`; the response includes `next_cursor` when more results remain. |
 | `update_transaction` | Replace every field of an existing transaction by id (same validation rules as `create_transaction`). Full replacement, not a partial update; no confirmation required. |
-| `delete_transaction` | Delete a transaction by id. Two-step preview → apply confirmation (see below); unlike source/category deletion, any existing transaction can be deleted. |
-| `get_financial_summary` | Aggregate income/expense/net totals over an optional time range within one ledger, grouped by currency, and broken down by category and by source. Read-only. |
+| `batch_update_transactions` | Change reference fields (`category_id`, `source_id`, and/or `budget_id`) on many transactions of one ledger in a single call, targeted by `ids` or by a `filter`, at most 100 per call. Two-step preview → apply confirmation; a transaction that changed since the preview is reported individually and the rest still apply. |
+| `delete_transaction` | Delete a transaction by id. Two-step preview → apply confirmation (see below); unlike source/category/budget deletion, any existing transaction can be deleted. |
+| `get_financial_summary` | Aggregate income/expense/net totals over an optional time range within one ledger, grouped by currency, and broken down by category, by source, and by budget (`budget_id="0"` shows up as its own group when legacy transactions remain unassigned). Optional `budget_id` narrows the whole summary. Read-only. |
 | `open_transaction_timeline` | Open an interactive, scrollable timeline of one ledger's transactions (day-grouped, newest first) as an inline MCP App panel on hosts that support it; falls back to a text summary elsewhere. Optional `start_date` / `end_date` (`YYYY-MM-DD`, whole days included), `category_id` (with all its descendant categories) and `source_id` fix the panel's scope when it opens — only transactions inside the scope are loaded and the panel cannot widen it, so a different period, category or source means calling the tool again. Omitting a parameter restricts nothing: with only `ledger_id` the panel covers the ledger's whole history. The text result is a summary only (scope, transaction count, income/expense totals per currency) and lists no transactions. Read-only. |
 
 ### Interactive widgets
@@ -43,18 +46,29 @@ To add a widget: drop the directory, then in a `internal/tools/<name>.go` call
 the launcher tool. `internal/widgets/` is embedded whole (`//go:embed all:src`) — keep no
 secrets or large assets under `src/`.
 
-Every source, category, and transaction belongs to exactly one ledger, and every tool above (other
-than `list_ledgers`/`manage_ledger` themselves) takes a required `ledger_id` — there's no notion of
-a "current" ledger held server-side, so callers pass it explicitly on every call. Ledgers are fully
-isolated: nothing in one ledger (including same-named sources/categories) is visible to or
-reachable from another. A brand-new database starts with zero ledgers; create one with
-`manage_ledger` before creating any sources, categories, or transactions. A ledger can only be
-deleted once it's empty — clear out its sources, categories, and transactions first.
+Every source, category, budget, and transaction belongs to exactly one ledger, and every tool above
+(other than `list_ledgers`/`manage_ledger` themselves) takes a required `ledger_id` — there's no
+notion of a "current" ledger held server-side, so callers pass it explicitly on every call. Ledgers
+are fully isolated: nothing in one ledger (including same-named sources/categories/budgets) is
+visible to or reachable from another. A brand-new database starts with zero ledgers; create one
+with `manage_ledger` before creating any sources or categories — a new ledger is seeded with four
+budgets (`固定`, `专项`, `突发`, `日常`) automatically. A ledger can only be deleted once it's
+empty — clear out its sources, categories, and transactions first.
 
 Categories can nest to any depth — `parent_id` may point at any existing category in the same
 ledger, and any category (top-level or nested) can be referenced by `create_transaction`. All ids
-on the wire (ledger, source, category, transaction) are decimal **strings**, not JSON numbers, so
-no MCP client ever risks losing precision decoding one into a JSON number.
+on the wire (ledger, source, category, budget, transaction) are decimal **strings**, not JSON
+numbers, so no MCP client ever risks losing precision decoding one into a JSON number.
+
+Every transaction carries exactly one budget, on top of its category. Category answers "what the
+money went to"; budget answers "what this money is in your financial structure" — the two are
+orthogonal, and the server stores no rule mapping one to the other. `create_transaction` and
+`update_transaction` require `budget_id`; omitting it, passing `"0"`, or naming a budget outside
+the ledger is rejected (unlike `merchant`/`comment`, which default to an empty string). The
+`budgets` table and `transactions.budget_id` column are added in place when an existing database is
+opened; pre-upgrade rows come back with `budget_id="0"` until you assign them real budgets with
+`batch_update_transactions`, and they stay visible as their own group in `get_financial_summary`
+until you do.
 
 A source has no balance and no currency of its own — it is just a label for where a transaction's
 money comes from or goes to. Currency lives on the transaction: `create_transaction`/
@@ -64,18 +78,18 @@ currencies (e.g. USD, CNY), 0 for others (e.g. JPY, KRW), and 3 for a handful (e
 per the real ISO 4217 standard. There is no single fixed "divide by 100" rule that works for every
 currency.
 
-### Deleting a ledger, source, category, or transaction
+### Deleting a ledger, source, category, budget, or transaction
 
-`manage_ledger`/`manage_source`/`manage_category` with `operation=delete`, and
+`manage_ledger`/`manage_source`/`manage_category`/`manage_budget` with `operation=delete`, and
 `delete_transaction`, are all a two-step confirmation, not a single-call delete:
 
-1. Call without `confirmation_token` (for `manage_ledger`/`manage_source`/`manage_category`, with
-   `operation=delete` and the target `id`; for `delete_transaction`, with the target `id`). If the
-   resource can currently be deleted (no sources, categories, or transactions for a ledger; no
-   referencing transactions for a source; no child categories or referencing transactions for a
-   category; a transaction has no such gate — any existing transaction can always be deleted), the
-   response has `status=pending_confirmation` and includes a `confirmation_token` (and its
-   expiry).
+1. Call without `confirmation_token` (for `manage_ledger`/`manage_source`/`manage_category`/
+   `manage_budget`, with `operation=delete` and the target `id`; for `delete_transaction`, with the
+   target `id`). If the resource can currently be deleted (no sources, categories, or transactions
+   for a ledger; no referencing transactions for a source or budget; no child categories or
+   referencing transactions for a category; a transaction has no such gate — any existing
+   transaction can always be deleted), the response has `status=pending_confirmation` and includes
+   a `confirmation_token` (and its expiry).
 2. Call again the same way, this time passing that `confirmation_token`. The resource is deleted
    and the response has `status=deleted`.
 
@@ -83,12 +97,14 @@ A `confirmation_token` expires after 15 minutes and is invalidated if the resour
 between the two calls (e.g. a transaction gets recorded against a source, or the transaction
 itself is edited, in the meantime) — in either case, preview again to get a fresh token.
 
-Deleting every transaction referencing a source or category (via `delete_transaction`) is how you
-clear the reference block on `manage_source`/`manage_category`'s `operation=delete` — the source
-or category itself is otherwise never automatically deleted or modified by deleting transactions.
+Deleting every transaction referencing a source, category, or budget (via `delete_transaction`) is
+how you clear the reference block on `manage_source`/`manage_category`/`manage_budget`'s
+`operation=delete` — the source, category, or budget itself is otherwise never automatically
+deleted or modified by deleting transactions.
 
 Not implemented in this version (left for a future change): tags and tag groups, custom exchange
-rates, batch operations, and trend/reconciliation-style analytics beyond `get_financial_summary`.
+rates, budget limits/spending caps, trend/reconciliation-style analytics beyond
+`get_financial_summary`.
 
 ## Configuration
 
@@ -97,7 +113,7 @@ All configuration is via environment variables.
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `TALLY_MCP_TOKEN` | Yes | — | Static bearer token clients may send as `Authorization: Bearer <token>`. Also the login gate for the OAuth `/authorize` step. The process refuses to start without it. |
-| `TALLY_CONFIRMATION_SECRET` | Yes | — | Secret used to sign/verify `confirmation_token`s for destructive operations (ledger/source/category/transaction delete). Independent of `TALLY_MCP_TOKEN`. The process refuses to start without it. |
+| `TALLY_CONFIRMATION_SECRET` | Yes | — | Secret used to sign/verify `confirmation_token`s for destructive operations (ledger/source/category/budget/transaction delete, batch updates). Independent of `TALLY_MCP_TOKEN`. The process refuses to start without it. |
 | `TALLY_OAUTH_SIGNING_SECRET` | Yes | — | Secret that signs/verifies the OAuth authorization codes, access tokens, and client IDs. Independent of the two secrets above. Rotating it invalidates every issued access token at once. The process refuses to start without it. |
 | `TALLY_PUBLIC_BASE_URL` | Yes | — | The externally reachable origin, no trailing slash (e.g. `https://tally.liuchao.life`). Anchors the OAuth issuer, the well-known metadata URLs, and the canonical resource URI (`<base>/mcp`) that access tokens are bound to. The process refuses to start without it. |
 | `TALLY_DB_PATH` | No | `./tally.db` | Path to the SQLite file. Created (with tally's own schema) on first run if it doesn't exist. |

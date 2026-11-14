@@ -25,7 +25,7 @@ func init() {
 func registerTransactionTools(s *mcp.Server, deps Deps) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "create_transaction",
-		Description: "Record one income or expense transaction. Requires an existing category_id (any category in the ledger). merchant is the optional raw merchant/payee name as stated on the bank statement or by the user; comment is the user's own note, independent of merchant.",
+		Description: "Record one income or expense transaction. Requires an existing category_id and budget_id (both in the same ledger; budget_id cannot be omitted or \"0\"). merchant is the optional raw merchant/payee name as stated on the bank statement or by the user; comment is the user's own note, independent of merchant.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in CreateTransactionInput) (*mcp.CallToolResult, CreateTransactionOutput, error) {
 		return createTransaction(ctx, deps, in)
 	})
@@ -39,7 +39,7 @@ func registerTransactionTools(s *mcp.Server, deps Deps) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "search_transactions",
-		Description: "List transactions, optionally filtered by time range, source, category, and/or a case-insensitive keyword matched against both merchant and comment. Sorted oldest first by default, or newest first when newest_first is true. Results are paginated: " +
+		Description: "List transactions, optionally filtered by time range, source, category, budget (use \"0\" to match legacy unassigned transactions), and/or a case-insensitive keyword matched against both merchant and comment. Sorted oldest first by default, or newest first when newest_first is true. Results are paginated: " +
 			"each call returns at most limit transactions (default 50, max 200); if more match, the response includes next_cursor -- pass it back " +
 			"as cursor on the next call (with the same filters and the same newest_first value) to keep paging until next_cursor is no longer returned. With no filters, pages through every transaction in the ledger.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in SearchTransactionsInput) (*mcp.CallToolResult, SearchTransactionsOutput, error) {
@@ -48,7 +48,7 @@ func registerTransactionTools(s *mcp.Server, deps Deps) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "update_transaction",
-		Description: "Replace a transaction's fields (type, source, category, amount, currency, time, merchant, comment) by id. This is a full replacement, not a partial update -- all fields must be provided, and the same validation rules as create_transaction apply. Omitting merchant or comment stores an empty string, clearing any existing value. Does not require confirmation.",
+		Description: "Replace a single transaction's fields (type, source, category, budget, amount, currency, time, merchant, comment) by id. This is a full replacement, not a partial update -- all required fields (including budget_id) must be provided, and the same validation rules as create_transaction apply (omitting merchant or comment stores an empty string; omitting budget_id is rejected). To patch only reference fields (category_id, source_id, budget_id) across multiple transactions, use batch_update_transactions instead. Does not require confirmation.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in UpdateTransactionInput) (*mcp.CallToolResult, UpdateTransactionOutput, error) {
 		return updateTransaction(ctx, deps, in)
 	})
@@ -72,6 +72,18 @@ func registerTransactionTools(s *mcp.Server, deps Deps) {
 			"At most %d ids per call -- previewing more than that is rejected outright.", batchDeleteTransactionsMaxIDs),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in BatchDeleteTransactionsInput) (*mcp.CallToolResult, BatchDeleteTransactionsOutput, error) {
 		return batchDeleteTransactions(ctx, deps, in)
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "batch_update_transactions",
+		Description: fmt.Sprintf("Patch reference fields (category_id, source_id, and/or budget_id) across a batch of transactions in one ledger. "+
+			"Unlike update_transaction (which is a single-row full replacement), this tool is a partial update that only modifies "+
+			"the reference fields provided in patch, leaving amount, currency, time, type, merchant, and comment untouched. "+
+			"Target transactions are specified either by ids or by filter (category_id, source_id, budget_id including \"0\" for unassigned, start_time, end_time), mutually exclusively. "+
+			"This is a two-step preview -> confirm: call without confirmation_token to preview, then call again with the returned confirmation_token to apply. "+
+			"At most %d target transactions per call -- previewing more than that is rejected outright.", batchUpdateTransactionsMaxItems),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in BatchUpdateTransactionsInput) (*mcp.CallToolResult, BatchUpdateTransactionsOutput, error) {
+		return batchUpdateTransactions(ctx, deps, in)
 	})
 }
 
@@ -100,6 +112,7 @@ type TransactionInfo struct {
 	Type       string `json:"type" jsonschema:"the transaction's type: income or expense"`
 	SourceID   string `json:"source_id" jsonschema:"the id of the source this transaction is from/to, as a decimal string"`
 	CategoryID string `json:"category_id" jsonschema:"the id of the transaction's category, as a decimal string"`
+	BudgetID   string `json:"budget_id" jsonschema:"the id of the transaction's budget, as a decimal string; \"0\" for legacy transactions not yet assigned a budget"`
 	Amount     string `json:"amount" jsonschema:"the transaction amount, as a decimal string in the currency's major unit; how many fractional digits that allows varies by currency (e.g. \"50.00\" for CNY, \"5000\" for JPY, \"5.000\" for BHD). Positive for both income and expense"`
 	Currency   string `json:"currency" jsonschema:"the transaction's currency, as an ISO 4217 code"`
 	Time       string `json:"time" jsonschema:"when the transaction occurred, as a local date-time string in the form YYYY-MM-DD HH:MM:SS (24-hour, zero-padded); no timezone -- stored and returned exactly as given, never converted"`
@@ -112,6 +125,7 @@ type CreateTransactionInput struct {
 	Type       string `json:"type" jsonschema:"the transaction's type: income or expense"`
 	SourceID   string `json:"source_id" jsonschema:"the id of the source this transaction is from/to, as a decimal string; must belong to the same ledger"`
 	CategoryID string `json:"category_id" jsonschema:"the id of the transaction's category, as a decimal string; any existing category in the same ledger"`
+	BudgetID   string `json:"budget_id" jsonschema:"the id of the transaction's budget, as a decimal string; required and must reference an existing budget in the same ledger (cannot be omitted or \"0\")"`
 	Amount     string `json:"amount" jsonschema:"the transaction amount, as a decimal string in the currency's major unit; how many fractional digits that allows varies by currency (e.g. \"50.00\" for CNY, \"5000\" for JPY, \"5.000\" for BHD); must be positive"`
 	Currency   string `json:"currency" jsonschema:"the transaction's currency, as an ISO 4217 code, e.g. CNY, USD"`
 	Time       string `json:"time" jsonschema:"when the transaction occurred, as a local date-time string in the form YYYY-MM-DD HH:MM:SS (24-hour, zero-padded); no timezone -- stored and returned exactly as given, never converted"`
@@ -125,26 +139,27 @@ type CreateTransactionOutput struct {
 
 // validatedTransactionFields is the normalized, validated form of the fields
 // shared by create_transaction and update_transaction: the ledger id, the
-// source id, the resolved category_id, and the signed amount to store
+// source id, the resolved category_id, the budget_id, and the signed amount to store
 // (income amounts are stored positive, expense negative, so SUM(amount) is
 // directly the net total; the wire format keeps *Amount positive for both).
 type validatedTransactionFields struct {
 	LedgerID   int64
 	SourceID   int64
 	CategoryID int64
+	BudgetID   int64
 	Currency   string
 	Amount     int64
 }
 
 // validateTransactionInput checks and normalizes the ledger_id/type/
-// source_id/category_id/amount/currency/time rules shared by
+// source_id/category_id/budget_id/amount/currency/time rules shared by
 // create_transaction and update_transaction: income/expense require an
-// existing ledger, a source_id and category_id both belonging to that
+// existing ledger, a source_id, category_id, and budget_id all belonging to that
 // ledger, a supported currency code, and an amount string that is a valid,
 // positive decimal number at or under that currency's standard precision.
 // currency must be validated before amount can be parsed, since amount's
 // allowed decimal precision depends on which currency it's in.
-func validateTransactionInput(ctx context.Context, deps Deps, ledgerIDStr, txType, sourceIDStr, categoryIDStr, amountStr, currencyCode, txTime string) (validatedTransactionFields, error) {
+func validateTransactionInput(ctx context.Context, deps Deps, ledgerIDStr, txType, sourceIDStr, categoryIDStr, budgetIDStr, amountStr, currencyCode, txTime string) (validatedTransactionFields, error) {
 	if !createableTransactionTypes[txType] {
 		return validatedTransactionFields{}, fmt.Errorf("missing or unsupported transaction type: %q", txType)
 	}
@@ -199,6 +214,23 @@ func validateTransactionInput(ctx context.Context, deps Deps, ledgerIDStr, txTyp
 		return validatedTransactionFields{}, err
 	}
 
+	if budgetIDStr == "" {
+		return validatedTransactionFields{}, fmt.Errorf("missing required field: budget_id")
+	}
+	budgetID, err := parseID(budgetIDStr)
+	if err != nil {
+		return validatedTransactionFields{}, err
+	}
+	if budgetID <= 0 {
+		return validatedTransactionFields{}, fmt.Errorf("invalid budget_id %q: must reference an existing budget", budgetIDStr)
+	}
+	if _, err := deps.Q.GetBudget(ctx, store.GetBudgetParams{ID: budgetID, LedgerID: ledgerID}); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return validatedTransactionFields{}, fmt.Errorf("budget %q not found", budgetIDStr)
+		}
+		return validatedTransactionFields{}, err
+	}
+
 	if currencyCode == "" {
 		return validatedTransactionFields{}, fmt.Errorf("missing required field: currency")
 	}
@@ -219,11 +251,11 @@ func validateTransactionInput(ctx context.Context, deps Deps, ledgerIDStr, txTyp
 		signedAmount = -amount
 	}
 
-	return validatedTransactionFields{LedgerID: ledgerID, SourceID: sourceID, CategoryID: categoryID, Currency: currencyCode, Amount: signedAmount}, nil
+	return validatedTransactionFields{LedgerID: ledgerID, SourceID: sourceID, CategoryID: categoryID, BudgetID: budgetID, Currency: currencyCode, Amount: signedAmount}, nil
 }
 
 func createTransaction(ctx context.Context, deps Deps, in CreateTransactionInput) (*mcp.CallToolResult, CreateTransactionOutput, error) {
-	fields, err := validateTransactionInput(ctx, deps, in.LedgerID, in.Type, in.SourceID, in.CategoryID, in.Amount, in.Currency, in.Time)
+	fields, err := validateTransactionInput(ctx, deps, in.LedgerID, in.Type, in.SourceID, in.CategoryID, in.BudgetID, in.Amount, in.Currency, in.Time)
 	if err != nil {
 		return nil, CreateTransactionOutput{}, err
 	}
@@ -234,6 +266,7 @@ func createTransaction(ctx context.Context, deps Deps, in CreateTransactionInput
 		Type:       in.Type,
 		SourceID:   fields.SourceID,
 		CategoryID: fields.CategoryID,
+		BudgetID:   fields.BudgetID,
 		Currency:   fields.Currency,
 		Amount:     fields.Amount,
 		Time:       in.Time,
@@ -299,6 +332,7 @@ type UpdateTransactionInput struct {
 	Type       string `json:"type" jsonschema:"the transaction's type: income or expense"`
 	SourceID   string `json:"source_id" jsonschema:"the id of the source this transaction is from/to, as a decimal string; may differ from the transaction's current source_id to move it to another source in the same ledger"`
 	CategoryID string `json:"category_id" jsonschema:"the id of the transaction's category, as a decimal string; any existing category in the same ledger"`
+	BudgetID   string `json:"budget_id" jsonschema:"the id of the transaction's budget, as a decimal string; required and must reference an existing budget in the same ledger (cannot be omitted or \"0\")"`
 	Amount     string `json:"amount" jsonschema:"the transaction amount, as a decimal string in the currency's major unit; how many fractional digits that allows varies by currency (e.g. \"50.00\" for CNY, \"5000\" for JPY, \"5.000\" for BHD); must be positive"`
 	Currency   string `json:"currency" jsonschema:"the transaction's currency, as an ISO 4217 code, e.g. CNY, USD"`
 	Time       string `json:"time" jsonschema:"when the transaction occurred, as a local date-time string in the form YYYY-MM-DD HH:MM:SS (24-hour, zero-padded); no timezone -- stored and returned exactly as given, never converted"`
@@ -315,7 +349,7 @@ type UpdateTransactionOutput struct {
 // manage_category's operation=update), reusing the exact validation rules
 // create_transaction applies -- see validateTransactionInput. The
 // transaction's ledger cannot be changed: ledger_id must match the
-// transaction's current ledger, and source_id/category_id must belong to it.
+// transaction's current ledger, and source_id/category_id/budget_id must belong to it.
 func updateTransaction(ctx context.Context, deps Deps, in UpdateTransactionInput) (*mcp.CallToolResult, UpdateTransactionOutput, error) {
 	if in.ID == "" {
 		return nil, UpdateTransactionOutput{}, fmt.Errorf("missing required field: id")
@@ -339,7 +373,7 @@ func updateTransaction(ctx context.Context, deps Deps, in UpdateTransactionInput
 		return nil, UpdateTransactionOutput{}, err
 	}
 
-	fields, err := validateTransactionInput(ctx, deps, in.LedgerID, in.Type, in.SourceID, in.CategoryID, in.Amount, in.Currency, in.Time)
+	fields, err := validateTransactionInput(ctx, deps, in.LedgerID, in.Type, in.SourceID, in.CategoryID, in.BudgetID, in.Amount, in.Currency, in.Time)
 	if err != nil {
 		return nil, UpdateTransactionOutput{}, err
 	}
@@ -348,6 +382,7 @@ func updateTransaction(ctx context.Context, deps Deps, in UpdateTransactionInput
 		Type:       in.Type,
 		SourceID:   fields.SourceID,
 		CategoryID: fields.CategoryID,
+		BudgetID:   fields.BudgetID,
 		Currency:   fields.Currency,
 		Amount:     fields.Amount,
 		Time:       in.Time,
@@ -377,6 +412,7 @@ type transactionDeletionRevisionFields struct {
 	Type       string
 	SourceID   int64
 	CategoryID int64
+	BudgetID   int64
 	Currency   string
 	Amount     int64
 	Time       string
@@ -389,6 +425,7 @@ func transactionDeletionRevision(t store.Transaction) string {
 		Type:       t.Type,
 		SourceID:   t.SourceID,
 		CategoryID: t.CategoryID,
+		BudgetID:   t.BudgetID,
 		Currency:   t.Currency,
 		Amount:     t.Amount,
 		Time:       t.Time,
@@ -662,11 +699,12 @@ type SearchTransactionsInput struct {
 	SourceID           string `json:"source_id,omitempty" jsonschema:"only include transactions from/to this source, as a decimal string"`
 	CategoryID         string `json:"category_id,omitempty" jsonschema:"only include transactions in this category, as a decimal string"`
 	IncludeDescendants bool   `json:"include_descendants,omitempty" jsonschema:"when true, also include transactions in any descendant of category_id (recursively); has no effect if category_id is not set. Defaults to false (exact match only)"`
+	BudgetID           string `json:"budget_id,omitempty" jsonschema:"only include transactions with this budget, as a decimal string; pass \"0\" to match legacy transactions not yet assigned a budget"`
 	StartTime          string `json:"start_time,omitempty" jsonschema:"only include transactions at or after this local date-time (format YYYY-MM-DD HH:MM:SS, no timezone)"`
 	EndTime            string `json:"end_time,omitempty" jsonschema:"only include transactions at or before this local date-time (format YYYY-MM-DD HH:MM:SS, no timezone)"`
 	Keyword            string `json:"keyword,omitempty" jsonschema:"only include transactions whose merchant OR comment contains this substring, case-insensitively; % and _ are matched literally, not as wildcards. Blank (empty or whitespace-only) is treated as not provided"`
 	Limit              int64  `json:"limit,omitempty" jsonschema:"maximum number of transactions to return in this page; defaults to 50 when omitted, must be between 1 and 200 (requests over 200 are rejected, not truncated)"`
-	Cursor             string `json:"cursor,omitempty" jsonschema:"opaque pagination cursor from a previous response's next_cursor; omit to fetch the first page. Must be paired with the exact same ledger_id/source_id/category_id/start_time/end_time/keyword filters and the same newest_first value used to obtain it"`
+	Cursor             string `json:"cursor,omitempty" jsonschema:"opaque pagination cursor from a previous response's next_cursor; omit to fetch the first page. Must be paired with the exact same ledger_id/source_id/category_id/budget_id/start_time/end_time/keyword filters and the same newest_first value used to obtain it"`
 	NewestFirst        bool   `json:"newest_first,omitempty" jsonschema:"when false (default), results are ordered oldest-first and next_cursor pages toward later transactions; when true, results are ordered newest-first and next_cursor pages toward earlier transactions. Must match the value the cursor was issued under"`
 }
 
@@ -722,6 +760,14 @@ func searchTransactions(ctx context.Context, deps Deps, in SearchTransactionsInp
 		filter.CategoryID = sql.NullInt64{Int64: id, Valid: true}
 		filter.IncludeDescendants = in.IncludeDescendants
 	}
+	if in.BudgetID != "" {
+		id, err := parseID(in.BudgetID)
+		if err != nil {
+			return nil, SearchTransactionsOutput{}, err
+		}
+		params.BudgetID = sql.NullInt64{Int64: id, Valid: true}
+		filter.BudgetID = sql.NullInt64{Int64: id, Valid: true}
+	}
 	if in.StartTime != "" {
 		if err := validateLocalDateTime(in.StartTime); err != nil {
 			return nil, SearchTransactionsOutput{}, err
@@ -770,6 +816,7 @@ func searchTransactions(ctx context.Context, deps Deps, in SearchTransactionsInp
 			LedgerID:        params.LedgerID,
 			SourceID:        params.SourceID,
 			CategoryIdsJson: params.CategoryIdsJson,
+			BudgetID:        params.BudgetID,
 			StartTime:       params.StartTime,
 			EndTime:         params.EndTime,
 			Keyword:         params.Keyword,
@@ -813,6 +860,7 @@ func toTransactionInfo(t store.Transaction) (TransactionInfo, error) {
 		Type:       t.Type,
 		SourceID:   formatID(t.SourceID),
 		CategoryID: formatID(t.CategoryID),
+		BudgetID:   formatID(t.BudgetID),
 		Amount:     amount,
 		Currency:   t.Currency,
 		Time:       t.Time,

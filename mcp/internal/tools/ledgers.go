@@ -31,7 +31,7 @@ func registerLedgerTools(s *mcp.Server, deps Deps) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "manage_ledger",
 		Description: "Create, update, or delete a ledger, selected via the operation field. " +
-			"operation=create makes a new ledger with no sources or categories yet. operation=update replaces " +
+			"operation=create makes a new ledger with no sources or categories yet, and seeds the four default budgets (固定, 专项, 突发, 日常). operation=update replaces " +
 			"name and comment on an existing ledger (both required; this is a full replacement, not a partial update). " +
 			"operation=delete is a two-step preview -> apply: call without confirmation_token to preview " +
 			"(fails if the ledger still has any sources, categories, or transactions), then call again with the " +
@@ -104,14 +104,37 @@ func createLedger(ctx context.Context, deps Deps, in ManageLedgerInput) (*mcp.Ca
 		return nil, ManageLedgerOutput{}, fmt.Errorf("missing required field: name")
 	}
 
+	tx, err := deps.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, ManageLedgerOutput{}, err
+	}
+	defer tx.Rollback()
+
+	q := deps.Q.WithTx(tx)
+
 	now := time.Now().Unix()
-	ledger, err := deps.Q.CreateLedger(ctx, store.CreateLedgerParams{
+	ledger, err := q.CreateLedger(ctx, store.CreateLedgerParams{
 		Name:      in.Name,
 		Comment:   in.Comment,
 		CreatedAt: now,
 		UpdatedAt: now,
 	})
 	if err != nil {
+		return nil, ManageLedgerOutput{}, err
+	}
+
+	for _, name := range store.SeedBudgetNames {
+		if _, err := q.CreateBudget(ctx, store.CreateBudgetParams{
+			LedgerID:  ledger.ID,
+			Name:      name,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}); err != nil {
+			return nil, ManageLedgerOutput{}, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
 		return nil, ManageLedgerOutput{}, err
 	}
 
@@ -257,6 +280,10 @@ func deleteLedger(ctx context.Context, deps Deps, in ManageLedgerInput) (*mcp.Ca
 	}
 	if liveSourceCount != 0 || liveCategoryCount != 0 || liveTxCount != 0 {
 		return nil, ManageLedgerOutput{}, fmt.Errorf("ledger %q can no longer be deleted (sources=%d, categories=%d, transactions=%d); please preview again", in.ID, liveSourceCount, liveCategoryCount, liveTxCount)
+	}
+
+	if err := q.DeleteBudgetsByLedger(ctx, id); err != nil {
+		return nil, ManageLedgerOutput{}, err
 	}
 
 	if err := q.DeleteLedger(ctx, id); err != nil {

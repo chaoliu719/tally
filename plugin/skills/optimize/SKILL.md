@@ -26,12 +26,8 @@ description: 整理记账分类体系时候必须看——用户说"最近多了
 1. 用户同意把分类 A 合并进分类 B 之前,先用 `search_transactions(category_id=A)`
    数一下 A 下面有多少笔交易,挑几个例子给用户看看,**不要没展示过影响范围就直接
    开始改**。
-2. **交易数量较大时,提前告知成本。** 没有批量更新工具——合并要对 A 下的每笔交易
-   分别调用一次 `update_transaction`。如果数量不小(比如几十笔以上),先告诉用户
-   大概要调用多少次、大致要花多久,让用户自己判断值不值得现在做。
-3. 用户确认后,对分类 A 下的每一笔交易依次调用 `update_transaction`,把
-   `category_id` 改成 B(其余字段——尤其是 `merchant` 和 `comment`——保持原样,做法同
-   `record` skill 里"修正交易"的纪律)。
+2. **交易数量超过单批上限时,提前告知需要分几批。** 重新分类使用 `batch_update_transactions`(一次调用即可把一批交易的 `category_id` 改成 B,走 preview → apply 两步确认,不得再对每笔交易逐笔调用 `update_transaction`)。如果待合并分类 A 下的交易数量超过 `batch_update_transactions` 的单批上限(100 笔)、需要分多批才能完成,在执行前先告知用户需要分成几批完成,由用户决定是否现在执行。
+3. 用户确认后,调用 `batch_update_transactions(ledger_id, filter={category_id: A}, patch={category_id: B})`:先不带 `confirmation_token` 预览命中范围,确认无误后带上返回的 `confirmation_token` 应用更新(若超过单批上限则按批依次 preview → apply)。`batch_update_transactions` 只改 patch 指定的引用字段,交易的预算、`merchant`、`comment` 等其余字段会自动保持原样。
 4. 全部改完、A 不再被任何交易引用后,对 A 调用 `manage_category`
    (`operation="delete"`),走标准的 preview → apply 两步确认完成删除。
 
@@ -40,7 +36,7 @@ description: 整理记账分类体系时候必须看——用户说"最近多了
 1. 用户同意从某个分类拆出子分类后,先调用 `manage_category`(`operation="create"`),
    在原分类下建好新的子分类。
 2. 把将要被移动过去的交易列表或数量展示给用户看一遍。
-3. 确认后逐笔调用 `update_transaction`,把匹配的交易的 `category_id` 改成新分类。
+3. 确认后通过 `batch_update_transactions`(按匹配的交易 `ids` 列表或 `filter`,设置 `patch={category_id: 新分类}`),走 preview → apply 把匹配的交易批量改为引用新分类。
 
 ## 提议周期性复盘:不要假设有哪个具体工具
 

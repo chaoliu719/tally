@@ -3,7 +3,7 @@
 A personal bookkeeping capability, packaged for an agent to carry: **tally = tally-mcp + plugin**.
 
 - [`mcp/`](mcp/README.md) — the fact layer. A pure [MCP](https://modelcontextprotocol.io) server
-  backed by its own SQLite schema: ledgers, sources, categories, transactions. No REST API, no web
+  backed by its own SQLite schema: ledgers, sources, categories, budgets, transactions. No REST API, no web
   UI, no third-party bookkeeping library underneath.
 - `plugin/` — the practice layer. The skills, commands, agents, and hooks that turn the raw MCP
   tools into a bookkeeping workflow inside a conversation. Five skills ship today — `record`,

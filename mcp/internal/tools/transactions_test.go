@@ -1,12 +1,14 @@
 package tools_test
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"tally/internal/currency"
+	"tally/internal/store"
 	"tally/internal/tools"
 )
 
@@ -45,6 +47,16 @@ func cnyAmount(minorUnits int64) string {
 		panic(err)
 	}
 	return s
+}
+
+func firstBudgetID(t *testing.T, session *mcp.ClientSession, ledgerID string) string {
+	t.Helper()
+	var list tools.ListBudgetsOutput
+	callTool(t, session, "list_budgets", tools.ListBudgetsInput{LedgerID: ledgerID}, &list)
+	if len(list.Budgets) == 0 {
+		t.Fatalf("ledger %s has no budgets", ledgerID)
+	}
+	return list.Budgets[0].ID
 }
 
 // setupSourceAndCategory creates a source and a usable category, returning
@@ -2106,4 +2118,226 @@ func TestSearchTransactionsKeywordMatchesMerchantOrComment(t *testing.T) {
 	if len(out.Transactions) != 1 || out.Transactions[0].ID != merchantOnly.Transaction.ID {
 		t.Errorf("keyword 4821 = %+v, want only the merchant-only transaction", out.Transactions)
 	}
+}
+
+func TestTransactionBudgetValidationAndFiltering(t *testing.T) {
+	session, ledgerID, q := newTestSessionWithStore(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+	budgetA := firstBudgetID(t, session, ledgerID)
+	budgetB := createTestBudget(t, session, ledgerID, "专项测试")
+
+	// Missing budget_id on create_transaction is rejected.
+	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID:   ledgerID,
+		Type:       "expense",
+		SourceID:   sourceID,
+		CategoryID: categoryID,
+		Amount:     cnyAmount(100),
+		Currency:   "CNY",
+		Time:       futureTime(),
+	})
+
+	// Unassigned sentinel "0" on create_transaction is rejected.
+	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID:   ledgerID,
+		Type:       "expense",
+		SourceID:   sourceID,
+		CategoryID: categoryID,
+		BudgetID:   "0",
+		Amount:     cnyAmount(100),
+		Currency:   "CNY",
+		Time:       futureTime(),
+	})
+
+	// Nonexistent budget_id is rejected.
+	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID:   ledgerID,
+		Type:       "expense",
+		SourceID:   sourceID,
+		CategoryID: categoryID,
+		BudgetID:   "999999",
+		Amount:     cnyAmount(100),
+		Currency:   "CNY",
+		Time:       futureTime(),
+	})
+
+	// Cross-ledger budget_id is rejected.
+	var otherLedger tools.ManageLedgerOutput
+	callTool(t, session, "manage_ledger", tools.ManageLedgerInput{Operation: "create", Name: "Other"}, &otherLedger)
+	otherBudget := firstBudgetID(t, session, otherLedger.Ledger.ID)
+	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID:   ledgerID,
+		Type:       "expense",
+		SourceID:   sourceID,
+		CategoryID: categoryID,
+		BudgetID:   otherBudget,
+		Amount:     cnyAmount(100),
+		Currency:   "CNY",
+		Time:       futureTime(),
+	})
+
+	// Income transaction also requires and records budget_id.
+	callToolExpectError(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID:   ledgerID,
+		Type:       "income",
+		SourceID:   sourceID,
+		CategoryID: categoryID,
+		Amount:     cnyAmount(500),
+		Currency:   "CNY",
+		Time:       futureTime(),
+	})
+	var incomeTx tools.CreateTransactionOutput
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID:   ledgerID,
+		Type:       "income",
+		SourceID:   sourceID,
+		CategoryID: categoryID,
+		BudgetID:   budgetB,
+		Amount:     cnyAmount(500),
+		Currency:   "CNY",
+		Time:       futureTime(),
+	}, &incomeTx)
+	if incomeTx.Transaction.BudgetID != budgetB {
+		t.Fatalf("income BudgetID = %q, want %q", incomeTx.Transaction.BudgetID, budgetB)
+	}
+
+	// Expense transaction with budgetA.
+	var expenseTx tools.CreateTransactionOutput
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID:   ledgerID,
+		Type:       "expense",
+		SourceID:   sourceID,
+		CategoryID: categoryID,
+		BudgetID:   budgetA,
+		Amount:     cnyAmount(200),
+		Currency:   "CNY",
+		Time:       futureTime(),
+	}, &expenseTx)
+
+	// update_transaction rejects missing budget_id, "0", nonexistent, and cross-ledger budget_id.
+	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
+		ID:         expenseTx.Transaction.ID,
+		LedgerID:   ledgerID,
+		Type:       "expense",
+		SourceID:   sourceID,
+		CategoryID: categoryID,
+		Amount:     cnyAmount(200),
+		Currency:   "CNY",
+		Time:       futureTime(),
+	})
+	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
+		ID:         expenseTx.Transaction.ID,
+		LedgerID:   ledgerID,
+		Type:       "expense",
+		SourceID:   sourceID,
+		CategoryID: categoryID,
+		BudgetID:   "0",
+		Amount:     cnyAmount(200),
+		Currency:   "CNY",
+		Time:       futureTime(),
+	})
+	callToolExpectError(t, session, "update_transaction", tools.UpdateTransactionInput{
+		ID:         expenseTx.Transaction.ID,
+		LedgerID:   ledgerID,
+		Type:       "expense",
+		SourceID:   sourceID,
+		CategoryID: categoryID,
+		BudgetID:   otherBudget,
+		Amount:     cnyAmount(200),
+		Currency:   "CNY",
+		Time:       futureTime(),
+	})
+
+	// Insert a legacy unassigned transaction (budget_id = 0) directly into store.
+	lID := parseIDOrFatal(t, ledgerID)
+	sID := parseIDOrFatal(t, sourceID)
+	cID := parseIDOrFatal(t, categoryID)
+	now := time.Now().Unix()
+	legacyRow, err := q.CreateTransaction(t.Context(), store.CreateTransactionParams{
+		LedgerID:   lID,
+		Type:       "expense",
+		SourceID:   sID,
+		CategoryID: cID,
+		BudgetID:   0,
+		Currency:   "CNY",
+		Amount:     -300,
+		Time:       futureTime(),
+		Comment:    "legacy row",
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	})
+	if err != nil {
+		t.Fatalf("insert legacy row: %v", err)
+	}
+	legacyID := strconv.FormatInt(legacyRow.ID, 10)
+
+	// get_transaction on legacy row returns budget_id = "0".
+	var gotLegacy tools.GetTransactionOutput
+	callTool(t, session, "get_transaction", tools.GetTransactionInput{LedgerID: ledgerID, ID: legacyID}, &gotLegacy)
+	if gotLegacy.Transaction.BudgetID != "0" {
+		t.Fatalf("legacy get_transaction BudgetID = %q, want \"0\"", gotLegacy.Transaction.BudgetID)
+	}
+
+	// search_transactions filtered by budget_id = "0" returns only the legacy row.
+	var unassignedSearch tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{
+		LedgerID: ledgerID,
+		BudgetID: "0",
+	}, &unassignedSearch)
+	if len(unassignedSearch.Transactions) != 1 || unassignedSearch.Transactions[0].ID != legacyID {
+		t.Fatalf("search budget_id=0 = %+v, want only legacy row %s", unassignedSearch.Transactions, legacyID)
+	}
+
+	// search_transactions filtered by budgetB returns only incomeTx.
+	var budgetBSearch tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{
+		LedgerID: ledgerID,
+		BudgetID: budgetB,
+	}, &budgetBSearch)
+	if len(budgetBSearch.Transactions) != 1 || budgetBSearch.Transactions[0].ID != incomeTx.Transaction.ID {
+		t.Fatalf("search budget_id=%s = %+v, want only %s", budgetB, budgetBSearch.Transactions, incomeTx.Transaction.ID)
+	}
+
+	// Cursor issued under budgetA is rejected when replayed under budgetB or without budget_id.
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID:   ledgerID,
+		Type:       "expense",
+		SourceID:   sourceID,
+		CategoryID: categoryID,
+		BudgetID:   budgetA,
+		Amount:     cnyAmount(250),
+		Currency:   "CNY",
+		Time:       timeString(futureUnix() + 10),
+	}, &tools.CreateTransactionOutput{})
+
+	var page1 tools.SearchTransactionsOutput
+	callTool(t, session, "search_transactions", tools.SearchTransactionsInput{
+		LedgerID: ledgerID,
+		BudgetID: budgetA,
+		Limit:    1,
+	}, &page1)
+	if page1.NextCursor == "" {
+		t.Fatal("expected next_cursor for budgetA page 1")
+	}
+
+	callToolExpectError(t, session, "search_transactions", tools.SearchTransactionsInput{
+		LedgerID: ledgerID,
+		BudgetID: budgetB,
+		Limit:    1,
+		Cursor:   page1.NextCursor,
+	})
+	callToolExpectError(t, session, "search_transactions", tools.SearchTransactionsInput{
+		LedgerID: ledgerID,
+		Limit:    1,
+		Cursor:   page1.NextCursor,
+	})
+}
+
+func parseIDOrFatal(t *testing.T, s string) int64 {
+	t.Helper()
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		t.Fatalf("parseInt(%q): %v", s, err)
+	}
+	return n
 }

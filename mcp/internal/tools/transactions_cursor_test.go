@@ -141,3 +141,23 @@ func TestSearchTransactionsCursorRejectsMismatchedIncludeDescendants(t *testing.
 		t.Fatal("expected an error decoding an include_descendants-issued cursor as an exact-match request")
 	}
 }
+
+func TestSearchTransactionsCursorRejectsMismatchedBudgetID(t *testing.T) {
+	issuedWithBudget := searchTransactionsFilterFields{LedgerID: 1, BudgetID: sql.NullInt64{Int64: 2, Valid: true}}
+	cursor := encodeSearchTransactionsCursor("2026-01-01 00:00:00", 1, issuedWithBudget)
+
+	differentBudget := searchTransactionsFilterFields{LedgerID: 1, BudgetID: sql.NullInt64{Int64: 3, Valid: true}}
+	if _, _, err := decodeSearchTransactionsCursor(cursor, differentBudget); err == nil {
+		t.Fatal("expected an error decoding a cursor issued under a different budget_id")
+	}
+
+	unassignedBudget := searchTransactionsFilterFields{LedgerID: 1, BudgetID: sql.NullInt64{Int64: 0, Valid: true}}
+	if _, _, err := decodeSearchTransactionsCursor(cursor, unassignedBudget); err == nil {
+		t.Fatal("expected an error decoding a cursor issued under budget 2 when replayed with budget 0")
+	}
+
+	noBudget := searchTransactionsFilterFields{LedgerID: 1}
+	if _, _, err := decodeSearchTransactionsCursor(cursor, noBudget); err == nil {
+		t.Fatal("expected an error decoding a budget-scoped cursor without budget_id")
+	}
+}

@@ -4,6 +4,14 @@
 
 package store
 
+type Budget struct {
+	ID        int64
+	LedgerID  int64
+	Name      string
+	CreatedAt int64
+	UpdatedAt int64
+}
+
 type Category struct {
 	ID        int64
 	LedgerID  int64
@@ -35,6 +43,7 @@ type Transaction struct {
 	Type       string
 	SourceID   int64
 	CategoryID int64
+	BudgetID   int64
 	Currency   string
 	Amount     int64
 	Time       string

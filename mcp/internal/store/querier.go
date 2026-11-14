@@ -12,21 +12,27 @@ type Querier interface {
 	CountCategoriesByLedger(ctx context.Context, ledgerID int64) (int64, error)
 	CountChildCategories(ctx context.Context, parentID int64) (int64, error)
 	CountSourcesByLedger(ctx context.Context, ledgerID int64) (int64, error)
+	CountTransactionsByBudget(ctx context.Context, budgetID int64) (int64, error)
 	CountTransactionsByCategory(ctx context.Context, categoryID int64) (int64, error)
 	CountTransactionsByLedger(ctx context.Context, ledgerID int64) (int64, error)
 	CountTransactionsBySource(ctx context.Context, sourceID int64) (int64, error)
+	CreateBudget(ctx context.Context, arg CreateBudgetParams) (Budget, error)
 	CreateCategory(ctx context.Context, arg CreateCategoryParams) (Category, error)
 	CreateLedger(ctx context.Context, arg CreateLedgerParams) (Ledger, error)
 	CreateSource(ctx context.Context, arg CreateSourceParams) (Source, error)
 	CreateTransaction(ctx context.Context, arg CreateTransactionParams) (Transaction, error)
+	DeleteBudget(ctx context.Context, id int64) error
+	DeleteBudgetsByLedger(ctx context.Context, ledgerID int64) error
 	DeleteCategory(ctx context.Context, id int64) error
 	DeleteLedger(ctx context.Context, id int64) error
 	DeleteSource(ctx context.Context, id int64) error
 	DeleteTransaction(ctx context.Context, id int64) error
+	GetBudget(ctx context.Context, arg GetBudgetParams) (Budget, error)
 	GetCategory(ctx context.Context, arg GetCategoryParams) (Category, error)
 	GetLedger(ctx context.Context, id int64) (Ledger, error)
 	GetSource(ctx context.Context, arg GetSourceParams) (Source, error)
 	GetTransaction(ctx context.Context, arg GetTransactionParams) (Transaction, error)
+	ListBudgets(ctx context.Context, ledgerID int64) ([]Budget, error)
 	ListCategories(ctx context.Context, ledgerID int64) ([]Category, error)
 	ListCategoryDescendantIDs(ctx context.Context, targetID int64) ([]int64, error)
 	ListLedgers(ctx context.Context) ([]Ledger, error)
@@ -43,6 +49,10 @@ type Querier interface {
 	// exactly the rows the widget will page through. Sum of count over the
 	// returned rows is the scope's total transaction count.
 	SummarizeTimelineScope(ctx context.Context, arg SummarizeTimelineScopeParams) ([]SummarizeTimelineScopeRow, error)
+	// Aggregates income/expense totals grouped by budget and currency, within
+	// one ledger, over an optional [start_time, end_time] window. Unassigned
+	// transactions (budget_id = 0) are returned as their own group.
+	SummarizeTransactionsByBudget(ctx context.Context, arg SummarizeTransactionsByBudgetParams) ([]SummarizeTransactionsByBudgetRow, error)
 	// Aggregates income/expense totals grouped by category and currency, within
 	// one ledger, over an optional [start_time, end_time] window.
 	SummarizeTransactionsByCategory(ctx context.Context, arg SummarizeTransactionsByCategoryParams) ([]SummarizeTransactionsByCategoryRow, error)
@@ -59,6 +69,7 @@ type Querier interface {
 	// open_transaction_timeline for its degradation summary. count is 0 and the
 	// times are NULL when the ledger has no transactions.
 	TransactionStats(ctx context.Context, ledgerID int64) (TransactionStatsRow, error)
+	UpdateBudget(ctx context.Context, arg UpdateBudgetParams) (Budget, error)
 	UpdateCategory(ctx context.Context, arg UpdateCategoryParams) (Category, error)
 	UpdateLedger(ctx context.Context, arg UpdateLedgerParams) (Ledger, error)
 	UpdateSource(ctx context.Context, arg UpdateSourceParams) (Source, error)

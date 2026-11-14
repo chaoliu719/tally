@@ -49,6 +49,19 @@ func (q *Queries) CountSourcesByLedger(ctx context.Context, ledgerID int64) (int
 	return count, err
 }
 
+const countTransactionsByBudget = `-- name: CountTransactionsByBudget :one
+SELECT COUNT(*)
+FROM transactions
+WHERE budget_id = ?
+`
+
+func (q *Queries) CountTransactionsByBudget(ctx context.Context, budgetID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countTransactionsByBudget, budgetID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countTransactionsByCategory = `-- name: CountTransactionsByCategory :one
 SELECT COUNT(*)
 FROM transactions
@@ -86,6 +99,37 @@ func (q *Queries) CountTransactionsBySource(ctx context.Context, sourceID int64)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const createBudget = `-- name: CreateBudget :one
+INSERT INTO budgets (ledger_id, name, created_at, updated_at)
+VALUES (?, ?, ?, ?)
+RETURNING id, ledger_id, name, created_at, updated_at
+`
+
+type CreateBudgetParams struct {
+	LedgerID  int64
+	Name      string
+	CreatedAt int64
+	UpdatedAt int64
+}
+
+func (q *Queries) CreateBudget(ctx context.Context, arg CreateBudgetParams) (Budget, error) {
+	row := q.db.QueryRowContext(ctx, createBudget,
+		arg.LedgerID,
+		arg.Name,
+		arg.CreatedAt,
+		arg.UpdatedAt,
+	)
+	var i Budget
+	err := row.Scan(
+		&i.ID,
+		&i.LedgerID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const createCategory = `-- name: CreateCategory :one
@@ -185,9 +229,9 @@ func (q *Queries) CreateSource(ctx context.Context, arg CreateSourceParams) (Sou
 }
 
 const createTransaction = `-- name: CreateTransaction :one
-INSERT INTO transactions (ledger_id, type, source_id, category_id, currency, amount, time, merchant, comment, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, ledger_id, type, source_id, category_id, currency, amount, time, merchant, comment, created_at, updated_at
+INSERT INTO transactions (ledger_id, type, source_id, category_id, budget_id, currency, amount, time, merchant, comment, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, ledger_id, type, source_id, category_id, budget_id, currency, amount, time, merchant, comment, created_at, updated_at
 `
 
 type CreateTransactionParams struct {
@@ -195,6 +239,7 @@ type CreateTransactionParams struct {
 	Type       string
 	SourceID   int64
 	CategoryID int64
+	BudgetID   int64
 	Currency   string
 	Amount     int64
 	Time       string
@@ -210,6 +255,7 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 		arg.Type,
 		arg.SourceID,
 		arg.CategoryID,
+		arg.BudgetID,
 		arg.Currency,
 		arg.Amount,
 		arg.Time,
@@ -225,6 +271,7 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 		&i.Type,
 		&i.SourceID,
 		&i.CategoryID,
+		&i.BudgetID,
 		&i.Currency,
 		&i.Amount,
 		&i.Time,
@@ -234,6 +281,26 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const deleteBudget = `-- name: DeleteBudget :exec
+DELETE FROM budgets
+WHERE id = ?
+`
+
+func (q *Queries) DeleteBudget(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, deleteBudget, id)
+	return err
+}
+
+const deleteBudgetsByLedger = `-- name: DeleteBudgetsByLedger :exec
+DELETE FROM budgets
+WHERE ledger_id = ?
+`
+
+func (q *Queries) DeleteBudgetsByLedger(ctx context.Context, ledgerID int64) error {
+	_, err := q.db.ExecContext(ctx, deleteBudgetsByLedger, ledgerID)
+	return err
 }
 
 const deleteCategory = `-- name: DeleteCategory :exec
@@ -274,6 +341,30 @@ WHERE id = ?
 func (q *Queries) DeleteTransaction(ctx context.Context, id int64) error {
 	_, err := q.db.ExecContext(ctx, deleteTransaction, id)
 	return err
+}
+
+const getBudget = `-- name: GetBudget :one
+SELECT id, ledger_id, name, created_at, updated_at
+FROM budgets
+WHERE id = ? AND ledger_id = ?
+`
+
+type GetBudgetParams struct {
+	ID       int64
+	LedgerID int64
+}
+
+func (q *Queries) GetBudget(ctx context.Context, arg GetBudgetParams) (Budget, error) {
+	row := q.db.QueryRowContext(ctx, getBudget, arg.ID, arg.LedgerID)
+	var i Budget
+	err := row.Scan(
+		&i.ID,
+		&i.LedgerID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const getCategory = `-- name: GetCategory :one
@@ -345,7 +436,7 @@ func (q *Queries) GetSource(ctx context.Context, arg GetSourceParams) (Source, e
 }
 
 const getTransaction = `-- name: GetTransaction :one
-SELECT id, ledger_id, type, source_id, category_id, currency, amount, time, merchant, comment, created_at, updated_at
+SELECT id, ledger_id, type, source_id, category_id, budget_id, currency, amount, time, merchant, comment, created_at, updated_at
 FROM transactions
 WHERE id = ? AND ledger_id = ?
 `
@@ -364,6 +455,7 @@ func (q *Queries) GetTransaction(ctx context.Context, arg GetTransactionParams) 
 		&i.Type,
 		&i.SourceID,
 		&i.CategoryID,
+		&i.BudgetID,
 		&i.Currency,
 		&i.Amount,
 		&i.Time,
@@ -373,6 +465,42 @@ func (q *Queries) GetTransaction(ctx context.Context, arg GetTransactionParams) 
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const listBudgets = `-- name: ListBudgets :many
+SELECT id, ledger_id, name, created_at, updated_at
+FROM budgets
+WHERE ledger_id = ?
+ORDER BY id
+`
+
+func (q *Queries) ListBudgets(ctx context.Context, ledgerID int64) ([]Budget, error) {
+	rows, err := q.db.QueryContext(ctx, listBudgets, ledgerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Budget{}
+	for rows.Next() {
+		var i Budget
+		if err := rows.Scan(
+			&i.ID,
+			&i.LedgerID,
+			&i.Name,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listCategories = `-- name: ListCategories :many
@@ -517,7 +645,7 @@ func (q *Queries) ListSources(ctx context.Context, ledgerID int64) ([]Source, er
 }
 
 const searchTransactions = `-- name: SearchTransactions :many
-SELECT id, ledger_id, type, source_id, category_id, currency, amount, time, merchant, comment, created_at, updated_at
+SELECT id, ledger_id, type, source_id, category_id, budget_id, currency, amount, time, merchant, comment, created_at, updated_at
 FROM transactions
 WHERE ledger_id = ?1
   AND (?2   IS NULL OR source_id = ?2)
@@ -525,22 +653,24 @@ WHERE ledger_id = ?1
     ?3 IS NULL
     OR category_id IN (SELECT value FROM json_each(?3))
   )
-  AND (?4  IS NULL OR time >= ?4)
-  AND (?5    IS NULL OR time <= ?5)
-  AND (?6     IS NULL OR (LOWER(merchant) LIKE '%' || LOWER(?6) || '%' ESCAPE '\') OR (LOWER(comment) LIKE '%' || LOWER(?6) || '%' ESCAPE '\'))
+  AND (?4   IS NULL OR budget_id = ?4)
+  AND (?5  IS NULL OR time >= ?5)
+  AND (?6    IS NULL OR time <= ?6)
+  AND (?7     IS NULL OR (LOWER(merchant) LIKE '%' || LOWER(?7) || '%' ESCAPE '\') OR (LOWER(comment) LIKE '%' || LOWER(?7) || '%' ESCAPE '\'))
   AND (
-    ?7 IS NULL
-    OR time > ?7
-    OR (time = ?7 AND id > ?8)
+    ?8 IS NULL
+    OR time > ?8
+    OR (time = ?8 AND id > ?9)
   )
 ORDER BY time, id
-LIMIT ?9
+LIMIT ?10
 `
 
 type SearchTransactionsParams struct {
 	LedgerID        int64
 	SourceID        interface{}
 	CategoryIdsJson interface{}
+	BudgetID        interface{}
 	StartTime       interface{}
 	EndTime         interface{}
 	Keyword         interface{}
@@ -554,6 +684,7 @@ func (q *Queries) SearchTransactions(ctx context.Context, arg SearchTransactions
 		arg.LedgerID,
 		arg.SourceID,
 		arg.CategoryIdsJson,
+		arg.BudgetID,
 		arg.StartTime,
 		arg.EndTime,
 		arg.Keyword,
@@ -574,6 +705,7 @@ func (q *Queries) SearchTransactions(ctx context.Context, arg SearchTransactions
 			&i.Type,
 			&i.SourceID,
 			&i.CategoryID,
+			&i.BudgetID,
 			&i.Currency,
 			&i.Amount,
 			&i.Time,
@@ -596,7 +728,7 @@ func (q *Queries) SearchTransactions(ctx context.Context, arg SearchTransactions
 }
 
 const searchTransactionsDesc = `-- name: SearchTransactionsDesc :many
-SELECT id, ledger_id, type, source_id, category_id, currency, amount, time, merchant, comment, created_at, updated_at
+SELECT id, ledger_id, type, source_id, category_id, budget_id, currency, amount, time, merchant, comment, created_at, updated_at
 FROM transactions
 WHERE ledger_id = ?1
   AND (?2   IS NULL OR source_id = ?2)
@@ -604,22 +736,24 @@ WHERE ledger_id = ?1
     ?3 IS NULL
     OR category_id IN (SELECT value FROM json_each(?3))
   )
-  AND (?4  IS NULL OR time >= ?4)
-  AND (?5    IS NULL OR time <= ?5)
-  AND (?6     IS NULL OR (LOWER(merchant) LIKE '%' || LOWER(?6) || '%' ESCAPE '\') OR (LOWER(comment) LIKE '%' || LOWER(?6) || '%' ESCAPE '\'))
+  AND (?4   IS NULL OR budget_id = ?4)
+  AND (?5  IS NULL OR time >= ?5)
+  AND (?6    IS NULL OR time <= ?6)
+  AND (?7     IS NULL OR (LOWER(merchant) LIKE '%' || LOWER(?7) || '%' ESCAPE '\') OR (LOWER(comment) LIKE '%' || LOWER(?7) || '%' ESCAPE '\'))
   AND (
-    ?7 IS NULL
-    OR time < ?7
-    OR (time = ?7 AND id < ?8)
+    ?8 IS NULL
+    OR time < ?8
+    OR (time = ?8 AND id < ?9)
   )
 ORDER BY time DESC, id DESC
-LIMIT ?9
+LIMIT ?10
 `
 
 type SearchTransactionsDescParams struct {
 	LedgerID        int64
 	SourceID        interface{}
 	CategoryIdsJson interface{}
+	BudgetID        interface{}
 	StartTime       interface{}
 	EndTime         interface{}
 	Keyword         interface{}
@@ -637,6 +771,7 @@ func (q *Queries) SearchTransactionsDesc(ctx context.Context, arg SearchTransact
 		arg.LedgerID,
 		arg.SourceID,
 		arg.CategoryIdsJson,
+		arg.BudgetID,
 		arg.StartTime,
 		arg.EndTime,
 		arg.Keyword,
@@ -657,6 +792,7 @@ func (q *Queries) SearchTransactionsDesc(ctx context.Context, arg SearchTransact
 			&i.Type,
 			&i.SourceID,
 			&i.CategoryID,
+			&i.BudgetID,
 			&i.Currency,
 			&i.Amount,
 			&i.Time,
@@ -751,6 +887,71 @@ func (q *Queries) SummarizeTimelineScope(ctx context.Context, arg SummarizeTimel
 	return items, nil
 }
 
+const summarizeTransactionsByBudget = `-- name: SummarizeTransactionsByBudget :many
+SELECT
+    t.budget_id AS budget_id,
+    t.currency AS currency,
+    CAST(COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) AS INTEGER) AS income,
+    CAST(COALESCE(SUM(CASE WHEN t.type = 'expense' THEN -t.amount ELSE 0 END), 0) AS INTEGER) AS expense
+FROM transactions t
+WHERE t.ledger_id = ?1
+  AND (?2  IS NULL OR t.budget_id = ?2)
+  AND (?3 IS NULL OR t.time >= ?3)
+  AND (?4   IS NULL OR t.time <= ?4)
+GROUP BY t.budget_id, t.currency
+ORDER BY t.budget_id, t.currency
+`
+
+type SummarizeTransactionsByBudgetParams struct {
+	LedgerID  int64
+	BudgetID  interface{}
+	StartTime interface{}
+	EndTime   interface{}
+}
+
+type SummarizeTransactionsByBudgetRow struct {
+	BudgetID int64
+	Currency string
+	Income   int64
+	Expense  int64
+}
+
+// Aggregates income/expense totals grouped by budget and currency, within
+// one ledger, over an optional [start_time, end_time] window. Unassigned
+// transactions (budget_id = 0) are returned as their own group.
+func (q *Queries) SummarizeTransactionsByBudget(ctx context.Context, arg SummarizeTransactionsByBudgetParams) ([]SummarizeTransactionsByBudgetRow, error) {
+	rows, err := q.db.QueryContext(ctx, summarizeTransactionsByBudget,
+		arg.LedgerID,
+		arg.BudgetID,
+		arg.StartTime,
+		arg.EndTime,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SummarizeTransactionsByBudgetRow{}
+	for rows.Next() {
+		var i SummarizeTransactionsByBudgetRow
+		if err := rows.Scan(
+			&i.BudgetID,
+			&i.Currency,
+			&i.Income,
+			&i.Expense,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const summarizeTransactionsByCategory = `-- name: SummarizeTransactionsByCategory :many
 SELECT
     t.category_id AS category_id,
@@ -759,14 +960,16 @@ SELECT
     CAST(COALESCE(SUM(CASE WHEN t.type = 'expense' THEN -t.amount ELSE 0 END), 0) AS INTEGER) AS expense
 FROM transactions t
 WHERE t.ledger_id = ?1
-  AND (?2 IS NULL OR t.time >= ?2)
-  AND (?3   IS NULL OR t.time <= ?3)
+  AND (?2  IS NULL OR t.budget_id = ?2)
+  AND (?3 IS NULL OR t.time >= ?3)
+  AND (?4   IS NULL OR t.time <= ?4)
 GROUP BY t.category_id, t.currency
 ORDER BY t.category_id, t.currency
 `
 
 type SummarizeTransactionsByCategoryParams struct {
 	LedgerID  int64
+	BudgetID  interface{}
 	StartTime interface{}
 	EndTime   interface{}
 }
@@ -781,7 +984,12 @@ type SummarizeTransactionsByCategoryRow struct {
 // Aggregates income/expense totals grouped by category and currency, within
 // one ledger, over an optional [start_time, end_time] window.
 func (q *Queries) SummarizeTransactionsByCategory(ctx context.Context, arg SummarizeTransactionsByCategoryParams) ([]SummarizeTransactionsByCategoryRow, error) {
-	rows, err := q.db.QueryContext(ctx, summarizeTransactionsByCategory, arg.LedgerID, arg.StartTime, arg.EndTime)
+	rows, err := q.db.QueryContext(ctx, summarizeTransactionsByCategory,
+		arg.LedgerID,
+		arg.BudgetID,
+		arg.StartTime,
+		arg.EndTime,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -815,14 +1023,16 @@ SELECT
     CAST(COALESCE(SUM(CASE WHEN t.type = 'expense' THEN -t.amount ELSE 0 END), 0) AS INTEGER) AS expense
 FROM transactions t
 WHERE t.ledger_id = ?1
-  AND (?2 IS NULL OR t.time >= ?2)
-  AND (?3   IS NULL OR t.time <= ?3)
+  AND (?2  IS NULL OR t.budget_id = ?2)
+  AND (?3 IS NULL OR t.time >= ?3)
+  AND (?4   IS NULL OR t.time <= ?4)
 GROUP BY t.currency
 ORDER BY t.currency
 `
 
 type SummarizeTransactionsByCurrencyParams struct {
 	LedgerID  int64
+	BudgetID  interface{}
 	StartTime interface{}
 	EndTime   interface{}
 }
@@ -839,7 +1049,12 @@ type SummarizeTransactionsByCurrencyRow struct {
 // expense amounts are stored negative, so SUM(-amount) turns them back into
 // a positive total.
 func (q *Queries) SummarizeTransactionsByCurrency(ctx context.Context, arg SummarizeTransactionsByCurrencyParams) ([]SummarizeTransactionsByCurrencyRow, error) {
-	rows, err := q.db.QueryContext(ctx, summarizeTransactionsByCurrency, arg.LedgerID, arg.StartTime, arg.EndTime)
+	rows, err := q.db.QueryContext(ctx, summarizeTransactionsByCurrency,
+		arg.LedgerID,
+		arg.BudgetID,
+		arg.StartTime,
+		arg.EndTime,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -869,14 +1084,16 @@ SELECT
     CAST(COALESCE(SUM(CASE WHEN t.type = 'expense' THEN -t.amount ELSE 0 END), 0) AS INTEGER) AS expense
 FROM transactions t
 WHERE t.ledger_id = ?1
-  AND (?2 IS NULL OR t.time >= ?2)
-  AND (?3   IS NULL OR t.time <= ?3)
+  AND (?2  IS NULL OR t.budget_id = ?2)
+  AND (?3 IS NULL OR t.time >= ?3)
+  AND (?4   IS NULL OR t.time <= ?4)
 GROUP BY t.source_id, t.currency
 ORDER BY t.source_id, t.currency
 `
 
 type SummarizeTransactionsBySourceParams struct {
 	LedgerID  int64
+	BudgetID  interface{}
 	StartTime interface{}
 	EndTime   interface{}
 }
@@ -891,7 +1108,12 @@ type SummarizeTransactionsBySourceRow struct {
 // Aggregates income/expense totals grouped by source and currency, within
 // one ledger, over an optional [start_time, end_time] window.
 func (q *Queries) SummarizeTransactionsBySource(ctx context.Context, arg SummarizeTransactionsBySourceParams) ([]SummarizeTransactionsBySourceRow, error) {
-	rows, err := q.db.QueryContext(ctx, summarizeTransactionsBySource, arg.LedgerID, arg.StartTime, arg.EndTime)
+	rows, err := q.db.QueryContext(ctx, summarizeTransactionsBySource,
+		arg.LedgerID,
+		arg.BudgetID,
+		arg.StartTime,
+		arg.EndTime,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -940,6 +1162,32 @@ func (q *Queries) TransactionStats(ctx context.Context, ledgerID int64) (Transac
 	row := q.db.QueryRowContext(ctx, transactionStats, ledgerID)
 	var i TransactionStatsRow
 	err := row.Scan(&i.Count, &i.EarliestTime, &i.LatestTime)
+	return i, err
+}
+
+const updateBudget = `-- name: UpdateBudget :one
+UPDATE budgets
+SET name = ?, updated_at = ?
+WHERE id = ?
+RETURNING id, ledger_id, name, created_at, updated_at
+`
+
+type UpdateBudgetParams struct {
+	Name      string
+	UpdatedAt int64
+	ID        int64
+}
+
+func (q *Queries) UpdateBudget(ctx context.Context, arg UpdateBudgetParams) (Budget, error) {
+	row := q.db.QueryRowContext(ctx, updateBudget, arg.Name, arg.UpdatedAt, arg.ID)
+	var i Budget
+	err := row.Scan(
+		&i.ID,
+		&i.LedgerID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
 	return i, err
 }
 
@@ -1036,15 +1284,16 @@ func (q *Queries) UpdateSource(ctx context.Context, arg UpdateSourceParams) (Sou
 
 const updateTransaction = `-- name: UpdateTransaction :one
 UPDATE transactions
-SET type = ?, source_id = ?, category_id = ?, currency = ?, amount = ?, time = ?, merchant = ?, comment = ?, updated_at = ?
+SET type = ?, source_id = ?, category_id = ?, budget_id = ?, currency = ?, amount = ?, time = ?, merchant = ?, comment = ?, updated_at = ?
 WHERE id = ?
-RETURNING id, ledger_id, type, source_id, category_id, currency, amount, time, merchant, comment, created_at, updated_at
+RETURNING id, ledger_id, type, source_id, category_id, budget_id, currency, amount, time, merchant, comment, created_at, updated_at
 `
 
 type UpdateTransactionParams struct {
 	Type       string
 	SourceID   int64
 	CategoryID int64
+	BudgetID   int64
 	Currency   string
 	Amount     int64
 	Time       string
@@ -1059,6 +1308,7 @@ func (q *Queries) UpdateTransaction(ctx context.Context, arg UpdateTransactionPa
 		arg.Type,
 		arg.SourceID,
 		arg.CategoryID,
+		arg.BudgetID,
 		arg.Currency,
 		arg.Amount,
 		arg.Time,
@@ -1074,6 +1324,7 @@ func (q *Queries) UpdateTransaction(ctx context.Context, arg UpdateTransactionPa
 		&i.Type,
 		&i.SourceID,
 		&i.CategoryID,
+		&i.BudgetID,
 		&i.Currency,
 		&i.Amount,
 		&i.Time,

@@ -28,6 +28,14 @@ CREATE TABLE IF NOT EXISTS categories (
     updated_at  INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS budgets (
+    id          INTEGER PRIMARY KEY,
+    ledger_id   INTEGER NOT NULL REFERENCES ledgers(id),
+    name        TEXT NOT NULL,
+    created_at  INTEGER NOT NULL,           -- unix seconds
+    updated_at  INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS transactions (
     id           INTEGER PRIMARY KEY,
     ledger_id    INTEGER NOT NULL REFERENCES ledgers(id), -- denormalized: must match source_id's
@@ -36,6 +44,8 @@ CREATE TABLE IF NOT EXISTS transactions (
     type         TEXT NOT NULL,             -- income / expense
     source_id    INTEGER NOT NULL REFERENCES sources(id),
     category_id  INTEGER NOT NULL REFERENCES categories(id),
+    budget_id    INTEGER NOT NULL DEFAULT 0, -- 0 = unassigned (legacy pre-budget rows before backfill);
+                                             -- otherwise the id of a budget in the same ledger, enforced in Go
     currency     TEXT NOT NULL,             -- ISO 4217 code; validated against the static
                                              -- currency table in Go code, not a DB constraint
     amount       INTEGER NOT NULL,          -- signed, in the transaction currency's smallest unit
@@ -53,6 +63,7 @@ CREATE TABLE IF NOT EXISTS transactions (
 
 CREATE INDEX IF NOT EXISTS idx_sources_ledger             ON sources(ledger_id);
 CREATE INDEX IF NOT EXISTS idx_categories_ledger           ON categories(ledger_id);
+CREATE INDEX IF NOT EXISTS idx_budgets_ledger              ON budgets(ledger_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_ledger_time    ON transactions(ledger_id, time);
 CREATE INDEX IF NOT EXISTS idx_transactions_source_time    ON transactions(source_id, time);
 CREATE INDEX IF NOT EXISTS idx_transactions_category_time  ON transactions(category_id, time);

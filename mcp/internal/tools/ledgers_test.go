@@ -46,6 +46,31 @@ func TestManageLedgerCreate(t *testing.T) {
 	if len(list.Ledgers) != 2 {
 		t.Fatalf("expected 2 ledgers (default + created), got %d", len(list.Ledgers))
 	}
+
+	// Newly created ledger must have the 4 seed budgets (固定, 专项, 突发, 日常) and no sources or categories.
+	var budgets tools.ListBudgetsOutput
+	callTool(t, session, "list_budgets", tools.ListBudgetsInput{LedgerID: created.Ledger.ID}, &budgets)
+	wantBudgets := []string{"固定", "专项", "突发", "日常"}
+	if len(budgets.Budgets) != len(wantBudgets) {
+		t.Fatalf("new ledger budgets = %+v, want %v", budgets.Budgets, wantBudgets)
+	}
+	for i, w := range wantBudgets {
+		if budgets.Budgets[i].Name != w {
+			t.Errorf("new ledger budget[%d] = %q, want %q", i, budgets.Budgets[i].Name, w)
+		}
+	}
+
+	var sources tools.ListSourcesOutput
+	callTool(t, session, "list_sources", tools.ListSourcesInput{LedgerID: created.Ledger.ID}, &sources)
+	if len(sources.Sources) != 0 {
+		t.Errorf("expected 0 sources in new ledger, got %d", len(sources.Sources))
+	}
+
+	var categories tools.ListCategoriesOutput
+	callTool(t, session, "list_categories", tools.ListCategoriesInput{LedgerID: created.Ledger.ID}, &categories)
+	if len(categories.Categories) != 0 {
+		t.Errorf("expected 0 categories in new ledger, got %d", len(categories.Categories))
+	}
 }
 
 func TestManageLedgerCreateMissingRequiredField(t *testing.T) {

@@ -23,6 +23,10 @@ RETURNING *;
 DELETE FROM ledgers
 WHERE id = ?;
 
+-- name: DeleteBudgetsByLedger :exec
+DELETE FROM budgets
+WHERE ledger_id = ?;
+
 -- name: CountSourcesByLedger :one
 SELECT COUNT(*)
 FROM sources
@@ -114,13 +118,44 @@ WITH RECURSIVE descendants(id) AS (
 )
 SELECT id FROM descendants;
 
+-- name: CreateBudget :one
+INSERT INTO budgets (ledger_id, name, created_at, updated_at)
+VALUES (?, ?, ?, ?)
+RETURNING *;
+
+-- name: ListBudgets :many
+SELECT id, ledger_id, name, created_at, updated_at
+FROM budgets
+WHERE ledger_id = ?
+ORDER BY id;
+
+-- name: GetBudget :one
+SELECT id, ledger_id, name, created_at, updated_at
+FROM budgets
+WHERE id = ? AND ledger_id = ?;
+
+-- name: UpdateBudget :one
+UPDATE budgets
+SET name = ?, updated_at = ?
+WHERE id = ?
+RETURNING *;
+
+-- name: DeleteBudget :exec
+DELETE FROM budgets
+WHERE id = ?;
+
+-- name: CountTransactionsByBudget :one
+SELECT COUNT(*)
+FROM transactions
+WHERE budget_id = ?;
+
 -- name: CreateTransaction :one
-INSERT INTO transactions (ledger_id, type, source_id, category_id, currency, amount, time, merchant, comment, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO transactions (ledger_id, type, source_id, category_id, budget_id, currency, amount, time, merchant, comment, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: GetTransaction :one
-SELECT id, ledger_id, type, source_id, category_id, currency, amount, time, merchant, comment, created_at, updated_at
+SELECT id, ledger_id, type, source_id, category_id, budget_id, currency, amount, time, merchant, comment, created_at, updated_at
 FROM transactions
 WHERE id = ? AND ledger_id = ?;
 
@@ -136,7 +171,7 @@ FROM transactions
 WHERE ledger_id = sqlc.arg('ledger_id');
 
 -- name: SearchTransactions :many
-SELECT id, ledger_id, type, source_id, category_id, currency, amount, time, merchant, comment, created_at, updated_at
+SELECT id, ledger_id, type, source_id, category_id, budget_id, currency, amount, time, merchant, comment, created_at, updated_at
 FROM transactions
 WHERE ledger_id = sqlc.arg('ledger_id')
   AND (sqlc.narg('source_id')   IS NULL OR source_id = sqlc.narg('source_id'))
@@ -144,6 +179,7 @@ WHERE ledger_id = sqlc.arg('ledger_id')
     sqlc.narg('category_ids_json') IS NULL
     OR category_id IN (SELECT value FROM json_each(sqlc.narg('category_ids_json')))
   )
+  AND (sqlc.narg('budget_id')   IS NULL OR budget_id = sqlc.narg('budget_id'))
   AND (sqlc.narg('start_time')  IS NULL OR time >= sqlc.narg('start_time'))
   AND (sqlc.narg('end_time')    IS NULL OR time <= sqlc.narg('end_time'))
   AND (sqlc.narg('keyword')     IS NULL OR (LOWER(merchant) LIKE '%' || LOWER(sqlc.narg('keyword')) || '%' ESCAPE '\') OR (LOWER(comment) LIKE '%' || LOWER(sqlc.narg('keyword')) || '%' ESCAPE '\'))
@@ -160,7 +196,7 @@ LIMIT sqlc.arg('limit');
 -- keyset comparison flipped so next_cursor pages toward earlier transactions.
 -- Used by search_transactions when newest_first is set (see
 -- add-transaction-timeline-widget).
-SELECT id, ledger_id, type, source_id, category_id, currency, amount, time, merchant, comment, created_at, updated_at
+SELECT id, ledger_id, type, source_id, category_id, budget_id, currency, amount, time, merchant, comment, created_at, updated_at
 FROM transactions
 WHERE ledger_id = sqlc.arg('ledger_id')
   AND (sqlc.narg('source_id')   IS NULL OR source_id = sqlc.narg('source_id'))
@@ -168,6 +204,7 @@ WHERE ledger_id = sqlc.arg('ledger_id')
     sqlc.narg('category_ids_json') IS NULL
     OR category_id IN (SELECT value FROM json_each(sqlc.narg('category_ids_json')))
   )
+  AND (sqlc.narg('budget_id')   IS NULL OR budget_id = sqlc.narg('budget_id'))
   AND (sqlc.narg('start_time')  IS NULL OR time >= sqlc.narg('start_time'))
   AND (sqlc.narg('end_time')    IS NULL OR time <= sqlc.narg('end_time'))
   AND (sqlc.narg('keyword')     IS NULL OR (LOWER(merchant) LIKE '%' || LOWER(sqlc.narg('keyword')) || '%' ESCAPE '\') OR (LOWER(comment) LIKE '%' || LOWER(sqlc.narg('keyword')) || '%' ESCAPE '\'))
@@ -181,7 +218,7 @@ LIMIT sqlc.arg('limit');
 
 -- name: UpdateTransaction :one
 UPDATE transactions
-SET type = ?, source_id = ?, category_id = ?, currency = ?, amount = ?, time = ?, merchant = ?, comment = ?, updated_at = ?
+SET type = ?, source_id = ?, category_id = ?, budget_id = ?, currency = ?, amount = ?, time = ?, merchant = ?, comment = ?, updated_at = ?
 WHERE id = ?
 RETURNING *;
 
@@ -201,6 +238,7 @@ SELECT
     CAST(COALESCE(SUM(CASE WHEN t.type = 'expense' THEN -t.amount ELSE 0 END), 0) AS INTEGER) AS expense
 FROM transactions t
 WHERE t.ledger_id = sqlc.arg('ledger_id')
+  AND (sqlc.narg('budget_id')  IS NULL OR t.budget_id = sqlc.narg('budget_id'))
   AND (sqlc.narg('start_time') IS NULL OR t.time >= sqlc.narg('start_time'))
   AND (sqlc.narg('end_time')   IS NULL OR t.time <= sqlc.narg('end_time'))
 GROUP BY t.currency
@@ -239,6 +277,7 @@ SELECT
     CAST(COALESCE(SUM(CASE WHEN t.type = 'expense' THEN -t.amount ELSE 0 END), 0) AS INTEGER) AS expense
 FROM transactions t
 WHERE t.ledger_id = sqlc.arg('ledger_id')
+  AND (sqlc.narg('budget_id')  IS NULL OR t.budget_id = sqlc.narg('budget_id'))
   AND (sqlc.narg('start_time') IS NULL OR t.time >= sqlc.narg('start_time'))
   AND (sqlc.narg('end_time')   IS NULL OR t.time <= sqlc.narg('end_time'))
 GROUP BY t.category_id, t.currency
@@ -254,7 +293,25 @@ SELECT
     CAST(COALESCE(SUM(CASE WHEN t.type = 'expense' THEN -t.amount ELSE 0 END), 0) AS INTEGER) AS expense
 FROM transactions t
 WHERE t.ledger_id = sqlc.arg('ledger_id')
+  AND (sqlc.narg('budget_id')  IS NULL OR t.budget_id = sqlc.narg('budget_id'))
   AND (sqlc.narg('start_time') IS NULL OR t.time >= sqlc.narg('start_time'))
   AND (sqlc.narg('end_time')   IS NULL OR t.time <= sqlc.narg('end_time'))
 GROUP BY t.source_id, t.currency
 ORDER BY t.source_id, t.currency;
+
+-- name: SummarizeTransactionsByBudget :many
+-- Aggregates income/expense totals grouped by budget and currency, within
+-- one ledger, over an optional [start_time, end_time] window. Unassigned
+-- transactions (budget_id = 0) are returned as their own group.
+SELECT
+    t.budget_id AS budget_id,
+    t.currency AS currency,
+    CAST(COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) AS INTEGER) AS income,
+    CAST(COALESCE(SUM(CASE WHEN t.type = 'expense' THEN -t.amount ELSE 0 END), 0) AS INTEGER) AS expense
+FROM transactions t
+WHERE t.ledger_id = sqlc.arg('ledger_id')
+  AND (sqlc.narg('budget_id')  IS NULL OR t.budget_id = sqlc.narg('budget_id'))
+  AND (sqlc.narg('start_time') IS NULL OR t.time >= sqlc.narg('start_time'))
+  AND (sqlc.narg('end_time')   IS NULL OR t.time <= sqlc.narg('end_time'))
+GROUP BY t.budget_id, t.currency
+ORDER BY t.budget_id, t.currency;

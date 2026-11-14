@@ -1,9 +1,13 @@
 package tools_test
 
 import (
+	"context"
+	"strconv"
 	"testing"
+	"time"
 
 	"tally/internal/currency"
+	"tally/internal/store"
 	"tally/internal/tools"
 )
 
@@ -436,4 +440,123 @@ func TestGetFinancialSummaryNonCNYCurrencyPrecision(t *testing.T) {
 			}
 		})
 	}
+}
+
+func findBudgetSummary(t *testing.T, rows []tools.BudgetSummary, budgetID, curr string) tools.BudgetSummary {
+	t.Helper()
+	for _, bs := range rows {
+		if bs.BudgetID == budgetID && bs.Currency == curr {
+			return bs
+		}
+	}
+	t.Fatalf("no BudgetSummary for budget %q currency %q in %+v", budgetID, curr, rows)
+	return tools.BudgetSummary{}
+}
+
+func TestGetFinancialSummaryByBudgetAndFilter(t *testing.T) {
+	session, ledgerID, q := newTestSessionWithStore(t)
+	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)
+
+	var budgetsOut tools.ListBudgetsOutput
+	callTool(t, session, "list_budgets", tools.ListBudgetsInput{LedgerID: ledgerID}, &budgetsOut)
+	if len(budgetsOut.Budgets) < 2 {
+		t.Fatalf("expected seeded budgets, got %+v", budgetsOut.Budgets)
+	}
+	budgetA := budgetsOut.Budgets[0].ID
+	budgetB := budgetsOut.Budgets[1].ID
+
+	// Record transactions under budgetA, budgetB (in CNY and USD), plus an unassigned legacy row (budget_id = 0).
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID, Type: "expense", SourceID: sourceID, CategoryID: categoryID, BudgetID: budgetA,
+		Amount: cnyAmount(1000), Currency: "CNY", Time: futureTime(),
+	}, &tools.CreateTransactionOutput{})
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID, Type: "income", SourceID: sourceID, CategoryID: categoryID, BudgetID: budgetA,
+		Amount: cnyAmount(500), Currency: "CNY", Time: futureTime(),
+	}, &tools.CreateTransactionOutput{})
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID, Type: "expense", SourceID: sourceID, CategoryID: categoryID, BudgetID: budgetB,
+		Amount: cnyAmount(2500), Currency: "CNY", Time: futureTime(),
+	}, &tools.CreateTransactionOutput{})
+	callTool(t, session, "create_transaction", tools.CreateTransactionInput{
+		LedgerID: ledgerID, Type: "expense", SourceID: sourceID, CategoryID: categoryID, BudgetID: budgetB,
+		Amount: "40.00", Currency: "USD", Time: futureTime(),
+	}, &tools.CreateTransactionOutput{})
+
+	lID, _ := strconv.ParseInt(ledgerID, 10, 64)
+	sID, _ := strconv.ParseInt(sourceID, 10, 64)
+	cID, _ := strconv.ParseInt(categoryID, 10, 64)
+	now := time.Now().Unix()
+	if _, err := q.CreateTransaction(context.Background(), store.CreateTransactionParams{
+		LedgerID: lID, Type: "expense", SourceID: sID, CategoryID: cID, BudgetID: 0,
+		Currency: "CNY", Amount: -1500, Time: futureTime(), CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("insert legacy unassigned row: %v", err)
+	}
+
+	var out tools.GetFinancialSummaryOutput
+	callTool(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{LedgerID: ledgerID}, &out)
+
+	// Verify CNY total expense == sum of ByBudget CNY expenses (10.00 + 25.00 + 15.00 = 50.00).
+	cnyTotal := findCurrencyTotals(t, out.TotalsByCurrency, "CNY")
+	if cnyTotal.Expense != "50.00" {
+		t.Fatalf("CNY total Expense = %q, want 50.00", cnyTotal.Expense)
+	}
+
+	bsA := findBudgetSummary(t, out.ByBudget, budgetA, "CNY")
+	if bsA.Expense != "10.00" || bsA.Income != "5.00" {
+		t.Errorf("budgetA CNY = %+v, want income=5.00 expense=10.00", bsA)
+	}
+	bsB_CNY := findBudgetSummary(t, out.ByBudget, budgetB, "CNY")
+	if bsB_CNY.Expense != "25.00" {
+		t.Errorf("budgetB CNY = %+v, want expense=25.00", bsB_CNY)
+	}
+	bsB_USD := findBudgetSummary(t, out.ByBudget, budgetB, "USD")
+	if bsB_USD.Expense != "40.00" {
+		t.Errorf("budgetB USD = %+v, want expense=40.00", bsB_USD)
+	}
+	bsUnassigned := findBudgetSummary(t, out.ByBudget, "0", "CNY")
+	if bsUnassigned.Expense != "15.00" {
+		t.Errorf("unassigned budget 0 CNY = %+v, want expense=15.00", bsUnassigned)
+	}
+
+	var sumCNYMinor int64
+	for _, b := range out.ByBudget {
+		if b.Currency == "CNY" {
+			minor, err := currency.ParseMajor("CNY", b.Expense)
+			if err != nil && b.Expense != "0.00" {
+				t.Fatalf("ParseMajor(%q): %v", b.Expense, err)
+			}
+			sumCNYMinor += minor
+		}
+	}
+	if majorAmount(t, "CNY", sumCNYMinor) != cnyTotal.Expense {
+		t.Errorf("sum of ByBudget CNY expenses = %q, want %q", majorAmount(t, "CNY", sumCNYMinor), cnyTotal.Expense)
+	}
+
+	// Filter by budgetA
+	var filteredA tools.GetFinancialSummaryOutput
+	callTool(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{
+		LedgerID: ledgerID,
+		BudgetID: budgetA,
+	}, &filteredA)
+	if len(filteredA.TotalsByCurrency) != 1 || filteredA.TotalsByCurrency[0].Expense != "10.00" || filteredA.TotalsByCurrency[0].Income != "5.00" {
+		t.Fatalf("filteredA TotalsByCurrency = %+v, want CNY income=5.00 expense=10.00", filteredA.TotalsByCurrency)
+	}
+
+	// Filter by unassigned ("0")
+	var filteredUnassigned tools.GetFinancialSummaryOutput
+	callTool(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{
+		LedgerID: ledgerID,
+		BudgetID: "0",
+	}, &filteredUnassigned)
+	if len(filteredUnassigned.TotalsByCurrency) != 1 || filteredUnassigned.TotalsByCurrency[0].Expense != "15.00" {
+		t.Fatalf("filteredUnassigned TotalsByCurrency = %+v, want CNY expense=15.00", filteredUnassigned.TotalsByCurrency)
+	}
+
+	// Filter by nonexistent budget is rejected.
+	callToolExpectError(t, session, "get_financial_summary", tools.GetFinancialSummaryInput{
+		LedgerID: ledgerID,
+		BudgetID: "999999",
+	})
 }

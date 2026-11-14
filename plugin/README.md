@@ -2,8 +2,8 @@
 
 The practice layer: skills that turn the raw [`tally-mcp`](../mcp/README.md) tools into a
 bookkeeping workflow inside a conversation — precedent lookup, a conversational preview before any
-write, `comment` discipline, spending analysis, and category split/merge hygiene. See the
-[skills](skills/) for what each one covers.
+write, `comment` discipline, budget judgment, spending analysis, and category split/merge hygiene.
+See the [skills](skills/) for what each one covers.
 
 ## Prerequisites
 

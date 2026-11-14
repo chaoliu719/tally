@@ -25,6 +25,7 @@ type searchTransactionsFilterFields struct {
 	SourceID           sql.NullInt64
 	CategoryID         sql.NullInt64
 	IncludeDescendants bool
+	BudgetID           sql.NullInt64
 	StartTime          sql.NullString
 	EndTime            sql.NullString
 	Keyword            string

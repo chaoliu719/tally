@@ -107,6 +107,7 @@ func storedAmount(t *testing.T, q *store.Queries, ledgerIDStr, txnIDStr string) 
 // callToolExpectError for scenarios that expect a tool-level error.
 func callTool(t *testing.T, session *mcp.ClientSession, name string, args any, out any) *mcp.CallToolResult {
 	t.Helper()
+	args = injectDefaultTestBudget(t, session, name, args)
 
 	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{
 		Name:      name,
@@ -126,6 +127,39 @@ func callTool(t *testing.T, session *mcp.ClientSession, name string, args any, o
 	}
 
 	return res
+}
+
+func injectDefaultTestBudget(t *testing.T, session *mcp.ClientSession, name string, args any) any {
+	t.Helper()
+	switch v := args.(type) {
+	case tools.CreateTransactionInput:
+		if v.BudgetID == "" && v.LedgerID != "" {
+			v.BudgetID = lookupFirstBudgetID(t, session, v.LedgerID)
+			return v
+		}
+	case tools.UpdateTransactionInput:
+		if v.BudgetID == "" && v.LedgerID != "" {
+			v.BudgetID = lookupFirstBudgetID(t, session, v.LedgerID)
+			return v
+		}
+	}
+	return args
+}
+
+func lookupFirstBudgetID(t *testing.T, session *mcp.ClientSession, ledgerID string) string {
+	t.Helper()
+	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "list_budgets",
+		Arguments: tools.ListBudgetsInput{LedgerID: ledgerID},
+	})
+	if err != nil || res.IsError {
+		return ""
+	}
+	var out tools.ListBudgetsOutput
+	if err := unmarshalStructured(res, &out); err != nil || len(out.Budgets) == 0 {
+		return ""
+	}
+	return out.Budgets[0].ID
 }
 
 // callToolExpectError invokes a tool expecting a tool-level error
