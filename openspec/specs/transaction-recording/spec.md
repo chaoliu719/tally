@@ -6,30 +6,42 @@
 ## Requirements
 
 ### Requirement: 记录一笔收入或支出交易
-用户 SHALL 能够通过 `create_transaction` 工具记录一笔收入或支出类型的交易,指定所属账本(`ledger_id`)、来源、分类、金额、币种与发生时间。来源与分类都必须属于指定的账本;分类可以是该账本中任意已存在的分类,不要求处于某个特定层级。`amount` 以十进制字符串提供,表示该 `currency` 主单位下的金额(例如 CNY 传 `"50.00"`,JPY 传 `"5000"`,BHD 传 `"5.000"`——精度因币种而异,不固定为两位小数);该字符串的小数位数不得超过该币种在 ISO 4217 下的标准精度,且解析后的数值必须为正。发生时间(`time`)以本地日期时间字符串提供,格式固定为 `YYYY-MM-DD HH:MM:SS`(24 小时制、零填充),不带时区标记——协议不对该字符串做任何时区解释或换算,原样存储、原样返回,其含义就是用户记忆里的墙上钟时刻。可选入参 `merchant` 用于保存商户原名,省略或传空字符串时存为空;可选入参 `comment` 用于保存用户自己的备注。
+用户 SHALL 能够通过 `create_transaction` 工具记录一笔收入或支出类型的交易,指定所属账本(`ledger_id`)、来源、分类、预算、金额、币种与发生时间。来源、分类与预算都必须属于指定的账本;分类可以是该账本中任意已存在的分类,不要求处于某个特定层级。`budget_id` 为必填,MUST 引用该账本中一个已存在的预算,收入与支出类型的交易都同样要求。`amount` 以十进制字符串提供,表示该 `currency` 主单位下的金额(例如 CNY 传 `"50.00"`,JPY 传 `"5000"`,BHD 传 `"5.000"`——精度因币种而异,不固定为两位小数);该字符串的小数位数不得超过该币种在 ISO 4217 下的标准精度,且解析后的数值必须为正。发生时间(`time`)以本地日期时间字符串提供,格式固定为 `YYYY-MM-DD HH:MM:SS`(24 小时制、零填充),不带时区标记——协议不对该字符串做任何时区解释或换算,原样存储、原样返回,其含义就是用户记忆里的墙上钟时刻。可选入参 `merchant` 用于保存商户原名,省略或传空字符串时存为空;可选入参 `comment` 用于保存用户自己的备注。
 
 #### Scenario: 提供有效信息记录交易
-- **WHEN** 调用 `create_transaction`,指定的 `ledger_id` 已存在,指定的来源与分类均已存在且属于该账本,金额、币种、发生时间均合法
-- **THEN** 交易被记录并归属该账本,随后可以通过 `get_transaction` 按其 ID 查到,`time` 与写入时提供的字符串完全一致
+- **WHEN** 调用 `create_transaction`,指定的 `ledger_id` 已存在,指定的来源、分类与预算均已存在且属于该账本,金额、币种、发生时间均合法
+- **THEN** 交易被记录并归属该账本,随后可以通过 `get_transaction` 按其 ID 查到,`time` 与写入时提供的字符串完全一致,`budget_id` 等于写入时提供的值
 
 #### Scenario: 提供商户名与备注记录交易
 - **WHEN** 调用 `create_transaction`,除必填字段外还提供 `merchant` 与 `comment`
 - **THEN** 交易被记录,`merchant` 与 `comment` 分别按原样保存,返回的交易信息中同时包含这两个字段
 
 #### Scenario: 引用不存在的来源或分类
-- **WHEN** 调用 `create_transaction`,指定的来源 ID 或分类 ID 在指定的账本中不存在
+- **WHEN** 调用 `create_transaction`,指定的来源 ID、分类 ID 或预算 ID 在指定的账本中不存在
 - **THEN** 请求被拒绝,返回说明引用无效的错误,不记录交易
 
 #### Scenario: 来源或分类属于另一个账本
-- **WHEN** 调用 `create_transaction`,指定的来源 ID 或分类 ID 实际存在,但属于另一个账本而不是提供的 `ledger_id`
+- **WHEN** 调用 `create_transaction`,指定的来源 ID、分类 ID 或预算 ID 实际存在,但属于另一个账本而不是提供的 `ledger_id`
 - **THEN** 请求被拒绝,返回说明引用无效的错误,不记录交易
+
+#### Scenario: 缺少预算
+- **WHEN** 调用 `create_transaction`,未提供 `budget_id`
+- **THEN** 请求被拒绝,返回说明缺少预算的错误,不记录交易
+
+#### Scenario: 预算取未分配值
+- **WHEN** 调用 `create_transaction`,提供的 `budget_id` 是表示"尚未分配预算"的值
+- **THEN** 请求被拒绝,返回说明预算无效的错误,不记录交易
+
+#### Scenario: 收入交易同样要求预算
+- **WHEN** 调用 `create_transaction`,`type` 为 `income`,并提供一个属于该账本的 `budget_id`
+- **THEN** 交易被正常记录,其预算等于提供的值
 
 #### Scenario: 引用一级分类
 - **WHEN** 调用 `create_transaction`,指定的分类是一个没有父分类的顶层分类
 - **THEN** 交易照常被记录——分类不再区分层级,曾经"必须使用二级分类"的限制不再适用
 
 #### Scenario: 缺少必填字段
-- **WHEN** 调用 `create_transaction`,缺少 `ledger_id`、来源、分类、金额、币种或发生时间中的任意一项
+- **WHEN** 调用 `create_transaction`,缺少 `ledger_id`、来源、分类、预算、金额、币种或发生时间中的任意一项
 - **THEN** 请求被拒绝,不记录交易
 
 #### Scenario: 币种不受支持
@@ -57,15 +69,19 @@
 - **THEN** 请求被拒绝,返回说明时间格式非法的错误,不记录交易
 
 ### Requirement: 按 ID 查询单条交易
-用户 SHALL 能够通过 `get_transaction` 工具,提供交易 ID 与其所属 `ledger_id`,查询该笔交易的完整信息。返回信息 SHALL 包含 `merchant` 与 `comment` 两个独立字段;历史交易的 `merchant` 可能为空字符串。
+用户 SHALL 能够通过 `get_transaction` 工具,提供交易 ID 与其所属 `ledger_id`,查询该笔交易的完整信息。返回信息 SHALL 包含 `budget_id`、`merchant` 与 `comment`;`budget_id` 对尚未回填预算的历史交易 SHALL 返回表示"尚未分配预算"的值,而不是报错。历史交易的 `merchant` 可能为空字符串。
 
 #### Scenario: 查询已存在的交易
 - **WHEN** 调用 `get_transaction`,提供一个已记录交易的 ID 与其实际所属的 `ledger_id`
-- **THEN** 返回该交易的来源、分类、金额(以该笔交易 `currency` 主单位的十进制字符串表示,精度由该币种决定)、币种、发生时间、商户名与备注等完整信息
+- **THEN** 返回该交易的来源、分类、预算、金额(以该笔交易 `currency` 主单位的十进制字符串表示,精度由该币种决定)、币种、发生时间、商户名与备注等完整信息
 
 #### Scenario: 查询一条带商户名的交易
 - **WHEN** 调用 `get_transaction`,该交易的 `merchant` 与 `comment` 均已写入
 - **THEN** 返回的 `merchant` 与 `comment` 分别等于写入时的值,互不合并
+
+#### Scenario: 查询一笔尚未回填预算的历史交易
+- **WHEN** 调用 `get_transaction`,该交易是在预算维度引入之前记录的、且还没有被分配预算
+- **THEN** 返回的 `budget_id` 是表示"尚未分配预算"的值,其余字段照常返回,不因缺少预算而报错
 
 #### Scenario: 查询不存在的交易
 - **WHEN** 调用 `get_transaction`,提供的 ID 不对应任何已记录的交易
@@ -76,19 +92,27 @@
 - **THEN** 返回"未找到"错误,而不是该交易的信息
 
 ### Requirement: 按条件搜索交易
-用户 SHALL 能够通过 `search_transactions` 工具,指定 `ledger_id`,并按时间范围、来源、分类、关键词中的一个或多个条件筛选该账本内的交易列表,并通过 `limit`/`cursor` 分批翻页取完结果。关键词筛选通过可选入参 `keyword` 提供,对交易的 `merchant` 与 `comment` 两个字段分别做大小写不敏感的子串匹配,任一命中的交易 SHALL 被返回;非空白的 `keyword` 与时间范围、来源、分类等其他已提供的筛选条件以 AND 组合。`keyword` 为空字符串或仅由空白字符组成时,视为未提供该参数,不产生任何筛选效果。`start_time`/`end_time` 与 `time` 字段同一套格式(`YYYY-MM-DD HH:MM:SS` 本地日期时间字符串,不带时区),按字符串的字典序比较,与时间先后顺序等价。返回的每条交易 SHALL 包含 `merchant` 与 `comment` 两个独立字段。
+用户 SHALL 能够通过 `search_transactions` 工具,指定 `ledger_id`,并按时间范围、来源、分类、预算、关键词中的一个或多个条件筛选该账本内的交易列表,并通过 `limit`/`cursor` 分批翻页取完结果。预算筛选通过可选入参 `budget_id` 提供,与其他已提供的筛选条件以 AND 组合,且 SHALL 允许取表示"尚未分配预算"的值。关键词筛选通过可选入参 `keyword` 提供,对交易的 `merchant` 与 `comment` 两个字段分别做大小写不敏感的子串匹配,任一命中的交易 SHALL 被返回;非空白的 `keyword` 与时间范围、来源、分类、预算等其他已提供的筛选条件以 AND 组合。`keyword` 为空字符串或仅由空白字符组成时,视为未提供该参数,不产生任何筛选效果。`start_time`/`end_time` 与 `time` 字段同一套格式(`YYYY-MM-DD HH:MM:SS` 本地日期时间字符串,不带时区),按字符串的字典序比较,与时间先后顺序等价。返回的每条交易 SHALL 包含 `budget_id`、`merchant` 与 `comment`。
 
 结果排序方向由可选入参 `newest_first` 控制:未提供或为 `false` 时,结果按 `time`、`id` 升序(最早的在前),`next_cursor` 沿时间轴向更晚的方向翻页——此为默认,与历史行为一致;为 `true` 时,结果按 `time`、`id` 降序(最新的在前),`next_cursor` 沿时间轴向更早的方向翻页。两种方向都使用稳定的 keyset 翻页,不重复、不遗漏。
 
-每次调用最多返回 `limit` 条(未提供时默认为 50,超过 200 的请求被拒绝),当还有更多结果时响应中带一个 `next_cursor`,把它原样传回下一次调用的 `cursor` 入参即可取得下一页;没有更多结果时不返回 `next_cursor`。`cursor` 的有效性校验涵盖包括 `keyword` 与 `newest_first` 在内的全部筛选/排序条件——用与签发时不同的 `keyword` 或不同的 `newest_first` 复用同一个 `cursor` 会被拒绝,而不是静默地把两种条件混合在一起翻页。
+每次调用最多返回 `limit` 条(未提供时默认为 50,超过 200 的请求被拒绝),当还有更多结果时响应中带一个 `next_cursor`,把它原样传回下一次调用的 `cursor` 入参即可取得下一页;没有更多结果时不返回 `next_cursor`。`cursor` 的有效性校验涵盖包括 `keyword`、`budget_id` 与 `newest_first` 在内的全部筛选/排序条件——用与签发时不同的 `keyword`、`budget_id` 或 `newest_first` 复用同一个 `cursor` 会被拒绝,而不是静默地把两种条件混合在一起翻页。
 
 #### Scenario: 无筛选条件
 - **WHEN** 调用 `search_transactions`,指定一个已存在的账本,不提供任何其他筛选条件
-- **THEN** 返回该账本中最早的一页交易(最多 `limit` 条,按 `time`、`id` 升序),不包含其他账本的交易
+- **THEN** 返回该账本中最早的一页交易(最多 `limit` 条,按 `time`、`id` 升序),不包含其他账本的交易,每条都带 `budget_id`
 
 #### Scenario: 按时间范围筛选
 - **WHEN** 调用 `search_transactions` 并指定起止时间
 - **THEN** 只在该账本内发生时间落在该区间内的交易中翻页,不受时间范围外的交易影响页大小
+
+#### Scenario: 按预算筛选
+- **WHEN** 调用 `search_transactions` 并提供一个属于该账本的 `budget_id`
+- **THEN** 只返回预算为该值的交易
+
+#### Scenario: 按尚未分配预算筛选
+- **WHEN** 调用 `search_transactions`,提供的 `budget_id` 是表示"尚未分配预算"的值
+- **THEN** 只返回该账本内还没有被分配预算的交易
 
 #### Scenario: 按关键词筛选
 - **WHEN** 调用 `search_transactions` 并提供非空白的 `keyword`,该账本内存在一笔或多笔交易的 `merchant` 或 `comment` 包含该关键词的子串(大小写不限)
@@ -107,8 +131,8 @@
 - **THEN** 该交易只返回一次,不因两个字段都命中而重复
 
 #### Scenario: 关键词与其他筛选条件组合
-- **WHEN** 调用 `search_transactions` 同时提供 `keyword` 与时间范围、`source_id`、`category_id` 中的一个或多个
-- **THEN** 只返回同时满足全部已提供筛选条件的交易——`merchant` 或 `comment` 命中关键词,且落在时间范围内、来源与分类均匹配
+- **WHEN** 调用 `search_transactions` 同时提供 `keyword` 与时间范围、`source_id`、`category_id`、`budget_id` 中的一个或多个
+- **THEN** 只返回同时满足全部已提供筛选条件的交易——`merchant` 或 `comment` 命中关键词,且落在时间范围内、来源、分类与预算均匹配
 
 #### Scenario: 关键词包含 LIKE 通配符字符
 - **WHEN** 调用 `search_transactions` 提供的 `keyword` 中包含 `%` 或 `_` 字符
@@ -131,7 +155,7 @@
 - **THEN** 只返回前 `limit` 条,响应中带一个 `next_cursor`
 
 #### Scenario: 使用 cursor 翻页
-- **WHEN** 调用 `search_transactions` 并提供上一次响应返回的 `next_cursor` 作为 `cursor`,其余筛选条件(含 `ledger_id`、`keyword`、`newest_first`)与上一次调用相同
+- **WHEN** 调用 `search_transactions` 并提供上一次响应返回的 `next_cursor` 作为 `cursor`,其余筛选条件(含 `ledger_id`、`keyword`、`budget_id`、`newest_first`)与上一次调用相同
 - **THEN** 返回紧接上一页之后的下一页结果,不重复、不遗漏上一页已返回的交易
 
 #### Scenario: 默认按最早在前翻页
@@ -143,7 +167,7 @@
 - **THEN** 第一页返回该筛选范围内最新的 `limit` 条(按 `time`、`id` 降序),携带 `next_cursor`;用该 `next_cursor` 续翻返回紧接其后、更早的一页,直到覆盖到最早一条后不再返回 `next_cursor`
 
 #### Scenario: cursor 无效或已不匹配当前筛选条件
-- **WHEN** 调用 `search_transactions` 提供的 `cursor` 无法解析,或是用不同的筛选/排序条件(`ledger_id`/`source_id`/`category_id`/`start_time`/`end_time`/`keyword`/`newest_first`)签发的
+- **WHEN** 调用 `search_transactions` 提供的 `cursor` 无法解析,或是用不同的筛选/排序条件(`ledger_id`/`source_id`/`category_id`/`budget_id`/`start_time`/`end_time`/`keyword`/`newest_first`)签发的
 - **THEN** 请求被拒绝,返回说明 cursor 无效的错误,不返回任何交易
 
 #### Scenario: limit 超过上限
@@ -163,26 +187,34 @@
 - **THEN** 请求被拒绝,返回说明时间格式非法的错误,不返回任何交易
 
 ### Requirement: 更新一笔交易
-用户 SHALL 能够通过 `update_transaction` 工具,用交易 ID 与其所属 `ledger_id`,替换一笔已存在交易的全部可变字段(`type`/`source_id`/`category_id`/`amount`/`currency`/`time`/`merchant`/`comment`)。这是完整字段替换语义,不支持只修改其中一部分字段;字段校验规则与 `create_transaction` 完全一致(income/expense 需要合法 `category_id`;`amount` 以十进制字符串提供,解析后必须为正,且小数位数不超过该 `currency` 的标准精度;`currency` 必须是系统支持的货币;`source_id`/`category_id` 必须属于该交易所在的账本;`time` 必须符合 `YYYY-MM-DD HH:MM:SS` 格式)。`merchant` 与 `comment` 都是可选字段,但同样参与全量替换:调用时未提供的字段会被保存为空字符串。更新不允许把交易挪到另一个账本——`source_id` 只能引用同一账本内的来源。更新不需要二次确认,直接执行。
+用户 SHALL 能够通过 `update_transaction` 工具,用交易 ID 与其所属 `ledger_id`,替换一笔已存在交易的全部可变字段(`type`/`source_id`/`category_id`/`budget_id`/`amount`/`currency`/`time`/`merchant`/`comment`)。这是完整字段替换语义,不支持只修改其中一部分字段;字段校验规则与 `create_transaction` 完全一致(income/expense 需要合法 `category_id` 与 `budget_id`;`amount` 以十进制字符串提供,解析后必须为正,且小数位数不超过该 `currency` 的标准精度;`currency` 必须是系统支持的货币;`source_id`/`category_id`/`budget_id` 必须属于该交易所在的账本;`time` 必须符合 `YYYY-MM-DD HH:MM:SS` 格式)。`budget_id` 为必填,省略即拒绝,MUST NOT 被静默清空或保留原值。`merchant` 与 `comment` 都是可选字段,但同样参与全量替换:调用时未提供的字段会被保存为空字符串。更新不允许把交易挪到另一个账本——`source_id` 只能引用同一账本内的来源。更新不需要二次确认,直接执行。
 
 #### Scenario: 提供完整合法字段更新交易
-- **WHEN** 调用 `update_transaction`,提供一笔已存在交易的 ID 与其实际所属的 `ledger_id`,以及完整、合法的 `type`/`source_id`/`category_id`/`amount`/`currency`/`time`/`merchant`/`comment`(来源与分类均存在且属于该账本,金额/分类规则与指定的 `type` 相符,`currency` 受支持)
+- **WHEN** 调用 `update_transaction`,提供一笔已存在交易的 ID 与其实际所属的 `ledger_id`,以及完整、合法的 `type`/`source_id`/`category_id`/`budget_id`/`amount`/`currency`/`time`/`merchant`/`comment`(来源、分类与预算均存在且属于该账本,金额/分类规则与指定的 `type` 相符,`currency` 受支持)
 - **THEN** 该交易被替换为新值,随后 `get_transaction` 返回更新后的信息,`merchant` 与 `comment` 互不覆盖
 
 #### Scenario: 更新时只改结构化字段
-- **WHEN** 调用 `update_transaction` 只修改分类或来源,并在调用中原样带上当前的 `merchant` 与 `comment`
-- **THEN** 该交易的结构化字段被更新,`merchant` 与 `comment` 保持与更新前一致
+- **WHEN** 调用 `update_transaction` 只修改分类或来源,并在调用中原样带上当前的 `budget_id`、`merchant` 与 `comment`
+- **THEN** 该交易的结构化字段被更新,`budget_id`、`merchant` 与 `comment` 保持与更新前一致
 
 #### Scenario: 更新时漏传商户名
 - **WHEN** 调用 `update_transaction` 时省略 `merchant`,而该交易原本有商户名
 - **THEN** 交易按全量替换语义保存,`merchant` 被清空为空字符串;这是既有全量替换行为的一部分,不额外报错
 
+#### Scenario: 更新时漏传预算
+- **WHEN** 调用 `update_transaction` 时省略 `budget_id`
+- **THEN** 请求被拒绝,返回说明缺少预算的错误,交易不发生变化
+
+#### Scenario: 更新时把预算改为未分配值
+- **WHEN** 调用 `update_transaction`,提供的 `budget_id` 是表示"尚未分配预算"的值
+- **THEN** 请求被拒绝,返回说明预算无效的错误,交易不发生变化
+
 #### Scenario: 缺少必填字段
-- **WHEN** 调用 `update_transaction`,缺少 `id`、`ledger_id`、`type`、`source_id`、`amount`、`currency`、`time` 中的任意一项
+- **WHEN** 调用 `update_transaction`,缺少 `id`、`ledger_id`、`type`、`source_id`、`category_id`、`budget_id`、`amount`、`currency`、`time` 中的任意一项
 - **THEN** 请求被拒绝,交易不发生变化
 
 #### Scenario: 引用不存在的来源或分类
-- **WHEN** 调用 `update_transaction`,指定的 `source_id` 或 `category_id` 在交易所属账本中不存在(包括该 id 实际属于另一个账本的情况)
+- **WHEN** 调用 `update_transaction`,指定的 `source_id`、`category_id` 或 `budget_id` 在交易所属账本中不存在(包括该 id 实际属于另一个账本的情况)
 - **THEN** 请求被拒绝,返回说明引用无效的错误,交易不发生变化
 
 #### Scenario: 币种不受支持
@@ -246,3 +278,14 @@
 #### Scenario: 历史交易没有商户名
 - **WHEN** 读取一笔在本字段引入之前创建的交易
 - **THEN** 该交易的 `merchant` 为空字符串,原 `comment` 原样保留,不因缺少 `merchant` 而报错或被改写
+
+### Requirement: 历史交易在升级后处于未分配预算状态
+在预算维度引入之前记录的交易,系统升级后 SHALL 处于"尚未分配预算"的状态,并以一个保留值标识。这个保留值 SHALL NOT 对应任何真实预算,也 SHALL NOT 能被 `create_transaction` 或 `update_transaction` 写入;它只用于标识还没有回填的历史交易,直到这些交易被分配一个真实预算。
+
+#### Scenario: 升级后读取一笔旧交易
+- **WHEN** 读取一笔在预算维度引入之前记录的、且尚未被回填的交易
+- **THEN** 该交易的预算标识为"尚未分配预算"的保留值,其余字段保持原样
+
+#### Scenario: 回填后不再是未分配状态
+- **WHEN** 一笔处于未分配状态的交易通过 `update_transaction` 或 `batch_update_transactions` 被分配了一个真实预算
+- **THEN** 该交易的预算等于被分配的值,不再返回保留值
