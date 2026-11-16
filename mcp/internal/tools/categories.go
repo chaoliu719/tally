@@ -21,14 +21,14 @@ func init() {
 }
 
 func registerCategoryTools(s *mcp.Server, deps Deps) {
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name:        "list_categories",
 		Description: "List every transaction category in a ledger, including its name and parent category id. A category with parent_id 0 is a top-level category; otherwise parent_id is the id of its parent category (always in the same ledger). Categories can nest to any depth and any existing category in the ledger can be referenced by create_transaction.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ListCategoriesInput) (*mcp.CallToolResult, ListCategoriesOutput, error) {
 		return listCategories(ctx, deps, in)
 	})
 
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name: "manage_category",
 		Description: "Create, update, or delete a transaction category, selected via the operation field. " +
 			"operation=create makes a new category; omit parent_id (or pass \"0\") for a top-level category, " +

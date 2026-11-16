@@ -21,14 +21,14 @@ func init() {
 }
 
 func registerBudgetTools(s *mcp.Server, deps Deps) {
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name:        "list_budgets",
 		Description: "List every budget in a ledger (a budget labels what kind of money a transaction represents in your financial structure, e.g. 固定, 专项, 突发, 日常), including its name.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ListBudgetsInput) (*mcp.CallToolResult, ListBudgetsOutput, error) {
 		return listBudgets(ctx, deps, in)
 	})
 
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name: "manage_budget",
 		Description: "Create, update, or delete a budget, selected via the operation field. " +
 			"operation=create makes a new budget. operation=update replaces name on an " +

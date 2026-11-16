@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"tally/internal/store"
@@ -53,5 +54,61 @@ func register(fn func(*mcp.Server, Deps)) {
 func RegisterAll(s *mcp.Server, deps Deps) {
 	for _, fn := range registrations {
 		fn(s, deps)
+	}
+}
+
+// addTool wraps mcp.AddTool with an input schema normalized so slice and
+// pointer fields emit a single JSON Schema type (e.g. "array" or "object")
+// rather than ["null", "array"] / ["null", "object"]. Downstream LLM
+// adapters (such as Vertex AI / Gemini functionDeclarations) expand multi-type
+// arrays into any_of while leaving sibling keywords like items/properties/
+// description at the same level, which Vertex AI rejects with HTTP 400.
+func addTool[In, Out any](s *mcp.Server, t *mcp.Tool, h mcp.ToolHandlerFor[In, Out]) {
+	if t.InputSchema == nil {
+		schema, err := jsonschema.For[In](nil)
+		if err != nil {
+			panic(fmt.Sprintf("addTool: tool %q input schema: %v", t.Name, err))
+		}
+		stripNullTypes(schema)
+		t.InputSchema = schema
+	}
+	mcp.AddTool(s, t, h)
+}
+
+func stripNullTypes(s *jsonschema.Schema) {
+	if s == nil {
+		return
+	}
+	if len(s.Types) > 0 {
+		filtered := s.Types[:0:0]
+		for _, typ := range s.Types {
+			if typ != "null" {
+				filtered = append(filtered, typ)
+			}
+		}
+		switch len(filtered) {
+		case 1:
+			s.Type = filtered[0]
+			s.Types = nil
+		default:
+			s.Types = filtered
+		}
+	}
+	for _, prop := range s.Properties {
+		stripNullTypes(prop)
+	}
+	stripNullTypes(s.Items)
+	for _, item := range s.ItemsArray {
+		stripNullTypes(item)
+	}
+	for _, item := range s.PrefixItems {
+		stripNullTypes(item)
+	}
+	stripNullTypes(s.AdditionalProperties)
+	for _, def := range s.Defs {
+		stripNullTypes(def)
+	}
+	for _, def := range s.Definitions {
+		stripNullTypes(def)
 	}
 }

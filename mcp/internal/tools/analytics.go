@@ -17,7 +17,7 @@ func init() {
 }
 
 func registerAnalyticsTools(s *mcp.Server, deps Deps) {
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name: "get_financial_summary",
 		Description: "Aggregate income, expense, and net totals over an optional time range (and optional budget_id filter, including \"0\" for unassigned) within one ledger, grouped by " +
 			"currency, and broken down by category, by source, and by budget (with unassigned budget_id=\"0\" as its own group when present). With no time range, summarizes the " +

@@ -21,14 +21,14 @@ func init() {
 }
 
 func registerSourceTools(s *mcp.Server, deps Deps) {
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name:        "list_sources",
 		Description: "List every source in a ledger (a source is where a transaction's money comes from or goes to), including its name.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ListSourcesInput) (*mcp.CallToolResult, ListSourcesOutput, error) {
 		return listSources(ctx, deps, in)
 	})
 
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name: "manage_source",
 		Description: "Create, update, or delete a source, selected via the operation field. " +
 			"operation=create makes a new source. operation=update replaces name on an " +

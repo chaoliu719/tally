@@ -35,6 +35,48 @@ func TestBatchDeleteTransactionsToolIsRegisteredAlongsideDeleteTransaction(t *te
 	}
 }
 
+// TestAllToolsInputSchemasUseSingleStringTypes verifies that no tool's
+// inputSchema emits a multi-type array such as ["null", "array"] or
+// ["null", "object"]. Vertex AI / Gemini expands type arrays into any_of while
+// leaving sibling keywords (items, properties, description) at the same level,
+// which triggers a 400 validation error on functionDeclarations.
+func TestAllToolsInputSchemasUseSingleStringTypes(t *testing.T) {
+	session, _ := newTestSession(t)
+
+	res, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListTools failed: %v", err)
+	}
+	if len(res.Tools) == 0 {
+		t.Fatal("expected registered tools")
+	}
+
+	var checkNode func(toolName, path string, node any)
+	checkNode = func(toolName, path string, node any) {
+		m, ok := node.(map[string]any)
+		if !ok {
+			return
+		}
+		if typ, exists := m["type"]; exists {
+			if _, isStr := typ.(string); !isStr {
+				t.Errorf("tool %s: %s.type = %#v (%T), want plain string (not array)", toolName, path, typ, typ)
+			}
+		}
+		if props, ok := m["properties"].(map[string]any); ok {
+			for k, v := range props {
+				checkNode(toolName, path+".properties."+k, v)
+			}
+		}
+		if items, ok := m["items"]; ok {
+			checkNode(toolName, path+".items", items)
+		}
+	}
+
+	for _, tool := range res.Tools {
+		checkNode(tool.Name, "inputSchema", tool.InputSchema)
+	}
+}
+
 func TestBatchDeleteTransactionsPreviewMixedFoundAndNotFound(t *testing.T) {
 	session, ledgerID := newTestSession(t)
 	sourceID, categoryID := setupSourceAndCategory(t, session, ledgerID)

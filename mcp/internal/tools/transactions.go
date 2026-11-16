@@ -23,21 +23,21 @@ func init() {
 }
 
 func registerTransactionTools(s *mcp.Server, deps Deps) {
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name:        "create_transaction",
 		Description: "Record one income or expense transaction. Requires an existing category_id and budget_id (both in the same ledger; budget_id cannot be omitted or \"0\"). merchant is the optional raw merchant/payee name as stated on the bank statement or by the user; comment is the user's own note, independent of merchant.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in CreateTransactionInput) (*mcp.CallToolResult, CreateTransactionOutput, error) {
 		return createTransaction(ctx, deps, in)
 	})
 
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name:        "get_transaction",
 		Description: "Fetch one transaction by id, including its full details.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in GetTransactionInput) (*mcp.CallToolResult, GetTransactionOutput, error) {
 		return getTransaction(ctx, deps, in)
 	})
 
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name: "search_transactions",
 		Description: "List transactions, optionally filtered by time range, source, category, budget (use \"0\" to match legacy unassigned transactions), and/or a case-insensitive keyword matched against both merchant and comment. Sorted oldest first by default, or newest first when newest_first is true. Results are paginated: " +
 			"each call returns at most limit transactions (default 50, max 200); if more match, the response includes next_cursor -- pass it back " +
@@ -46,14 +46,14 @@ func registerTransactionTools(s *mcp.Server, deps Deps) {
 		return searchTransactions(ctx, deps, in)
 	})
 
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name:        "update_transaction",
 		Description: "Replace a single transaction's fields (type, source, category, budget, amount, currency, time, merchant, comment) by id. This is a full replacement, not a partial update -- all required fields (including budget_id) must be provided, and the same validation rules as create_transaction apply (omitting merchant or comment stores an empty string; omitting budget_id is rejected). To patch only reference fields (category_id, source_id, budget_id) across multiple transactions, use batch_update_transactions instead. Does not require confirmation.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in UpdateTransactionInput) (*mcp.CallToolResult, UpdateTransactionOutput, error) {
 		return updateTransaction(ctx, deps, in)
 	})
 
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name: "delete_transaction",
 		Description: "Delete a transaction by id. This is a two-step preview -> apply: call without confirmation_token to preview " +
 			"(returns the transaction and a token), then call again with the returned confirmation_token to actually delete. " +
@@ -62,7 +62,7 @@ func registerTransactionTools(s *mcp.Server, deps Deps) {
 		return deleteTransaction(ctx, deps, in)
 	})
 
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name: "batch_delete_transactions",
 		Description: fmt.Sprintf("Delete a batch of transactions by id, in one ledger. This is a two-step preview -> confirm: "+
 			"call without confirmation_token to preview (returns each id's current transaction info, or a not_found marker, "+
@@ -74,7 +74,7 @@ func registerTransactionTools(s *mcp.Server, deps Deps) {
 		return batchDeleteTransactions(ctx, deps, in)
 	})
 
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name: "batch_update_transactions",
 		Description: fmt.Sprintf("Patch reference fields (category_id, source_id, and/or budget_id) across a batch of transactions in one ledger. "+
 			"Unlike update_transaction (which is a single-row full replacement), this tool is a partial update that only modifies "+

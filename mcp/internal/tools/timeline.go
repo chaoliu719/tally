@@ -30,7 +30,7 @@ func registerTimelineTools(s *mcp.Server, deps Deps) {
 	registerWidgetResource(s, "timeline", "Transaction timeline",
 		"Interactive, scrollable day-grouped view of a ledger's transactions within a chosen scope, newest first.")
 
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name: "open_transaction_timeline",
 		Description: "Open an interactive, scrollable timeline of a ledger's transactions -- grouped by day, newest first. " +
 			"Use this when the user wants to browse or scroll through their transactions rather than get a summary or a " +

@@ -21,14 +21,14 @@ func init() {
 }
 
 func registerLedgerTools(s *mcp.Server, deps Deps) {
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name:        "list_ledgers",
 		Description: "List every ledger, including its name and comment. A ledger is a top-level isolation container: sources, categories, and transactions each belong to exactly one ledger and are never shared across ledgers.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ ListLedgersInput) (*mcp.CallToolResult, ListLedgersOutput, error) {
 		return listLedgers(ctx, deps)
 	})
 
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name: "manage_ledger",
 		Description: "Create, update, or delete a ledger, selected via the operation field. " +
 			"operation=create makes a new ledger with no sources or categories yet, and seeds the four default budgets (固定, 专项, 突发, 日常). operation=update replaces " +
